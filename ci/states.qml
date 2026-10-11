@@ -1,8 +1,7 @@
 import QtQuick
 
-// Drives the view through states a live wallet will not hold on demand: the sync labels, every
-// send outcome, the activity rows, and a fake backend for what renders. Prints STATES-OK, or
-// STATES-FAIL with the cases that disagree.
+// Drives the view through states a live wallet will not hold on demand, then renders it against a
+// fake backend. Prints STATES-OK, or STATES-FAIL with the cases that disagree.
 Item {
     id: scene
     width: 1280; height: 900

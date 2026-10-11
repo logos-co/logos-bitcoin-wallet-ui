@@ -1,6 +1,5 @@
-//! The scripted wallet behind the fixture. States move on a clock; a send's fate is picked by its
-//! amount; the first send that goes out makes the history server report a confirmation on another
-//! chain, so the app has a suspect source to clear. Nothing here touches a network or a key.
+//! The scripted wallet behind the fixture: states move on a clock, a send's fate is its amount, and
+//! the first send that goes out turns the history server suspect. No network, no key.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};

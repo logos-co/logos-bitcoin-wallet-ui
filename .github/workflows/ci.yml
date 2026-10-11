@@ -1,12 +1,7 @@
 name: CI
 
-# What this repo can assert without a host or a wallet: the build, the rule that no secret
-# crosses the view's interface, and the view linted, constructed and driven through its states.
-# `nix build` proves nothing about QML: a bad import or a mistyped Theme token takes the view down
-# at runtime and says so only through qWarning.
-#
-# The design system is not a flake input (the host links it), but its source decides whether
-# `import Logos.Controls` resolves, so it is checked out at the revision the builder pins.
+# The build, no secret on the view's interface, and the view linted, constructed and driven through
+# its states.
 
 on:
   pull_request:
@@ -48,11 +43,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: The .rep declares no PROP and no SLOT named like a secret
-        # Wallets open in the keys app and sends are approved in the signer app, so nothing secret
-        # has a reason to cross here, in either direction: not as a PROP (cached in the replica and
-        # broadcast to every connected one), and not as a SLOT argument or return value either.
-        # A case-insensitive substring match, so `newPassword` and `recoveryPhrase` are caught
-        # where a \b-anchored pattern is not.
+        # Nothing secret has a reason to cross here, as a PROP or as a SLOT. A case-insensitive
+        # substring match: `newPassword` and `recoveryPhrase` are caught where \b-anchored ones are not.
         shell: bash
         run: |
           set -euo pipefail
@@ -107,6 +99,7 @@ jobs:
         with:
           path: logos-bitcoin-wallet-ui
 
+      # The design system's source decides whether `import Logos.Controls` resolves.
       - name: Find the design-system revision the builder pins
         id: ds
         working-directory: logos-bitcoin-wallet-ui

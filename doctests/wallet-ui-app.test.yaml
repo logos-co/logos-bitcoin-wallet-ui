@@ -1,31 +1,25 @@
 name: bitcoin_wallet_ui — open a wallet through the keys app, send through the signer app, settle every outcome, in Basecamp
 project_name: logos-bitcoin-wallet-ui
 
-# Every build is a flake URL: each step runs in a throwaway directory. The app builds from its
-# checkout (E2E_REPO, set by run.sh). The host is Basecamp in standalone mode: `--module` opens this
-# app and `--modules-dir` holds the backend it depends on.
-#
-# The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-# (its trait, copied from logos-bitcoin-wallet-backend 9e512ff) with a script behind it, and no
-# wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
-# Basecamp answers both intents `unavailable`; the stand-in plays the person instead. It never
-# approves the first open of a run, approves the next one after 4 s, and picks a send's fate by its
-# amount: 0.0002 BTC is rejected, 0.0003 BTC expires unacknowledged, 0.0004 BTC goes out with an
-# unknown outcome, 0.0005 BTC leaves change too small to spend, and the first payment sent makes
-# the history server report a confirmation on another chain.
-#
-# Waits poll a property (`expect_property` with `timeout`): a text match also finds hidden items,
-# such as a closed sheet's buttons. Rows below the fold are clicked with `call_method`.
-#
-# Offscreen with Qt Quick's software renderer: no window, no GPU, and screenshots still work.
+# Waits poll a property: a text match also finds hidden items. Rows below the fold are clicked with
+# call_method. Offscreen with the software renderer: no window, no GPU, screenshots still work.
 
 intro: |
-  The whole app in one headless run, in Basecamp: a wallet is opened through the keys app's intent
-  (and the first attempt withdrawn), the sources are set before it opens and locked while it is
-  open, a fresh BIP21 address is handed out, and sends go through the signer app's intent to each
-  of their outcomes: nobody acknowledging within 60 s and asking again, a cancel, a rejection, an
-  unknown outcome that is forgotten, and a payment that goes out and is then sped up. The sync line
-  never claims "Synchronized" once no source agrees with the wallet's chain.
+  The whole app in one headless run, in Basecamp's standalone mode: a wallet is opened through the
+  keys app's intent (the first attempt withdrawn), the sources are set before it opens and locked
+  while it is open, a fresh BIP21 address is handed out, and sends go through the signer app's
+  intent to each of their outcomes: nobody acknowledging within 60 s and asking again, a cancel, a
+  rejection, an unknown outcome that is forgotten, and a payment that goes out and is sped up. The
+  sync line never claims "Synchronized" once no source agrees with the wallet's chain.
+
+  The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
+  (its trait, copied from logos-bitcoin-wallet-backend 9e512ff) with a script behind it, and no
+  wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
+  Basecamp answers both intents `unavailable`, and the stand-in plays the person: it never approves
+  the first open of a run, approves the next after 4 s, and picks a send's fate by its amount:
+  0.0002 BTC is rejected, 0.0003 BTC expires unacknowledged, 0.0004 BTC goes out with an unknown
+  outcome, 0.0005 BTC leaves change too small to spend, and the first payment sent makes the history
+  server report a confirmation on another chain.
 
 sections:
   - title: "Build Basecamp, the app, and the stand-in backend"
@@ -203,6 +197,12 @@ sections:
               value: false
               timeout: 10000
 
+            - name: "Open a wallet is enabled"
+              action: expect_property
+              find_value: "openWalletButton"
+              property: "enabled"
+              value: true
+              timeout: 10000
             - name: "Open a wallet"
               action: click_object
               find_value: "openWalletButton"
@@ -240,6 +240,12 @@ sections:
               property: "walletState"
               value: "no_wallet"
               timeout: 5000
+            - name: "Open a wallet is enabled again once the withdrawal settled"
+              action: expect_property
+              find_value: "openWalletButton"
+              property: "enabled"
+              value: true
+              timeout: 10000
             - name: "Open again; this time the person approves in the keys app"
               action: click_object
               find_value: "openWalletButton"

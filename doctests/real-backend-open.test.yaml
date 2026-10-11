@@ -1,17 +1,16 @@
 name: bitcoin_wallet_ui — the real backend, wallet core and node module, up to the keys app, in Basecamp
 project_name: logos-bitcoin-wallet-ui
 
-# The same host as wallet-ui-app.test.yaml, with the real modules behind the app:
-# bitcoin_wallet_backend 9e512ff, bitcoin_wallet_core_module 654741d, bitcoin_node_module 5b93267,
-# signer_manager_module 612808e and keystore_module a3f54d1. Nothing approves an open here (no keys
-# app, no custodian of the signer manager), so the run stops at the handle: the app raises
-# keystore.accounts.open with the core's own handle, and Cancel withdraws the open. The source
-# settings go through the real node module. HOME is the run's own, so no module touches the real one.
+# The real modules behind the app; nothing can approve an open here, so the run stops at the
+# handle for the keys app. HOME is the run's own.
 
 intro: |
-  The app against the modules it ships with: the node module's own sources for signet, a server
-  of your own added and given History through the app, and an open that reaches the signer manager
-  and comes back as a handle for the keys app, then is withdrawn.
+  The app against the modules it ships with: bitcoin_wallet_backend 9e512ff,
+  bitcoin_wallet_core_module 654741d, bitcoin_node_module 5b93267, signer_manager_module 612808e
+  and keystore_module a3f54d1. The node module's own sources for signet, a server of your own
+  added and given History through the app, and an open that reaches the signer manager and comes
+  back as the core's handle for the keys app, then is withdrawn. No keys app is installed and the
+  signer manager has no custodian here, so nothing can approve the open, and sends are not reached.
 
 sections:
   - title: "Build Basecamp, the app, and the real module chain"
@@ -143,6 +142,12 @@ sections:
               find_value: "networkSheet"
               property: "visible"
               value: false
+              timeout: 10000
+            - name: "Open a wallet is enabled"
+              action: expect_property
+              find_value: "openWalletButton"
+              property: "enabled"
+              value: true
               timeout: 10000
             - name: "Open a wallet"
               action: click_object

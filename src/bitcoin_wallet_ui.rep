@@ -1,6 +1,5 @@
-// No secret crosses this surface in either direction: wallets open in the keys app and sends are
-// approved in the signer app. ci.yml refuses a PROP or a SLOT named like a secret.
-// Every PROP is a JSON string; EMPTY means "not read yet", shown as an em-dash.
+// No secret crosses this surface, and ci.yml refuses a PROP or SLOT named like one. Every PROP is
+// a JSON string; EMPTY means "not read yet", shown as an em-dash.
 class BitcoinWalletUi
 {
     PROP(QString lastError="" READONLY)

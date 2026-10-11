@@ -4,9 +4,8 @@ import QtQuick.Layouts 1.15
 import Logos.Controls
 import Logos.Theme
 
-// The Bitcoin wallet. Nothing open: "Open a wallet", decided in the keys app. A wallet open:
-// Home, Send, Receive, Activity and Settings. No password is asked anywhere in this app.
-// Strings this view did not author render as PlainText: LogosText is AutoText.
+// The Bitcoin wallet: "Open a wallet", decided in the keys app, then Home, Send, Receive, Activity
+// and Settings. No password field. Strings this view did not author render as PlainText.
 Item {
     id: root
     objectName: "bitcoinWalletRoot"
@@ -33,7 +32,7 @@ Item {
     readonly property string walletState: status.state || ""
     readonly property bool walletOpen: walletState === "syncing" || walletState === "ready"
     readonly property bool awaitingKeys: walletState === "awaiting_open"
-    readonly property bool opening: awaitingKeys || walletState === "opening" || pendingKind === "open"
+    readonly property bool opening: awaitingKeys || walletState === "opening" || pendingKind === "open" || pendingKind === "cancel"
     readonly property string openHandle: awaitingKeys ? (status.openHandle || "") : ""
     readonly property bool busy: ready && backend.busy === true
     readonly property string pendingKind: ready ? backend.pendingJobKind : ""
@@ -1053,7 +1052,8 @@ Item {
                     RowLayout {
                         LogosSpinner { Layout.preferredWidth: 20; Layout.preferredHeight: 20; running: root.opening }
                         LogosText { objectName: "keysWaitTitle"; font.pixelSize: 16; textFormat: Text.PlainText
-                                    text: root.walletState === "opening" ? "Opening the wallet…"
+                                    text: root.pendingKind === "cancel" ? "Withdrawing the request…"
+                                          : root.walletState === "opening" ? "Opening the wallet…"
                                           : (root.awaitingKeys ? "Waiting for the keys app" : "Asking the keys app…") }
                     }
                     LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
