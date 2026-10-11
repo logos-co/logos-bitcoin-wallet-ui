@@ -149,7 +149,10 @@ since the phrase, addresses and txids can't be written into a static test. It ge
 test passwords, and each Basecamp run gets its own HOME and user dir. `basecamp-e2e-kyoto` and
 `basecamp-e2e-node` run open, receive, send, confirm and a reorg with Kyoto (the chain's three
 filter-serving nodes as its peers, quorum 2) and with the local node (bitcoind_module and its app,
-started on regtest from the node app) as the chain authority. The Kyoto spec then restores twice:
+started on regtest from the node app) as the chain authority. The core takes the node module's
+routes whenever it routes anything on regtest, so the driver switches off the node module's Kyoto,
+its only regtest default, before each open: the chain's sources then come from the core's
+`regtest.json`. The Kyoto spec then restores twice:
 once with no day in the keys app, so the wallet asks for its birthday and gets it in the wallet
 app; once with Blockstream's electrs as the only server and a `regtest.json` checkpoint above the
 first two payments, which it reports below the chain's start, unchecked, until the banner's

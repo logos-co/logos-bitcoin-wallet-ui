@@ -5,7 +5,8 @@ intro: |
   The full-Basecamp e2e (see basecamp-e2e) with Kyoto deciding the chain: the wallet core's
   `regtest.json` lists the chain's three filter-serving nodes as Kyoto's peers, with a quorum of 2,
   and one electrs that only cross-checks Kyoto's headers and estimates fees (`checkOnly`). The core
-  takes its regtest sources from that file, not from the node module's own peers. Kyoto has no
+  takes its regtest sources from that file once the node module routes nothing there: before each
+  open the person switches off the node module's Kyoto, its only regtest default. Kyoto has no
   mempool view, so a payment shows once it is in a block; a send goes out through one of Kyoto's
   peers. Open, receive, send and confirm, then a reorg the peers follow together.
 

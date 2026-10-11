@@ -815,6 +815,20 @@ def phase_secrets():
     passed("two test passwords generated into %s (0600), never a real one" % SECRETS)
 
 
+# The node module routes Kyoto on regtest by default, with no peers; once it routes anything, the core
+# takes its table over regtest.json. With Kyoto off there, regtest.json's sources serve.
+def node_routes_nothing(ins):
+    ins.press("networkSettingsButton")
+    ins.wait("networkSheet", "opened", True, 20)
+    ins.wait(ROOT, "sourcesConfigured", True, 60, "the node module's regtest sources are read")
+    if ins.get("useSwitch_kyoto", "checked") is True:
+        ins.press("useSwitch_kyoto")
+        ins.wait("useSwitch_kyoto", "checked", False, 20, "Kyoto off in the node module")
+    passed("the node module routes nothing on regtest, so the core takes regtest.json's sources")
+    ins.call(ROOT, "closeSheets")
+    ins.wait("networkSheet", "visible", False, 10)
+
+
 def phase_open_create():
     ins = Inspector()
     show_app(ins, APP)
@@ -822,6 +836,7 @@ def phase_open_create():
     ins.wait("statusLine", "text", "No wallet open", 120)
     ins.call(ROOT, "selectNetwork", "regtest")
     ins.wait("networkChip", "text", "regtest", 30)
+    node_routes_nothing(ins)
     ins.press("familySegwit")
     ins.set_text("walletLabelField", "E2E regtest")
     ins.press("openWalletButton")
@@ -1205,6 +1220,7 @@ def open_for_restore(ins):
     ins.wait("statusLine", "text", "No wallet open", 120)
     ins.call(ROOT, "selectNetwork", "regtest")
     ins.wait("networkChip", "text", "regtest", 30)
+    node_routes_nothing(ins)
     ins.press("familySegwit")
 
 

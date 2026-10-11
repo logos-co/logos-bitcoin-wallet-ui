@@ -72,7 +72,9 @@ sections:
       The five modules go to the user dir's `modules/`, the three apps to `plugins/`, all portable
       variants. `regtest.json` in a module's data directory turns regtest on for the backend and
       the node module, and gives the wallet core the two electrs; the first instance directory
-      found is the one a module uses.
+      found is the one a module uses. The core takes the node module's routes whenever it routes
+      anything on regtest, so before each open the person switches off the node module's Kyoto,
+      its only regtest default (it has no peers there), in Sources and privacy.
     steps:
       - title: "Lay out user A, with the Electrum servers' headers as the authority"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" layout userA electrum
