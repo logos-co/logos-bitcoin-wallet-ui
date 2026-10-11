@@ -17,5 +17,5 @@ trap 'E2E_WORK="$OUT" python3 e2e/drive.py cleanup > /dev/null 2>&1 || true' EXI
 for spec in ${SPECS:-*.test.yaml}; do
   [ -f "$spec" ] || spec="$spec.test.yaml"
   echo "==> Running ${spec}"
-  "${DOCTEST[@]}" run "$spec" --output-dir "$OUT" "$@"
+  "${DOCTEST[@]}" run "$spec" --output-dir "$OUT" --report "$OUT/${spec%.test.yaml}.report.html" "$@"
 done

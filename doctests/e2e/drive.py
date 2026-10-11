@@ -38,12 +38,19 @@ class InspectorError(Exception):
     pass
 
 
+# Every line also goes to e2e/drive.log: the doctest keeps a passing step's output only in its report.
 def log(msg):
     print(msg, flush=True)
+    try:
+        os.makedirs(E2E, exist_ok=True)
+        with open(os.path.join(E2E, "drive.log"), "a") as f:
+            f.write(msg + "\n")
+    except OSError:
+        pass
 
 
 def passed(msg):
-    print("PASS " + msg, flush=True)
+    log("PASS " + msg)
 
 
 def expect(cond, msg):
@@ -573,6 +580,7 @@ def sources_ok(ins, when):
     wallet_tab(ins, 4)
     lines = [ins.wait("walletSourceState_electrum-%d" % i, "text", lambda t: t.startswith("ok"), 30) for i in (0, 1)]
     badge = ins.wait("healthBadge", "text", "Sources OK", 30)
+    ins.shot("sources-" + when.replace(" ", "-"))
     wallet_tab(ins, 3)
     passed("%s: %s; electrum-0 %s; electrum-1 %s" % (when, badge, lines[0], lines[1]))
 
@@ -747,6 +755,7 @@ def phase_speed_up():
     expect(new in pool and old not in pool, "the replacement is in the mempool and the original is not")
     wallet_tab(ins, 3)
     wait_row(ins, "historyState", old, "replaced", 60)
+    ins.shot("speed-up-replaced")
     mine(1)
     wait_row(ins, "historyState", new, "1 confirmation", 60)
     passed("the bump confirmed (%s); the original reads replaced" % row_text(ins, "historyIntent", new))
@@ -767,6 +776,7 @@ def phase_reject():
     ins.press("signerRejectButton")
     back_to_wallet(ins, SIGNER)
     wait_send(ins, "Rejected in the signer app", 60)
+    ins.shot("rejected")
     ins.press("doneSendButton")
     ins.wait("confirmedCard", "value", before, 30, "nothing left the wallet: still %s" % before)
     expect(not any(to in json.dumps(rpc("getrawtransaction", [t, True])) for t in rpc("getrawmempool")),
@@ -868,6 +878,7 @@ def phase_restore():
     want = state()["snapshot"]
     ins.wait("confirmedCard", "value", want["confirmed"], 120, "the restored balance matches: %s" % want["confirmed"])
     passed("the restored balance matches: %s" % want["confirmed"])
+    ins.shot("restored")
     got = snapshot(ins)
     log("restored: " + json.dumps(got))
     # A replaced send never reached a block, so only the first user dir can list it.
@@ -890,6 +901,7 @@ def unknown_send(ins, label, amount):
     signer_approve(ins, secret("password-restore"))
     back_to_wallet(ins, SIGNER)
     wait_send(ins, "The outcome is unknown: it may have left", 120)
+    passed("the app says: " + ins.wait("sendVia", "text", lambda t: t.startswith("Last tried: electrum-"), 20))
     txid = re.search(r"[0-9a-f]{64}", ins.get("sendTxid", "text")).group(0)
     ins.shot("unknown-" + label)
     return txid
@@ -961,10 +973,11 @@ def main(argv):
         fn, args = PHASES[argv[0]], []
     else:
         sys.exit("usage: drive.py layout|launch <user> | " + " | ".join(PHASES))
+    log("== %s %s" % (time.strftime("%H:%M:%S"), " ".join(argv)))
     try:
         fn(*args)
     except (Fail, InspectorError) as e:
-        print("FAIL %s: %s" % (argv[0], e), flush=True)
+        log("FAIL %s: %s" % (argv[0], e))
         try:
             Inspector().shot("fail-" + argv[0])
         except Exception:

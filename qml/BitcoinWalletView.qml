@@ -532,17 +532,17 @@ Item {
         else parts.push("not checked yet")
         return parts.join(" · ")
     }
-    // A suspect source outweighs the rest; one not asked yet does not count.
+    // The node module's rules over the open wallet's view: two operators' tips more than 2 blocks
+    // apart disagree; none answering is offline; one failing or suspect is degraded. Unasked is no news.
     function walletOverall(list) {
-        var ok = 0, bad = 0, suspect = 0
-        list.forEach(function (s) {
-            if (s.suspect === true) suspect++
-            else if (s.state === "ok") ok++
-            else if (s.state !== "unknown") bad++
-        })
-        if (suspect > 0) return "disagreement"
-        if (ok === 0) return bad > 0 ? "offline" : ""
-        return bad > 0 ? "degraded" : "ok"
+        var ok = list.filter(function (s) { return s.state === "ok" })
+        var tips = ok.filter(function (s) { return root.isNum(s.tip) })
+        for (var i = 0; i < tips.length; i++)
+            for (var k = i + 1; k < tips.length; k++)
+                if (String(tips[i].operator || "").toLowerCase() !== String(tips[k].operator || "").toLowerCase()
+                        && Math.abs(Number(tips[i].tip) - Number(tips[k].tip)) > 2) return "disagreement"
+        if (ok.length === 0) return list.some(function (s) { return s.state !== "unknown" }) ? "offline" : ""
+        return list.some(function (s) { return s.state !== "ok" && s.state !== "unknown" }) ? "degraded" : "ok"
     }
     function walletSourceLine(w) {
         var parts = [w.suspect === true ? "suspect" + (w.suspectReason ? ": " + w.suspectReason : "") : (w.state || "unknown")]
@@ -1903,8 +1903,10 @@ Item {
                     LogosText { text: "Transaction ID"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
                     LogosCopyableText { objectName: "sendTxid"; Layout.fillWidth: true; text: root.send.txid || ""; copyText: root.send.txid || ""
                                         onCopied: root.notify("Transaction ID copied", "") }
-                    LogosText { visible: !!root.send.via; textFormat: Text.PlainText; color: Theme.palette.textTertiary; font.pixelSize: 11
-                                text: "Broadcast through " + (root.send.via || "") + (root.send.broadcast === "seen" ? ", and seen by the network" : "") }
+                    // An unknown send's `via` is the last source tried, which may or may not have taken it.
+                    LogosText { objectName: "sendVia"; visible: !!root.send.via; textFormat: Text.PlainText; color: Theme.palette.textTertiary; font.pixelSize: 11
+                                text: root.sendState === "unknown" ? "Last tried: " + (root.send.via || "") + ", which may or may not have taken it"
+                                      : "Broadcast through " + (root.send.via || "") + (root.send.broadcast === "seen" ? ", and seen by the network" : "") }
                 }
                 LogosText { objectName: "forgetNote"; visible: text !== "" && root.sendOutcome(root.send) === "forgotten"
                             Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText

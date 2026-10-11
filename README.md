@@ -46,9 +46,10 @@ is approved in the signer app.
     Notices name the sources reached without Tor, and say when Kyoto is off and the Electrum
     servers of one operator alone decide the chain.
   - Your own servers, added by address; the Tor proxy; the exposure record.
-  - With a wallet open, the sources badge reads the wallet's own view of its sources
-    (`source_health`'s `wallet`), and servers it uses that the list lacks, such as a test
-    chain's own, are listed with their state.
+  - With a wallet open, the sources badge applies the node module's rules to the wallet's own
+    view of its sources (`source_health`'s `wallet`), and servers it uses that the list lacks,
+    such as a test chain's own, are listed with their state.
+  - An unknown send names the source last tried, never one it was "broadcast through".
   - While a wallet is open, opening or closing, these settings show but do not change. A suspect
     mark can still be cleared.
 
