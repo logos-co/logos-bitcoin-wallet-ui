@@ -13,17 +13,25 @@ is approved in the signer app.
   payments with the source that reported them, sent transactions not yet confirmed (with Speed
   up), mined coins not yet mature, and coins too small to spend at today's fee rate. A busy read
   is "not read": the last read stays, and an empty amount shows as a dash, never as zero.
-  - The sync line gives the chain authority's height and tip age. It never says "Synchronized"
-    when no source agrees with the wallet's chain, nor when the tip is older than an hour; it
-    says "No source agrees" or "Stalled" instead. Regtest reads "Local chain".
-  - Source alerts show as a banner above the tabs.
+  - The sync line gives the chain authority's height and tip age, and names the authority:
+    "Kyoto · N peers", "Your node" or "Servers' headers". It never says "Synchronized" when no
+    source agrees with the wallet's chain, nor when the tip is older than an hour; it says "No
+    source agrees" or "Stalled" instead. Regtest reads "Local chain". A pruned node's gap reads
+    "Older blocks via <source>", or a notice while nothing can scan it.
+  - A wallet restored without a birthday (`needsBirthday`) asks for one: a day, or "I don't know"
+    (`set_birthday`, a job; `{ height: 0 }` scans from where the wallet's kind of address began).
+    A refusal, such as a day after its first payment, shows with the core's reason; while
+    `rescanFrom` holds, Home reads "Rescanning from block H", with a share only under Kyoto.
+  - Source alerts show as a banner above the tabs; Kyoto naming a chain the checks refuse
+    (`authority_suspect`) has a banner of its own.
 - **Send:** an address or a BIP21 URI, checked as you type with `address_valid`; the amount in BTC
   or sats (a URI's amount fills it); fast, normal or slow from `fee_rates`, or a custom sat/vB
   rate; and Send max.
   - Review shows what the form says. Approve in Signer calls `request_send`; once `send_status`
     carries an `approvalHandle` the app raises `evm.signing.approve` with `{ handle }`. The review
     then shows the wallet's own summary: recipients, change, fee, what leaves the wallet, and
-    warnings, among them change too small to spend.
+    warnings. Change too small to spend offers "Add it to the fee (+X sats)": the send is withdrawn
+    and asked again with `smallChangeToFee`, and the review then says the change went to the fee.
   - It follows the send to a final state. Expired (`errorCode` `expired`) offers Ask again, the
     same request once more; rejected, cancelled and the other codes say what happened. An unknown
     outcome offers Rebroadcast, Speed up and Forget this payment (`abandon_send`, behind a
@@ -36,7 +44,9 @@ is approved in the signer app.
 - **Activity:** one row per transaction saying what it was for: "−X · fee F", "X to yourself ·
   fee F", "N coins combined · fee F", "Fee raised to F" and "+X". Each shows its state, and an
   unconfirmed send has Speed up (`request_fee_bump`). Details list the addresses paid, what it
-  replaces or was replaced by, the source that reported a pending payment, and the txid.
+  replaces or was replaced by, the source that reported a pending payment, its block and the txid.
+  A payment a reorg moved (`lastReorg.moved`) reads "re-anchored at height H", and its details name
+  the new block.
 - **Settings:** the wallet, its public descriptors behind a privacy warning, Close wallet, and
   the sources pane, which also opens from the Open a wallet screen.
   - Each source has Use, History and Tor switches (`set_source`). Turning History on asks first:
@@ -45,7 +55,12 @@ is approved in the signer app.
   - The info button says what a second operator adds, claiming only what the design does.
     Notices name the sources reached without Tor, and say when Kyoto is off and the Electrum
     servers of one operator alone decide the chain.
-  - Your own servers, added by address; the Tor proxy; the exposure record.
+  - Your own servers, added by address; the Tor proxy; the exposure record. A server reached in
+    plain text outside Tor is marked "Not encrypted".
+  - A server you add is probed (`probe`), and a TLS certificate that no authority this computer
+    trusts shows its subject, issuer, validity and SHA-256 fingerprint, with "Trust this
+    certificate", which pins it (`set_source` `certSha256`). A pinned server shows its pin, with
+    "Remove pin". Pins are locked while a wallet is open, like every source setting.
   - With a wallet open, the sources badge applies the node module's rules to the wallet's own
     view of its sources (`source_health`'s `wallet`), and servers it uses that the list lacks,
     such as a test chain's own, are listed with their state.
@@ -59,6 +74,13 @@ None cross the view's interface (`src/bitcoin_wallet_ui.rep`), in either directi
 no PROP and no SLOT is named like a secret, with positive controls, and that the view has no
 password field. The descriptors are a SLOT's return value, shown on Settings and dropped when it
 is left.
+
+## The backend's contract
+
+`contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
+by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
+without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
+interface changes; this copy is from logos-bitcoin-wallet-backend 13566b6.
 
 ## Intents
 
@@ -84,8 +106,10 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
 
 - `wallet-ui-app.test.yaml` runs against `doctests/fixture-backend`, a scripted
   `bitcoin_wallet_backend` with the real backend's contract (its trait is copied verbatim) and
-  nothing behind it: every flow, to every send outcome. A send's fate is picked by its amount;
-  the header of `sim.rs` says how.
+  nothing behind it: every flow, to every send outcome, a birthday refused and set, change added
+  to the fee, a reorg, Kyoto as the authority and a chain it names that is refused, and a TLS
+  server's certificate pinned. A send's fate is picked by its amount; the header of `sim.rs` says
+  how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
   manager and keystore: the node module's sources, and an open up to the keys app's handle,
   withdrawn. Nothing can approve an open there, so sends are not reached.

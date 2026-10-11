@@ -1,5 +1,5 @@
 //! A stand-in for `bitcoin_wallet_backend` in the wallet app's doctest. The trait is the real
-//! backend's (logos-bitcoin-wallet-backend 9e512ff), so the contract matches; behind it, sim.rs.
+//! backend's (logos-bitcoin-wallet-backend 13566b6), so the contract matches; behind it, sim.rs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -35,6 +35,9 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     fn job_status(&self, job_id: String) -> String;
     /// CUSTODIAN. The open wallet's public descriptors, as a call result only, never an event.
     fn descriptors(&self) -> String;
+    /// CUSTODIAN. `{ date: "YYYY-MM-DD" }` or `{ height }` for the open wallet; the core scans again from
+    /// it. `{ ok, jobId }`; the job's result is `{ birthday: { height, source }, rescanFrom }`.
+    fn set_birthday(&self, params_json: String) -> String;
 
     /// The core's status plus `syncPercent`, `activeNetwork`, `label` and `openSend`.
     fn wallet_status(&self) -> String;
@@ -58,6 +61,9 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     fn sources(&self) -> String;
     /// The node module's source health, plus `wallet`, the open wallet's own view of them.
     fn source_health(&self) -> String;
+    /// `{ network?, source }`: the node module probes that source now, or every enabled server for "",
+    /// within 15 s; a TLS server's row carries `certificate`.
+    fn probe(&self, params_json: String) -> String;
     /// The servers that have seen the open wallet's addresses, and since when.
     fn exposure(&self) -> String;
     /// CUSTODIAN. Replaces the network's sources, a JSON array. Refused while a wallet is open.
@@ -204,6 +210,10 @@ impl BitcoinWalletBackendModule for BitcoinWalletBackendModuleImpl {
         self.gated(|s, _, _| s.descriptors())
     }
 
+    fn set_birthday(&self, params_json: String) -> String {
+        self.gated(|s, now, _| s.set_birthday(&params_json, now))
+    }
+
     fn wallet_status(&self) -> String {
         self.with(|s, now, _| s.status(now))
     }
@@ -248,6 +258,10 @@ impl BitcoinWalletBackendModule for BitcoinWalletBackendModuleImpl {
 
     fn source_health(&self) -> String {
         self.with(|s, _, _| s.source_health(sim::now_secs()))
+    }
+
+    fn probe(&self, params_json: String) -> String {
+        self.with(|s, _, _| s.probe(&params_json))
     }
 
     fn exposure(&self) -> String {

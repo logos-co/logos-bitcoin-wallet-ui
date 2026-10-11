@@ -43,6 +43,8 @@ Item {
         property string sendRequestId: ""
         property string sendStatusJson: "{}"
         property string sendError: ""
+        property string birthdayJson: ""
+        property string probeJson: ""
         property var calls: []
         function note(name, args) { calls = calls.concat([[name].concat(args)]) }
         function last(name) {
@@ -55,6 +57,8 @@ Item {
         function setActiveNetwork(n) { note("setActiveNetwork", [n]) }
         function openWallet(p) { note("openWallet", [p]) }
         function closeWallet() { note("closeWallet", []) }
+        function setBirthday(p) { note("setBirthday", [p]) }
+        function probeSource(id) { note("probeSource", [id]) }
         function requestSend(r) { note("requestSend", [r]) }
         function requestFeeBump(t, rate) { note("requestFeeBump", [t, rate]) }
         function cancelSend() { note("cancelSend", []) }
@@ -110,6 +114,21 @@ Item {
         return o ? o[p] : "<no " + name + ">"
     }
     function shown(name) { return prop(name, "visible") }
+    // The sources pane is in Settings and in a sheet: true when any copy of `name` is visible.
+    function findAll(obj, name, depth, out) {
+        if (!obj || (depth || 0) > 80) return out
+        if (obj.objectName === name) out.push(obj)
+        var kids = []
+        if (obj.data) for (var i = 0; i < obj.data.length; i++) kids.push(obj.data[i])
+        var lists = [obj.leftActions, obj.rightActions]
+        for (var l = 0; l < lists.length; l++)
+            if (lists[l]) for (var a = 0; a < lists[l].length; a++) kids.push(lists[l][a])
+        if (obj.contentItem && kids.indexOf(obj.contentItem) < 0) kids.push(obj.contentItem)
+        if (obj.item && kids.indexOf(obj.item) < 0) kids.push(obj.item)
+        for (var k = 0; k < kids.length; k++) findAll(kids[k], name, (depth || 0) + 1, out)
+        return out
+    }
+    function shownAny(name) { return findAll(view.item, name, 0, []).some(function (o) { return o.visible === true }) }
 
     readonly property string syncedMainnet: JSON.stringify({ state: "ready", network: "mainnet", activeNetwork: "mainnet", family: "bitcoin",
         group: "g_test", synced: true, walletTip: 935500, syncPercent: 100, label: "Savings",
@@ -130,7 +149,10 @@ Item {
             [{ state: "failed", lastError: "the keystore opened a wallet of another family" }, "Failed: the keystore opened a wallet of another family"],
             [mainnet({ state: "syncing", authority: { height: null, peers: 0 } }), "Connecting to the chain's sources…"],
             [mainnet({ state: "syncing", authority: { height: null, peers: 2 } }), "Reading the chain's headers…"],
-            [mainnet({}), "Synchronized · block 935,500, tip 4 min old"],
+            [mainnet({}), "Synchronized · block 935,500, tip 4 min old · Servers' headers"],
+            [mainnet({ authority: { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 3 } }), "Synchronized · block 935,500, tip 4 min old · Kyoto · 3 peers"],
+            [mainnet({ authority: { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 1 } }), "Synchronized · block 935,500, tip 4 min old · Kyoto · 1 peer"],
+            [mainnet({ authority: { kind: "local_node", height: 935500, tipAgeSecs: 240, peers: 1 } }), "Synchronized · block 935,500, tip 4 min old · Your node"],
             // No agreeing source: the core's own `synced` is not enough.
             [mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } }), "No source agrees · block 935,500, tip 4 min old"],
             [mainnet({ authority: { height: 935500, tipAgeSecs: 7300, peers: 0 } }), "No source agrees · block 935,500, tip 2 hours old"],
@@ -139,8 +161,9 @@ Item {
             [mainnet({ authority: { height: 935500, tipAgeSecs: 200000, peers: 3 } }), "Stalled · block 935,500, tip 2 days old"],
             [mainnet({ state: "syncing", synced: false, walletTip: 900000, syncPercent: 42,
                        authority: { height: 935500, tipAgeSecs: 300, peers: 2 } }), "Syncing 42% · block 900,000 of 935,500"],
-            [mainnet({ state: "syncing", synced: false, walletTip: undefined }), "Syncing · the chain is at block 935,500"],
+            [mainnet({ state: "syncing", synced: false, walletTip: undefined }), "Syncing · the chain is at block 935,500 · Servers' headers"],
             [mainnet({ network: "regtest", walletTip: 150, authority: { height: 150, tipAgeSecs: 9000, peers: 1 } }), "Local chain · block 150"],
+            [mainnet({ network: "regtest", walletTip: 150, authority: { kind: "local_node", height: 150, tipAgeSecs: 9000, peers: 1 } }), "Local chain · block 150 · Your node"],
             [mainnet({ network: "regtest", walletTip: 150, authority: { height: 150, tipAgeSecs: 9000, peers: 0 } }), "No source agrees · block 150, tip 2 hours old"],
             [mainnet({ unavailable: true, error: "the wallet core did not answer" }), "The wallet backend is not answering"]
         ]
@@ -239,6 +262,21 @@ Item {
         expect("source line", v.walletSourceLine({ state: "ok", roles: ["chain", "history"], history: true }), "ok · chain, history · history server")
         expect("suspect line", v.walletSourceLine({ state: "suspect", suspect: true, suspectReason: "served invalid headers", error: "x" }), "suspect: served invalid headers")
         expect("failing line", v.walletSourceLine({ state: "failing", roles: ["chain"], error: "connection refused" }), "failing · chain · connection refused")
+        expect("plain line", v.walletSourceLine({ state: "ok", roles: ["chain"], encrypted: false }), "ok · chain · not encrypted")
+
+        expect("authority kyoto", v.authorityLine({ authority: { kind: "kyoto", peers: 2 } }), "The chain: Bitcoin peers, through block filters · 2 peers")
+        expect("authority node", v.authorityLine({ authority: { kind: "local_node" } }), "The chain: your own node, checked here")
+        expect("gap", v.gapBlocks({ from: 100, below: 300 }), "blocks 100–299")
+        expect("gap one", v.gapBlocks({ from: 100, below: 101 }), "block 100")
+        expect("change to fee", v.warningText({ kind: "change_to_fee", amountSat: "450", costToSpendSat: "680" }),
+               "450 sats of change would have cost about 680 sats to spend, so it is part of the fee and no change comes back.")
+        expect("fingerprint", v.fingerprint("ab".repeat(32)), Array(33).join("AB:").slice(0, -1))
+        expect("fingerprint colons", v.fingerprint("ab:cd"), "AB:CD")
+        expect("cert text", v.certText({ certSha256: "0f".repeat(32), subject: "CN=electrum.test", issuer: "CN=electrum.test",
+                                          notBefore: "2026-10-11T01:43:03Z", notAfter: "2126-09-17T01:43:03Z", trusted: false }),
+               "Subject CN=electrum.test, issued by CN=electrum.test\nValid 2026-10-11 to 2126-09-17\nSHA-256 " + Array(33).join("0F:").slice(0, -1))
+        expect("plain text", v.notEncrypted({ id: "x", encrypted: false }), true)
+        expect("tls", v.isTls({ url: "ssl://h:50002" }) && v.isTls({ url: "https://h/api" }) && !v.isTls({ url: "tcp://h:50001" }), true)
     }
 
     // What renders, against the fake backend; each step runs after the previous one settled.
@@ -293,7 +331,7 @@ Item {
         },
         function (v) {
             expect("tabs", shown("walletTabs"), true)
-            expect("synced line", prop("syncLine", "text"), "Synchronized · block 935,500, tip 4 min old")
+            expect("synced line", prop("syncLine", "text"), "Synchronized · block 935,500, tip 4 min old · Servers' headers")
             expect("confirmed", prop("confirmedCard", "value"), "1.25 BTC")
             expect("waiting row", shown("waitingRow"), true)
             expect("pending row", shown("pendingRow"), true)
@@ -314,7 +352,7 @@ Item {
             fake.statusJson = JSON.stringify(st)
         },
         function (v) {
-            expect("rendered: no peers is never synchronized", prop("syncLine", "text"), "No source agrees · block 935,500, tip 4 min old")
+            expect("rendered: no peers is never synchronized", prop("syncLine", "text"), "No source agrees · block 935,500, tip 4 min old · Servers' headers")
             fake.statusJson = scene.syncedMainnet
             v.selectTab(1)
             find(view.item, "sendRecipientField", 0).text = "bcrt1qrecipient"
@@ -469,6 +507,156 @@ Item {
         function (v) {
             expect("without tor badge", shown("withoutTorBadge_electrum.example"), true)
             expect("without tor notice", shown("withoutTorNotice"), true)
+            v.closeSheets()
+            var st = JSON.parse(scene.syncedMainnet)
+            st.needsBirthday = true
+            fake.statusJson = JSON.stringify(st)
+            fake.alertsJson = JSON.stringify([{ source: "kyoto", kind: "authority_suspect", detail: "a filter header the quorum did not agree on", at: 1 }])
+            v.selectTab(0)
+        },
+        function (v) {
+            expect("birthday notice", shown("needsBirthdayHomeNotice"), true)
+            expect("authority suspect banner", shown("authoritySuspectBanner"), true)
+            expect("its own banner only", shown("alertBanner"), false)
+            find(view.item, "setBirthdayButton", 0).clicked()
+        },
+        function (v) {
+            expect("birthday sheet", prop("birthdaySheet", "visible"), true)
+            expect("no day yet", prop("confirmBirthdayButton", "enabled"), false)
+            find(view.item, "birthdayDateField", 0).text = "2026-01-02"
+            expect("a day", prop("confirmBirthdayButton", "enabled"), true)
+            find(view.item, "confirmBirthdayButton", 0).clicked()
+            expect("birthday asked", fake.last("setBirthday"), ["setBirthday", JSON.stringify({ date: "2026-01-02" })])
+            fake.birthdayJson = JSON.stringify({ state: "failed", error: "the day is after the wallet's first transaction" })
+        },
+        function (v) {
+            expect("refusal said", prop("birthdayError", "text"), "Not set: the day is after the wallet's first transaction")
+            expect("sheet stays", prop("birthdaySheet", "visible"), true)
+            find(view.item, "birthdayUnknown", 0).checked = true
+            find(view.item, "confirmBirthdayButton", 0).clicked()
+            expect("from the start", fake.last("setBirthday"), ["setBirthday", JSON.stringify({ height: 0 })])
+            fake.birthdayJson = JSON.stringify({ state: "done", birthday: { height: 481824, source: "set" }, rescanFrom: 481824 })
+            var st = JSON.parse(scene.syncedMainnet)
+            st.rescanFrom = 481824
+            st.syncPercent = 42
+            st.birthdaySource = "set"
+            fake.statusJson = JSON.stringify(st)
+        },
+        function (v) {
+            expect("sheet closes", prop("birthdaySheet", "visible"), false)
+            expect("rescan line", prop("rescanLine", "text"), "Rescanning from block 481,824 · 42%")
+            var st2 = JSON.parse(fake.statusJson)
+            delete st2.syncPercent
+            fake.statusJson = JSON.stringify(st2)
+            expect("a full scan has no share", prop("rescanLine", "text"), "Rescanning from block 481,824…")
+            expect("notice gone", shown("needsBirthdayHomeNotice"), false)
+            fake.alertsJson = "[]"
+            var st = JSON.parse(scene.syncedMainnet)
+            st.lastReorg = { height: 935490, depth: 1, moved: ["ee".repeat(32)], at: 1 }
+            fake.statusJson = JSON.stringify(st)
+            fake.historyJson = JSON.stringify({ page: 0, pageSize: 50, total: 2, rows: [
+                { txid: "ee".repeat(32), intent: "receive", amountSat: "70000", state: "confirmed", height: 935490, confirmations: 11, blockHash: "00".repeat(32) },
+                { txid: "cc".repeat(32), intent: "receive", amountSat: "125000000", state: "confirmed", height: 100, confirmations: 50, blockHash: "11".repeat(32) }] })
+            v.selectTab(3)
+        },
+        function (v) {
+            expect("re-anchored", prop("historyReanchored_" + "ee".repeat(32), "text"), "re-anchored at height 935,490")
+            expect("re-anchored shown", shown("historyReanchored_" + "ee".repeat(32)), true)
+            expect("not moved", shown("historyReanchored_" + "cc".repeat(32)), false)
+            expect("its block", prop("historyBlock_" + "ee".repeat(32), "text"),
+                   "Moved to a new block by a reorg of 1 block: re-anchored at height 935,490, block " + "00".repeat(32))
+            expect("a block", prop("historyBlock_" + "cc".repeat(32), "text"), "11".repeat(32))
+            v.lastRequest = { send: { recipients: [{ address: "bcrt1qrecipient", amountSat: "60000" }], feeRate: 6 } }
+            fake.sendRequestId = "s5"
+            fake.sendStatusJson = JSON.stringify({ requestId: "s5", kind: "send", state: "awaiting_approval", requester: "bitcoin_wallet_ui",
+                approvalHandle: "smh_5", approval: "rendered",
+                summary: { recipients: [{ address: "bcrt1qrecipient", amountSat: "60000" }], change: [{ address: "bcrt1qchange", amountSat: "400" }],
+                           inputs: 1, inputSat: "61000", feeSat: "600", feeRate: 6, vsize: 141, totalSat: "60600",
+                           warnings: [{ kind: "change_too_small", amountSat: "400", costToSpendSat: "408" }] } })
+        },
+        function (v) {
+            expect("change into the fee offered", prop("addChangeToFeeButton", "text"), "Add it to the fee (+400 sats)")
+            expect("offered", shown("addChangeToFeeButton"), true)
+            var cancels = fake.count("cancelSend"), asks = fake.count("requestSend")
+            find(view.item, "addChangeToFeeButton", 0).clicked()
+            expect("withdrawn first", fake.count("cancelSend"), cancels + 1)
+            expect("not asked yet", fake.count("requestSend"), asks)
+            fake.sendStatusJson = JSON.stringify({ requestId: "s5", kind: "send", state: "cancelled", errorCode: "cancelled", requester: "bitcoin_wallet_ui",
+                error: "cancelled by bitcoin_wallet_ui" })
+        },
+        function (v) {
+            expect("asked again with the change in the fee", fake.last("requestSend"),
+                   ["requestSend", JSON.stringify({ recipients: [{ address: "bcrt1qrecipient", amountSat: "60000" }], feeRate: 6, smallChangeToFee: true })])
+            fake.sendRequestId = "s6"
+            fake.sendStatusJson = JSON.stringify({ requestId: "s6", kind: "send", state: "awaiting_approval", requester: "bitcoin_wallet_ui",
+                approvalHandle: "smh_6", approval: "rendered",
+                summary: { recipients: [{ address: "bcrt1qrecipient", amountSat: "60000" }], change: [],
+                           inputs: 1, inputSat: "61000", feeSat: "1000", feeRate: 7.1, vsize: 141, totalSat: "61000",
+                           warnings: [{ kind: "change_to_fee", amountSat: "400", costToSpendSat: "408" }] } })
+        },
+        function (v) {
+            expect("change to fee line", prop("changeToFeeNotice", "message"),
+                   "400 sats of change would have cost about 408 sats to spend, so it is part of the fee and no change comes back.")
+            expect("no change left to add", v.warningsOf("change_too_small", true).length, 0)
+            fake.sendRequestId = ""
+            fake.sendStatusJson = "{}"
+            v.closeSheets()
+            var st = JSON.parse(scene.syncedMainnet)
+            st.authority.kind = "local_node"
+            st.node = { pruned: true, pruneHeight: 300, filters: true, prunedGap: { from: 100, below: 300, heights: [150], via: "electrum.example", resolved: false } }
+            fake.statusJson = JSON.stringify(st)
+            v.selectTab(0)
+        },
+        function (v) {
+            expect("named node", prop("syncLine", "text"), "Synchronized · block 935,500, tip 4 min old · Your node")
+            expect("gap covered", prop("prunedGapLine", "text"), "Older blocks via electrum.example (blocks 100–299)")
+            expect("no gap notice", shown("prunedGapNotice"), false)
+            var st = JSON.parse(fake.statusJson)
+            st.node.prunedGap.via = null
+            fake.statusJson = JSON.stringify(st)
+        },
+        function (v) {
+            expect("gap notice", shown("prunedGapNotice"), true)
+            expect("no via line", shown("prunedGapLine"), false)
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+            var cert = { certSha256: "ab".repeat(32), subject: "CN=electrs.lan", issuer: "CN=electrs.lan", notBefore: "2026-10-11T01:43:03Z", notAfter: "2126-09-17T01:43:03Z", trusted: false }
+            fake.sourcesJson = JSON.stringify({ network: "regtest", configured: true, walletOpen: false, exposes: [], withoutTor: [], sources: [
+                { id: "mine", kind: "electrum", url: "ssl://electrs.lan:50002", operator: "electrs.lan", label: "My server", use: true, history: true, tor: false, lan: true, route: "direct", userAdded: true, certificate: cert },
+                { id: "plain", kind: "electrum", url: "tcp://192.168.1.20:50001", operator: "192.168.1.20", label: "Plain", use: true, history: false, tor: false, lan: true, route: "direct", userAdded: true, encrypted: false },
+                { id: "newsrv", kind: "electrum", url: "ssl://new.lan:50002", operator: "new.lan", label: "New", use: true, history: false, tor: false, lan: true, route: "direct", userAdded: true }] })
+            find(view.item, "networkSettingsButton", 0).clicked()
+        },
+        function (v) {
+            expect("untrusted certificate shown", String(prop("certDetails_mine", "text")).indexOf("Subject CN=electrs.lan, issued by CN=electrs.lan") === 0, true)
+            expect("trust offered", shown("trustCert_mine"), true)
+            expect("plain text marked", shown("notEncryptedBadge_plain"), true)
+            expect("tls not marked", shown("notEncryptedBadge_mine"), false)
+            expect("check offered", shown("probeSource_newsrv"), true)
+            find(view.item, "trustCert_mine", 0).clicked()
+            expect("pinned", fake.last("setSource"), ["setSource", "mine", JSON.stringify({ certSha256: "ab".repeat(32) })])
+            var s = JSON.parse(fake.sourcesJson)
+            s.sources[0].certSha256 = "ab".repeat(32)
+            fake.sourcesJson = JSON.stringify(s)
+            fake.probeJson = JSON.stringify({ sourceId: "newsrv", state: "probing" })
+        },
+        function (v) {
+            expect("pin shown", prop("certPin_mine", "text"), "Pinned certificate, SHA-256 " + Array(33).join("AB:").slice(0, -1))
+            expect("pinned badge", shown("pinnedBadge_mine"), true)
+            expect("no trust once pinned", shown("trustCert_mine"), false)
+            expect("probing", shown("certProbing_newsrv"), true)
+            find(view.item, "removePin_mine", 0).clicked()
+            expect("unpinned", fake.last("setSource"), ["setSource", "mine", JSON.stringify({ certSha256: null })])
+            fake.probeJson = JSON.stringify({ sourceId: "newsrv", state: "done", certificate: { certSha256: "cd".repeat(32), subject: "CN=new.lan", issuer: "CN=Example CA", notBefore: "2026-01-01T00:00:00Z", notAfter: "2027-01-01T00:00:00Z", trusted: true } })
+            var st = JSON.parse(scene.syncedMainnet)
+            st.network = "regtest"
+            fake.statusJson = JSON.stringify(st)
+        },
+        function (v) {
+            expect("a probed certificate", String(prop("certDetails_newsrv", "text")).indexOf("issued by CN=Example CA") > 0, true)
+            v.selectTab(4)
+            expect("locked while open", shownAny("pinLocked_mine"), true)
+            expect("no unpin while open", shownAny("removePin_mine"), false)
+            expect("no trust while open", shownAny("trustCert_newsrv"), false)
         }
     ]
     property int step: 0

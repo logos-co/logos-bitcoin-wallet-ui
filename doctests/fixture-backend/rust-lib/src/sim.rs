@@ -1,5 +1,7 @@
 //! The scripted wallet behind the fixture: states move on a clock, a send's fate is its amount, and
-//! the first send that goes out turns the history server suspect. No network, no key.
+//! the first send that goes out turns the history server suspect. A wallet opens without a birthday,
+//! a reorg re-anchors one payment 5 s after the first open is ready, and Kyoto in use is the
+//! authority and names a refused chain 3 s after it is. No network, no key.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -26,6 +28,14 @@ const TIP_AGE_SECS: u64 = 240;
 const OPEN_APPROVE: Duration = Duration::from_secs(4);
 const STEP: Duration = Duration::from_millis(1000);
 const SYNC_TIME: Duration = Duration::from_secs(3);
+const RESCAN_TIME: Duration = Duration::from_secs(4);
+const REORG_AFTER: Duration = Duration::from_secs(5);
+const AUTHORITY_ALERT_AFTER: Duration = Duration::from_secs(3);
+const KYOTO_PEERS: u64 = 4;
+/// The wallet's first payment, a fixed day so a birthday after it is refused the same way every run.
+const FIRST_TX_DAY: &str = "2026-05-31";
+// The core's own refusals.
+const BIRTHDAY_FUTURE: &str = "the birthday is in the future";
 
 pub enum Event {
     WalletState(Value),
@@ -99,6 +109,7 @@ struct Send {
     cancelling: bool,
     abandoned: bool,
     small_change: bool,
+    to_fee: u64,
     created: u64,
     updated: u64,
 }
@@ -114,6 +125,8 @@ struct Source {
     history: bool,
     tor: bool,
     suspect: bool,
+    pin: Option<String>,
+    user_added: bool,
 }
 
 pub struct Sim {
@@ -144,6 +157,15 @@ pub struct Sim {
     change: u64,
     alert_at: Option<Instant>,
     alerted: bool,
+    birthday_height: u64,
+    birthday_source: String,
+    rescan_from: Option<u64>,
+    rescan_until: Option<Instant>,
+    reorg_at: Option<Instant>,
+    reorged: bool,
+    last_reorg: Value,
+    authority_alert_at: Option<Instant>,
+    authority_alerted: bool,
     last_status: String,
     last_balance: String,
 }
@@ -200,6 +222,11 @@ fn tip(network: &str) -> u64 {
     }
 }
 
+/// A block hash for a height: fake, and plain about it.
+fn block_hash(height: u64) -> String {
+    format!("{:064x}", 0xb10c_0000_0000u64 + height)
+}
+
 fn birthday(network: &str) -> u64 {
     tip(network).saturating_sub(123)
 }
@@ -254,6 +281,68 @@ fn normalize(kind: &str, url: &str) -> Result<String, String> {
     })
 }
 
+/// Days since 1970-01-01 of a YYYY-MM-DD day (Hinnant's days_from_civil), or None.
+fn day_number(day: &str) -> Option<i64> {
+    let p: Vec<&str> = day.split('-').collect();
+    let [y, m, d] = p.as_slice() else { return None };
+    if y.len() != 4 || m.len() != 2 || d.len() != 2 {
+        return None;
+    }
+    let (y, m, d): (i64, i64, i64) = (y.parse().ok()?, m.parse().ok()?, d.parse().ok()?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    Some(era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468)
+}
+
+/// Where a wallet's kind of address began: the scan floor without a birthday.
+fn activation(network: &str, family: &str) -> u64 {
+    match (network, family) {
+        ("mainnet", "bitcoin_taproot") => 709_632,
+        ("mainnet", _) => 481_824,
+        _ => 0,
+    }
+}
+
+fn is_tls(url: &str) -> bool {
+    url.starts_with("ssl://") || url.starts_with("https://")
+}
+
+/// A server's certificate as the node module's probe shows it: CA-signed for the example operator,
+/// self-signed for a server of your own, trusted then only through its pin.
+fn certificate(s: &Source) -> Option<Value> {
+    if !is_tls(&s.url) {
+        return None;
+    }
+    let host = host_of(&s.url);
+    // FNV-1a over the host: the same fingerprint on every build, so a doctest can name it.
+    let fnv = host.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+    let sha = format!("{fnv:016x}").repeat(4);
+    let ca = host.ends_with(".example");
+    let trusted = s.pin.as_deref().map_or(ca, |p| p == sha);
+    Some(json!({"certSha256": sha, "subject": format!("CN={host}"), "issuer": if ca { "CN=Example CA".to_string() } else { format!("CN={host}") },
+                "notBefore": "2026-10-11T01:43:03Z", "notAfter": "2126-09-17T01:43:03Z", "trusted": trusted}))
+}
+
+/// A pin as the node module stores it: 64 hex digits, colons allowed, lowercase.
+fn parse_pin(v: &Value) -> Result<Option<String>, String> {
+    match v {
+        Value::Null => Ok(None),
+        Value::String(t) if t.trim().is_empty() => Ok(None),
+        Value::String(t) => {
+            let hex: String = t.trim().chars().filter(|c| *c != ':').collect::<String>().to_ascii_lowercase();
+            if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) { Ok(Some(hex)) } else {
+                Err("invalid parameters: certSha256 is 64 hex digits".into())
+            }
+        }
+        _ => Err("invalid parameters: certSha256 is a string or null".into()),
+    }
+}
+
 fn site(host: &str) -> String {
     if is_lan(host) {
         return "you".into();
@@ -265,7 +354,7 @@ fn site(host: &str) -> String {
 fn defaults() -> Vec<Source> {
     let s = |id: &str, kind: &str, url: &str, op: &str, label: &str, on: bool| Source {
         id: id.into(), kind: kind.into(), url: url.into(), operator: op.into(), label: label.into(),
-        enabled: on, history: false, tor: true, suspect: false,
+        enabled: on, history: false, tor: true, suspect: false, pin: None, user_added: false,
     };
     vec![
         s("kyoto", "kyoto", "p2p://peer-list", "peers", "Kyoto peers", false),
@@ -304,6 +393,15 @@ impl Sim {
             change: 0,
             alert_at: None,
             alerted: false,
+            birthday_height: 0,
+            birthday_source: String::new(),
+            rescan_from: None,
+            rescan_until: None,
+            reorg_at: None,
+            reorged: false,
+            last_reorg: Value::Null,
+            authority_alert_at: None,
+            authority_alerted: false,
             last_status: String::new(),
             last_balance: String::new(),
         };
@@ -360,7 +458,14 @@ impl Sim {
 
     // ---- reads ---------------------------------------------------------------------------------
 
+    fn kyoto(&self) -> bool {
+        self.sources.get(&self.net()).is_some_and(|l| l.iter().any(|s| s.enabled && s.kind == "kyoto"))
+    }
+
     fn peers(&self) -> u64 {
+        if self.kyoto() {
+            return KYOTO_PEERS;
+        }
         self.sources.get(&self.net()).map_or(0, |l| l.iter().filter(|s| s.enabled && s.kind == "electrum" && !s.suspect).count() as u64)
     }
 
@@ -378,9 +483,10 @@ impl Sim {
 
     pub fn status(&self, now: Instant) -> Value {
         let open = self.open();
+        let kyoto = open && self.kyoto();
         let authority = if open {
-            json!({"kind": "electrum_headers", "height": tip(&self.network), "hash": "00000000000000000002f1c4fixture",
-                   "tipAgeSecs": TIP_AGE_SECS, "peers": self.peers()})
+            json!({"kind": if kyoto { "kyoto" } else { "electrum_headers" }, "height": tip(&self.network),
+                   "hash": "00000000000000000002f1c4fixture", "tipAgeSecs": TIP_AGE_SECS, "peers": self.peers()})
         } else {
             json!({"kind": null, "height": null, "hash": null, "tipAgeSecs": null, "peers": 0})
         };
@@ -388,9 +494,13 @@ impl Sim {
             "ok": true, "state": self.state.name(), "network": if self.locked() { json!(self.network) } else { Value::Null },
             "group": if self.group.is_empty() { Value::Null } else { json!(self.group) },
             "family": if self.family.is_empty() { Value::Null } else { json!(self.family) },
-            "openHandle": self.handle, "approvalHandle": null, "needsBirthday": false,
-            "birthday": if open { json!(birthday(&self.network)) } else { Value::Null },
-            "birthdaySource": if open { json!("keystore") } else { Value::Null },
+            "openHandle": self.handle, "approvalHandle": null, "needsBirthday": open && self.birthday_source == "activation",
+            "birthday": if open { json!(self.birthday_height) } else { Value::Null },
+            "birthdaySource": if open { json!(self.birthday_source) } else { Value::Null },
+            "rescanFrom": if open { json!(self.rescan_from) } else { Value::Null },
+            "lastReorg": if open { self.last_reorg.clone() } else { Value::Null },
+            "kyoto": if kyoto { json!({"running": true, "phase": "synced", "headers": tip(&self.network), "progress": 1.0, "connected": KYOTO_PEERS}) } else { Value::Null },
+            "node": null,
             "lastError": null, "synced": self.state == WState::Ready, "busy": false, "authority": authority,
             "activeNetwork": self.active, "label": self.label, "openSend": self.open_send(),
         });
@@ -399,6 +509,15 @@ impl Sim {
             let (b, h) = (birthday(&self.network), tip(&self.network));
             v["syncPercent"] = json!(if t >= h { 100 } else { (t - b) * 100 / (h - b) });
             v["historyServer"] = json!("electrum.example");
+        }
+        // A rescan reports a share done only under Kyoto; a server's full scan has no height to count.
+        if let (Some(_), Some(until)) = (self.rescan_from, self.rescan_until) {
+            if kyoto {
+                let left = until.saturating_duration_since(now).as_secs_f64() / RESCAN_TIME.as_secs_f64();
+                v["syncPercent"] = json!(((1.0 - left.min(1.0)) * 100.0).floor() as u64);
+            } else if let Some(m) = v.as_object_mut() {
+                m.remove("syncPercent");
+            }
         }
         v
     }
@@ -486,8 +605,18 @@ impl Sim {
         let lan = is_lan(&host_of(&s.url)) && s.kind != "kyoto";
         let onion = host_of(&s.url).ends_with(".onion");
         let route = if lan { "direct" } else if onion { "onion" } else if s.tor { "tor" } else { "direct" };
-        json!({"id": s.id, "kind": s.kind, "url": s.url, "operator": s.operator, "label": s.label, "use": s.enabled,
-               "history": s.history, "tor": s.tor, "lan": lan, "hasCredentials": false, "route": route, "suspect": s.suspect})
+        let mut v = json!({"id": s.id, "kind": s.kind, "url": s.url, "operator": s.operator, "label": s.label, "use": s.enabled,
+                           "history": s.history, "tor": s.tor, "lan": lan, "hasCredentials": false, "route": route, "suspect": s.suspect});
+        if let Some(p) = &s.pin {
+            v["certSha256"] = json!(p);
+        }
+        if s.user_added {
+            v["userAdded"] = json!(true);
+        }
+        if s.kind != "kyoto" {
+            v["encrypted"] = json!(is_tls(&s.url) || onion);
+        }
+        v
     }
 
     pub fn sources(&self) -> Value {
@@ -517,6 +646,9 @@ impl Sim {
                     v["tipHeight"] = json!(tip(&net).to_string());
                     v["rttMs"] = json!(if is_lan(&host_of(&s.url)) { "12" } else { "480" });
                     v["checkedAt"] = json!(now_s.to_string());
+                    if let Some(c) = certificate(s) {
+                        v["certificate"] = c;
+                    }
                 }
                 v
             })
@@ -530,11 +662,35 @@ impl Sim {
                 .filter(|s| s.enabled && s.kind != "kyoto")
                 .map(|s| json!({"id": s.id, "url": s.url, "operator": s.operator, "kind": s.kind,
                                 "state": if s.suspect { "suspect" } else { "ok" }, "suspect": s.suspect,
-                                "history": s.id == "electrum.example"}))
+                                "history": s.id == "electrum.example", "encrypted": is_tls(&s.url)}))
                 .collect();
             out["wallet"] = json!({"ok": true, "proxy": self.proxy, "crossCheck": false, "sources": wallet});
         }
         out
+    }
+
+    /// The node module's probe: the health of one source, or of every enabled server for "".
+    pub fn probe(&self, params: &str) -> Value {
+        let p: Value = match serde_json::from_str(params) {
+            Ok(v) => v,
+            Err(e) => return json!({"ok": false, "error": format!("probe: {e}")}),
+        };
+        let Some(source) = p["source"].as_str().map(str::trim) else {
+            return json!({"ok": false, "error": "source is required: a source id, or \"\" for every enabled server"});
+        };
+        let mut h = self.source_health(now_secs());
+        let rows: Vec<Value> = h["sources"].as_array().cloned().unwrap_or_default().into_iter()
+            .filter(|r| if source.is_empty() { r["use"] == true && r["kind"] != "kyoto" } else { r["id"] == source })
+            .collect();
+        if rows.is_empty() && !source.is_empty() {
+            return json!({"ok": false, "error": format!("unknown source {source}")});
+        }
+        h["answered"] = json!(rows.iter().map(|r| r["id"].clone()).collect::<Vec<_>>());
+        h["sources"] = json!(rows);
+        if let Some(m) = h.as_object_mut() {
+            m.remove("wallet");
+        }
+        h
     }
 
     pub fn exposure(&self) -> Value {
@@ -591,6 +747,10 @@ impl Sim {
         if s.small_change {
             warnings.push(json!({"kind": "change_too_small", "amountSat": change.to_string(), "costToSpendSat": "408",
                                  "message": "The change is worth less than it costs to spend at this fee rate; it can be added to the fee instead."}));
+        }
+        if s.to_fee > 0 {
+            warnings.push(json!({"kind": "change_to_fee", "amountSat": s.to_fee.to_string(), "costToSpendSat": "408",
+                                 "message": "The change was worth less than it costs to spend at this fee rate, so it went to the fee."}));
         }
         let change_rows: Vec<Value> = if change > 0 {
             vec![json!({"address": address(&self.network, 'q', 7), "amountSat": change.to_string(), "amountBtc": btc_of(change)})]
@@ -716,9 +876,10 @@ impl Sim {
         for _ in 0..6 {
             txids.push(self.txid());
         }
+        let first = day_number(FIRST_TX_DAY).map_or(now, |d| d as u64 * 86_400 + 43_200);
         let row = |txid: &str, intent: &str, amount: u64, fee: Option<u64>, state: &str, height: Option<u64>, extra: Value| {
             let mut r = json!({"txid": txid, "intent": intent, "amountSat": amount.to_string(), "feeSat": fee.map(|f| f.to_string()),
-                               "coins": null, "counterparties": [], "height": height,
+                               "coins": null, "counterparties": [], "height": height, "blockHash": height.map(block_hash),
                                "confirmations": height.map_or(0, |h| t.saturating_sub(h) + 1), "time": now - 600 * (1 + height.map_or(0, |h| t - h.min(t))),
                                "state": state, "replaces": null, "replacedBy": null, "reportedBy": null,
                                "amountBtc": btc_of(amount), "feeBtc": fee.map_or(String::new(), btc_of)});
@@ -735,7 +896,7 @@ impl Sim {
             row(&txids[2], "self", 1_000_000, Some(141), "confirmed", Some(t - 3), json!({"counterparties": [own]})),
             row(&txids[3], "combine", 2_400_000, Some(312), "confirmed", Some(t - 20), json!({"coins": 3})),
             row(&txids[4], "send", 200_000, Some(220), "confirmed", Some(t - 40), json!({"counterparties": [them]})),
-            row(&txids[5], "receive", 125_000_000, None, "confirmed", Some(t - 100), json!({})),
+            row(&txids[5], "receive", 125_000_000, None, "confirmed", Some(t - 100), json!({"time": first})),
         ];
     }
 
@@ -797,6 +958,9 @@ impl Sim {
         };
         let small_change = amount == SMALL_CHANGE_SAT;
         let input = if small_change { amount + fee + 400 } else if p["sendMax"] == true { COIN_SAT } else { COIN_SAT.max(amount + fee) };
+        // With smallChangeToFee the too-small change goes to the fee, and the warning says so.
+        let to_fee = if small_change && p["smallChangeToFee"] == true { 400 } else { 0 };
+        let fee = fee + to_fee;
         self.next_send += 1;
         let id = format!("s{}", self.next_send);
         // Named by what it pays, so a doctest can address its row whatever came before it.
@@ -809,7 +973,8 @@ impl Sim {
         self.sends.insert(self.next_send, Send {
             id: id.clone(), kind: kind.into(), requester: requester.into(), state: "preparing".into(), error: None, code: None,
             fate, stage_at: now, amount, fee, fee_rate: rate, input, recipient, txid, replaces, approval: None, handle: None,
-            broadcast: None, via: None, cancelling: false, abandoned: false, small_change, created: t, updated: t,
+            broadcast: None, via: None, cancelling: false, abandoned: false, small_change: small_change && to_fee == 0, to_fee,
+            created: t, updated: t,
         });
         out.push(Event::SendStatus(id.clone(), "preparing".into()));
         json!({"ok": true, "requestId": id})
@@ -860,6 +1025,46 @@ impl Sim {
         json!({"ok": true, "jobId": j, "requestId": sid, "txid": txid, "note": ABANDONED})
     }
 
+    /// `{ date }` or `{ height }`, as the backend parses it; the core's refusals come back as a failed job.
+    pub fn set_birthday(&mut self, params: &str, now: Instant) -> Value {
+        if !self.open() {
+            return json!({"ok": false, "error": "no wallet is open"});
+        }
+        let p: Value = match serde_json::from_str::<Value>(params) {
+            Ok(v) if v.is_object() => v,
+            _ => return json!({"ok": false, "error": "set_birthday takes { date: \"YYYY-MM-DD\" } or { height }"}),
+        };
+        let (date, height) = (p.get("date").filter(|v| !v.is_null()), p.get("height").filter(|v| !v.is_null()));
+        let net = self.network.clone();
+        let first_height = tip(&net) - 100;
+        let first_day = day_number(FIRST_TX_DAY).unwrap_or(0);
+        let today = (now_secs() / 86_400) as i64;
+        let floor = activation(&net, &self.family);
+        let outcome: Result<u64, String> = match (date, height) {
+            (Some(Value::String(d)), None) => match day_number(d.trim()) {
+                None => return json!({"ok": false, "error": "set_birthday takes { date: \"YYYY-MM-DD\" } or { height }"}),
+                Some(n) if n > today => Err(BIRTHDAY_FUTURE.into()),
+                Some(n) if n > first_day => Err(format!("the wallet has a transaction from before {}, at height {first_height}", d.trim())),
+                Some(n) => Ok(tip(&net).saturating_sub(((today - n).max(0) as u64) * 144 + 288).max(floor)),
+            },
+            (None, Some(Value::Number(h))) if h.as_u64().is_some_and(|h| h <= u32::MAX as u64) => {
+                let h = h.as_u64().unwrap_or(0);
+                if h > first_height { Err(format!("the wallet has a transaction at height {first_height}, before a birthday at {h}")) }
+                else { Ok(h.saturating_sub(288).max(floor)) }
+            }
+            (Some(_), Some(_)) => return json!({"ok": false, "error": "give date or height, not both"}),
+            _ => return json!({"ok": false, "error": "set_birthday takes { date: \"YYYY-MM-DD\" } or { height }"}),
+        };
+        let j = self.job("set_birthday", now, None);
+        if let Some(job) = self.jobs.get_mut(&j) {
+            match outcome {
+                Ok(from) => job.result = json!({"birthday": {"height": from, "source": "set"}, "rescanFrom": from}),
+                Err(e) => job.error = Some(e),
+            }
+        }
+        json!({"ok": true, "jobId": j})
+    }
+
     pub fn set_sources(&mut self, list: &str) -> Value {
         if self.locked() {
             return json!({"ok": false, "error": LOCKED});
@@ -887,14 +1092,27 @@ impl Sim {
             };
             let host = host_of(&url);
             let given = |k: &str| it[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
-            let suspect = current.iter().any(|c| c.id == id && c.suspect);
+            let was = current.iter().find(|c| c.id == id);
+            let suspect = was.is_some_and(|c| c.suspect);
+            // A pin is kept when the entry leaves it out, and set or cleared when it names one.
+            let pin = match it.get("certSha256") {
+                None => was.and_then(|c| c.pin.clone()),
+                Some(v) => match parse_pin(v) {
+                    Ok(p) => p,
+                    Err(e) => return json!({"ok": false, "error": format!("{id}: {e}")}),
+                },
+            };
+            if pin.is_some() && !is_tls(&url) {
+                return json!({"ok": false, "error": format!("{id}: invalid parameters: certSha256 pins a TLS server (ssl:// or https://)")});
+            }
+            let user_added = was.map_or(!defaults().iter().any(|d| d.id == id), |c| c.user_added);
             out.push(Source {
                 operator: given("operator").unwrap_or_else(|| if kind == "kyoto" { "peers".into() } else { site(&host) }),
                 label: given("label").unwrap_or_else(|| host.clone()),
                 enabled: it["use"].as_bool().unwrap_or(true),
                 history: it["history"].as_bool().unwrap_or(false),
                 tor: it["tor"].as_bool().unwrap_or(true),
-                id, kind, url, suspect,
+                id, kind, url, suspect, pin, user_added,
             });
         }
         self.sources.insert(self.active.clone(), out);
@@ -915,6 +1133,16 @@ impl Sim {
         };
         if c["tor"] == false && host_of(&s.url).ends_with(".onion") {
             return json!({"ok": false, "error": format!("{id}: an onion service is reached through Tor only")});
+        }
+        if let Some(v) = c.get("certSha256") {
+            let pin = match parse_pin(v) {
+                Ok(p) => p,
+                Err(e) => return json!({"ok": false, "error": e}),
+            };
+            if pin.is_some() && !is_tls(&s.url) {
+                return json!({"ok": false, "error": "invalid parameters: certSha256 pins a TLS server (ssl:// or https://)"});
+            }
+            s.pin = pin;
         }
         if let Some(v) = c["use"].as_bool() {
             s.enabled = v;
@@ -975,6 +1203,9 @@ impl Sim {
                 self.state = WState::Syncing;
                 self.since = now;
                 self.seed_wallet();
+                // Restored without a birthday: the scan starts where its kind of address began.
+                self.birthday_height = activation(&self.network, &self.family);
+                self.birthday_source = "activation".into();
                 let entry = json!({"group": self.group, "family": self.family, "network": self.network, "label": self.label,
                                    "birthday": birthday(&self.network), "firstOpened": now_secs(), "lastOpened": now_secs()});
                 self.wallets.retain(|w| w["group"] != entry["group"]);
@@ -988,10 +1219,17 @@ impl Sim {
             WState::Syncing if elapsed >= SYNC_TIME => {
                 self.state = WState::Ready;
                 self.since = now;
+                if !self.reorged && self.reorg_at.is_none() {
+                    self.reorg_at = Some(now + REORG_AFTER);
+                }
             }
             WState::Closing if elapsed >= STEP => {
                 self.reset();
                 self.alert_at = None;
+                self.rescan_from = None;
+                self.rescan_until = None;
+                self.authority_alert_at = None;
+                self.last_reorg = Value::Null;
                 if let Some(j) = self.close_job.take() {
                     self.finish(&j, "done", None, json!({"closed": true}), &mut out);
                 }
@@ -1003,6 +1241,25 @@ impl Sim {
         if self.alert_at.is_some_and(|t| now >= t) && self.open() {
             self.alert_at = None;
             self.raise_alert(&mut out);
+        }
+        if self.rescan_until.is_some_and(|t| now >= t) {
+            self.rescan_until = None;
+            self.rescan_from = None;
+        }
+        if self.reorg_at.is_some_and(|t| now >= t) && self.state == WState::Ready {
+            self.reorg_at = None;
+            self.reorg(now);
+        }
+        // Kyoto as the authority names a chain the checks refuse, once.
+        if self.state == WState::Ready && self.kyoto() && !self.authority_alerted && self.authority_alert_at.is_none() {
+            self.authority_alert_at = Some(now + AUTHORITY_ALERT_AFTER);
+        }
+        if self.authority_alert_at.is_some_and(|t| now >= t) && self.open() {
+            self.authority_alert_at = None;
+            self.authority_alerted = true;
+            out.push(Event::SourceAlert(json!({"source": "kyoto", "kind": "authority_suspect",
+                "detail": "a filter header its peers agreed on does not match the block they sent", "at": now_secs(),
+                "network": self.network, "group": self.group})));
         }
         // Change events, as the backend sends them: on what the status says, and on amounts.
         let st = self.status(now);
@@ -1021,6 +1278,17 @@ impl Sim {
             out.push(Event::Balance(b));
         }
         out
+    }
+
+    /// The seeded transfer to yourself, three blocks deep, confirms again in a new block at its height.
+    fn reorg(&mut self, now: Instant) {
+        let Some(row) = self.history.iter_mut().find(|r| r["intent"] == "self" && r["state"] == "confirmed") else { return };
+        let height = row["height"].as_u64().unwrap_or(0);
+        row["blockHash"] = json!(format!("{:064x}", 0x0e0e_0000_0000u64 + height));
+        let txid = row["txid"].clone();
+        self.reorged = true;
+        self.last_reorg = json!({"height": height, "depth": 1, "moved": [txid], "at": now_secs()});
+        let _ = now;
     }
 
     fn raise_alert(&mut self, out: &mut Vec<Event>) {
@@ -1055,7 +1323,8 @@ impl Sim {
                         s.handle = Some(format!("smh_fixture{}", &s.id[1..]));
                         s.stage_at = now;
                     }
-                    ("awaiting_approval", Fate::Approve) if e >= Duration::from_secs(3) => {
+                    // A warning takes the person longer to read: time to add the change to the fee.
+                    ("awaiting_approval", Fate::Approve) if e >= Duration::from_secs(if s.small_change { 8 } else { 3 }) => {
                         s.state = "committing".into();
                         s.approval = Some("settled".into());
                         s.stage_at = now;
@@ -1108,9 +1377,9 @@ impl Sim {
 
     fn record_sent(&mut self, txid: &str, kind: &str, amount: u64, fee: u64, input: u64, recipient: &str, replaces: Option<&str>) {
         let mut row = json!({"txid": txid, "intent": if kind == "fee_bump" { "fee_bump" } else { "send" }, "amountSat": amount.to_string(),
-                             "feeSat": fee.to_string(), "coins": null, "counterparties": [recipient], "height": null, "confirmations": 0,
-                             "time": now_secs(), "state": "sent", "replaces": replaces, "replacedBy": null, "reportedBy": null,
-                             "amountBtc": btc_of(amount), "feeBtc": btc_of(fee)});
+                             "feeSat": fee.to_string(), "coins": null, "counterparties": [recipient], "height": null, "blockHash": null,
+                             "confirmations": 0, "time": now_secs(), "state": "sent", "replaces": replaces, "replacedBy": null,
+                             "reportedBy": null, "sendState": "sent", "amountBtc": btc_of(amount), "feeBtc": btc_of(fee)});
         if let Some(old) = replaces {
             if let Some(r) = self.history.iter_mut().find(|r| r["txid"] == old) {
                 r["state"] = json!("replaced");
@@ -1128,7 +1397,7 @@ impl Sim {
         let due: Vec<String> = self
             .jobs
             .iter()
-            .filter(|(_, j)| j.state == "running" && (j.kind == "rebroadcast" || j.kind == "abandon_send") && now.saturating_duration_since(j.at) >= STEP)
+            .filter(|(_, j)| j.state == "running" && matches!(j.kind.as_str(), "rebroadcast" | "abandon_send" | "set_birthday") && now.saturating_duration_since(j.at) >= STEP)
             .map(|(id, _)| id.clone())
             .collect();
         for id in due {
@@ -1137,6 +1406,23 @@ impl Sim {
                 (j.kind.clone(), j.send.clone().unwrap_or_default())
             };
             let n = send.strip_prefix('s').and_then(|n| n.parse::<u64>().ok()).unwrap_or(0);
+            if kind == "set_birthday" {
+                let (result, error) = {
+                    let j = &self.jobs[&id];
+                    (j.result.clone(), j.error.clone())
+                };
+                if let Some(e) = error {
+                    self.finish(&id, "failed", Some(e), Value::Null, out);
+                } else {
+                    let from = result["rescanFrom"].as_u64().unwrap_or(0);
+                    self.birthday_height = from;
+                    self.birthday_source = "set".into();
+                    self.rescan_from = Some(from);
+                    self.rescan_until = Some(now + RESCAN_TIME);
+                    self.finish(&id, "done", None, result, out);
+                }
+                continue;
+            }
             if kind == "abandon_send" {
                 if let Some(s) = self.sends.get_mut(&n) {
                     s.abandoned = true;
@@ -1261,6 +1547,95 @@ mod tests {
         let mut ev = vec![];
         sim.open_wallet(r#"{"family":"bitcoin"}"#, t0, &mut ev);
         assert_eq!(sim.set_source("electrum.example", r#"{"use":false}"#)["error"], LOCKED);
+    }
+
+    #[test]
+    fn a_birthday_is_refused_after_the_first_payment_and_rescans_otherwise() {
+        let (mut sim, t) = opened("signet");
+        assert_eq!(sim.status(t)["needsBirthday"], true);
+        for (params, error) in [(r#"{"date":"2099-01-01"}"#, BIRTHDAY_FUTURE.to_string()),
+                                (r#"{"date":"2026-07-01"}"#, "the wallet has a transaction from before 2026-07-01, at height 290023".to_string())] {
+            let j = sim.set_birthday(params, t)["jobId"].as_str().unwrap().to_string();
+            run(&mut sim, t, 2);
+            let st = sim.job_status(&j);
+            assert_eq!((st["state"].clone(), st["error"].clone()), (json!("failed"), json!(error)));
+        }
+        assert!(sim.set_birthday(r#"{"date":"2026-01-02","height":1}"#, t)["error"].is_string(), "not both");
+        let j = sim.set_birthday(r#"{"height":0}"#, t)["jobId"].as_str().unwrap().to_string();
+        let t = run(&mut sim, t, 2);
+        assert_eq!(sim.job_status(&j)["result"]["rescanFrom"], 0);
+        let st = sim.status(t);
+        assert_eq!((st["needsBirthday"].clone(), st["birthdaySource"].clone(), st["rescanFrom"].clone()), (json!(false), json!("set"), json!(0)));
+        assert!(st.get("syncPercent").is_none(), "a server's full scan reports no share");
+        let t = run(&mut sim, t, 5);
+        assert!(sim.status(t)["rescanFrom"].is_null());
+    }
+
+    #[test]
+    fn small_change_goes_to_the_fee_when_asked() {
+        let (mut sim, t) = opened("signet");
+        let mut ev = vec![];
+        let to = address("signet", 'q', 5);
+        let ask = |small: bool| json!({"recipients": [{"address": to, "amountSat": "50000"}], "feeRate": 6, "smallChangeToFee": small}).to_string();
+        let id = sim.request("send", APP, &ask(false), t, &mut ev)["requestId"].as_str().unwrap().to_string();
+        let t = run(&mut sim, t, 2);
+        assert_eq!(sim.send_status(&id)["summary"]["warnings"][0]["kind"], "change_too_small");
+        sim.cancel_send(&id, t, &mut ev);
+        let t = run(&mut sim, t, 1);
+        let id = sim.request("send", APP, &ask(true), t, &mut ev)["requestId"].as_str().unwrap().to_string();
+        run(&mut sim, t, 2);
+        let summary = sim.send_status(&id)["summary"].clone();
+        assert_eq!((summary["warnings"][0]["kind"].clone(), summary["change"].clone(), summary["feeSat"].clone()),
+                   (json!("change_to_fee"), json!([]), json!("1246")));
+    }
+
+    #[test]
+    fn a_reorg_re_anchors_a_payment_and_kyoto_names_a_refused_chain() {
+        let (mut sim, t) = opened("signet");
+        let t = run(&mut sim, t, 6);
+        let reorg = sim.status(t)["lastReorg"].clone();
+        let moved = reorg["moved"][0].as_str().unwrap().to_string();
+        let row = sim.history(0)["rows"].as_array().unwrap().iter().find(|r| r["txid"] == moved.as_str()).unwrap().clone();
+        assert_eq!((row["intent"].clone(), reorg["height"].clone()), (json!("self"), row["height"].clone()));
+        assert!(row["blockHash"].as_str().unwrap().starts_with("00000000000000000000000000000000000000000000000000000e0e"));
+        let mut ev = vec![];
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 2);
+        assert!(sim.set_source("kyoto", r#"{"use":true}"#)["ok"] == true);
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
+        let mut out = vec![];
+        let mut tt = t;
+        for _ in 0..120 {
+            tt += Duration::from_millis(100);
+            out.extend(sim.tick(tt));
+        }
+        let st = sim.status(tt);
+        assert_eq!((st["authority"]["kind"].clone(), st["authority"]["peers"].clone()), (json!("kyoto"), json!(KYOTO_PEERS)));
+        assert!(out.iter().any(|e| matches!(e, Event::SourceAlert(v) if v["kind"] == "authority_suspect")));
+    }
+
+    #[test]
+    fn your_own_tls_server_shows_its_certificate_until_pinned() {
+        let t0 = Instant::now();
+        let mut sim = Sim::new(false, t0);
+        let mut list = sim.sources()["sources"].as_array().unwrap().clone();
+        list.push(json!({"id": "electrs.lan", "kind": "electrum", "url": "ssl://electrs.lan:50002", "use": true}));
+        list.push(json!({"id": "plain", "kind": "electrum", "url": "192.168.1.20:50001", "use": true}));
+        let r = sim.set_sources(&serde_json::to_string(&list).unwrap());
+        let row = |r: &Value, id: &str| r["sources"].as_array().unwrap().iter().find(|s| s["id"] == id).unwrap().clone();
+        assert_eq!((row(&r, "plain")["encrypted"].clone(), row(&r, "plain")["userAdded"].clone()), (json!(false), json!(true)));
+        let p = sim.probe(r#"{"source":"electrs.lan"}"#);
+        let cert = p["sources"][0]["certificate"].clone();
+        assert_eq!((cert["trusted"].clone(), cert["issuer"].clone()), (json!(false), json!("CN=electrs.lan")));
+        assert_eq!(sim.probe(r#"{"source":""}"#)["answered"].as_array().unwrap().len(), 4, "every enabled server");
+        assert!(sim.set_source("plain", &json!({"certSha256": cert["certSha256"]}).to_string())["error"].as_str().unwrap().contains("TLS"));
+        let pinned = sim.set_source("electrs.lan", &json!({"certSha256": cert["certSha256"]}).to_string());
+        assert_eq!(row(&pinned, "electrs.lan")["certSha256"], cert["certSha256"]);
+        assert_eq!(sim.probe(r#"{"source":"electrs.lan"}"#)["sources"][0]["certificate"]["trusted"], true);
+        let kept = sim.set_sources(&serde_json::to_string(&sim.sources()["sources"]).unwrap());
+        assert_eq!(row(&kept, "electrs.lan")["certSha256"], cert["certSha256"], "kept when the entry names it");
+        let cleared = sim.set_source("electrs.lan", r#"{"certSha256":null}"#);
+        assert!(row(&cleared, "electrs.lan").get("certSha256").is_none());
     }
 
     #[test]

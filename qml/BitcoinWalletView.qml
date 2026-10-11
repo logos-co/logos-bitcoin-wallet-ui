@@ -78,6 +78,9 @@ Item {
     readonly property var exposure: ready ? j(backend.exposureJson, "{}") : ({})
     readonly property var exposureServers: Array.isArray(exposure.servers) ? exposure.servers : []
     readonly property var alerts: ready ? j(backend.alertsJson, "[]") : []
+    // Kyoto naming a chain the checks refuse has a banner of its own; the rest share one.
+    readonly property var authorityAlerts: alerts.filter(function (a) { return a.kind === "authority_suspect" })
+    readonly property var sourceAlerts: alerts.filter(function (a) { return a.kind !== "authority_suspect" })
     readonly property var withoutTor: Array.isArray(sourcesInfo.withoutTor) ? sourcesInfo.withoutTor : []
     readonly property var exposes: Array.isArray(sourcesInfo.exposes) ? sourcesInfo.exposes : []
     readonly property var chainSources: root.chainSourcesOf(sourceList)
@@ -91,6 +94,23 @@ Item {
     property string networkNote: ""
     property string networkNoteAt: ""
     onNetworkLockedChanged: { historyAskedFor = ""; torOffAskedFor = ""; networkNote = "" }
+
+    // ---- the birthday, a reorg, and the local node's pruned gap ----
+    readonly property var birthdayJob: ready && backend.birthdayJson !== "" ? j(backend.birthdayJson, "{}") : ({})
+    readonly property bool needsBirthday: walletOpen && status.needsBirthday === true
+    readonly property bool rescanning: walletOpen && isNum(status.rescanFrom)
+    property bool birthdayAsked: false
+    onBirthdayJobChanged: {
+        if (!root.birthdayAsked || root.birthdayJob.state !== "done") return
+        root.birthdayAsked = false
+        birthdaySheet.close()
+        root.notify("Birthday set", "It looks for payments again from block " + root.group(root.birthdayJob.rescanFrom) + ".")
+    }
+    readonly property var lastReorg: walletOpen && status.lastReorg && typeof status.lastReorg === "object" ? status.lastReorg : null
+    function reanchored(txid) { return !!root.lastReorg && Array.isArray(root.lastReorg.moved) && root.lastReorg.moved.indexOf(txid) >= 0 }
+    readonly property var prunedGap: walletOpen && status.node && status.node.prunedGap && typeof status.node.prunedGap === "object"
+                                     ? status.node.prunedGap : null
+    readonly property var probe: ready && backend.probeJson !== "" ? j(backend.probeJson, "{}") : ({})
 
     // ---- the send on screen ----
     readonly property string sendId: ready ? backend.sendRequestId : ""
@@ -127,6 +147,13 @@ Item {
     onApprovalHandleChanged: if (root.approvalHandle !== "" && root.ownSend && root.approvalHandle !== root.signerAskedFor) root.askSigner()
     property string lastSendState: ""
     onSendStateChanged: {
+        // Read sendState itself: the bindings built on it may not have caught up inside this handler.
+        var st = root.sendState
+        if (root.rebuildAfterCancel !== null && st !== "" && st !== "preparing" && st !== "awaiting_approval" && st !== "committing") {
+            var again = root.rebuildAfterCancel
+            root.rebuildAfterCancel = null
+            if (st === "cancelled") backend.requestSend(JSON.stringify(again))
+        }
         if (root.sendState === "sent" && root.lastSendState !== "")
             root.notify(root.send.kind === "fee_bump" ? "Fee raised" : "Sent", "It shows in Activity, and confirms once mined.")
         root.lastSendState = root.sendState
@@ -199,7 +226,7 @@ Item {
         if (root.ready && !root.networkLocked) backend.setActiveNetwork(network)
     }
     function closeSheets() {
-        reviewSheet.close(); speedUpSheet.close(); forgetSheet.close(); networkSheet.close(); descriptorsSheet.close()
+        reviewSheet.close(); speedUpSheet.close(); forgetSheet.close(); networkSheet.close(); descriptorsSheet.close(); birthdaySheet.close()
     }
     // Public descriptors, shown on Settings until it is left or the wallet closes.
     property var shownDescriptors: null
@@ -285,7 +312,22 @@ Item {
         if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600) return "stalled"
         return caughtUp ? "synced" : "syncing"
     }
+    // What decides the chain, as the sync line names it.
+    function authorityName(st) {
+        var a = st && st.authority ? st.authority : {}
+        var n = root.isNum(a.peers) ? Number(a.peers) : 0
+        if (a.kind === "kyoto") return "Kyoto · " + n + (n === 1 ? " peer" : " peers")
+        if (a.kind === "local_node" || a.kind === "local") return "Your node"
+        if (a.kind === "electrum_headers") return "Servers' headers"
+        return ""
+    }
     function syncLabel(st) {
+        var label = root.syncStateLabel(st)
+        var s = root.syncState(st), name = root.authorityName(st)
+        var named = s === "isolated" || s === "stalled" || s === "syncing" || s === "local" || s === "synced"
+        return named && name !== "" ? label + " · " + name : label
+    }
+    function syncStateLabel(st) {
         var a = st && st.authority ? st.authority : {}
         var age = root.ageText(a.tipAgeSecs)
         var h = root.group(a.height)
@@ -328,13 +370,19 @@ Item {
         return Theme.palette.textSecondary
     }
     // What decides the chain, and how many sources agree on it.
+    // A pruned gap's blocks, from its first to the prune height.
+    function gapBlocks(g) {
+        if (!g || !root.isNum(g.from)) return "older blocks"
+        return root.isNum(g.below) && Number(g.below) - 1 > Number(g.from)
+               ? "blocks " + root.group(g.from) + "–" + root.group(Number(g.below) - 1) : "block " + root.group(g.from)
+    }
     function authorityLine(st) {
         var a = st && st.authority ? st.authority : {}
         var n = root.isNum(a.peers) ? Number(a.peers) : 0
         if (a.kind === "electrum_headers")
             return "The chain: headers from Electrum servers, checked here · " + n + (n === 1 ? " server agrees" : " servers agree")
         if (a.kind === "kyoto") return "The chain: Bitcoin peers, through block filters · " + n + (n === 1 ? " peer" : " peers")
-        if (a.kind === "local") return "The chain: your own node"
+        if (a.kind === "local_node" || a.kind === "local") return "The chain: your own node, checked here"
         return ""
     }
 
@@ -445,6 +493,14 @@ Item {
         if (r.state === "replaced") return "replaced"
         return r.state || ""
     }
+    // The confirming block, and the reorg that moved the payment there.
+    function blockLine(r) {
+        var hash = r.blockHash || ""
+        if (!root.reanchored(r.txid)) return hash
+        var d = root.isNum(root.lastReorg.depth) ? Number(root.lastReorg.depth) : 0
+        return "Moved to a new block by a reorg" + (d > 0 ? " of " + d + (d === 1 ? " block" : " blocks") : "")
+               + ": re-anchored at height " + root.group(r.height) + ", block " + hash
+    }
     function rowStateColor(r) {
         if (r.state === "confirmed") return Theme.palette.success
         if (r.state === "replaced") return Theme.palette.textTertiary
@@ -550,6 +606,7 @@ Item {
         var roles = w.roles ? Array.prototype.slice.call(w.roles) : []
         if (roles.length) parts.push(roles.join(", "))
         if (w.history === true) parts.push("history server")
+        if (w.encrypted === false) parts.push("not encrypted")
         if (w.state !== "ok" && w.suspect !== true && w.error) parts.push(w.error)
         return parts.join(" · ")
     }
@@ -566,6 +623,7 @@ Item {
         if (a.kind === "stale") return "A source is behind"
         if (a.kind === "authority_behind") return "The wallet's chain may be behind"
         if (a.kind === "anchor_mismatch") return "A source reported a payment on another chain"
+        if (a.kind === "authority_suspect") return "Kyoto's peers named a chain the wallet refuses"
         return "A source needs attention"
     }
     // A settings SLOT's reply: "" or the refusal, shown at `at`; `refused` runs on a refusal.
@@ -584,6 +642,34 @@ Item {
                     })
     }
     function setSource(id, changes) { root.networkCall(backend.setSource(id, JSON.stringify(changes)), "sources") }
+    // Plain text outside Tor, by the node module's word or the open wallet's.
+    function notEncrypted(s) {
+        if (s.encrypted === false) return true
+        var w = root.walletViewOf(s.id)
+        return !!w && w.encrypted === false
+    }
+    function isTls(s) { return /^(ssl|https):\/\//i.test(String(s.url || "")) }
+    // A TLS server's certificate: from its row, its health, or the probe just run.
+    function certOf(s) {
+        if (s.certificate && s.certificate.certSha256) return s.certificate
+        var h = root.healthOf(s.id)
+        if (h && h.certificate && h.certificate.certSha256) return h.certificate
+        if (root.probe.sourceId === s.id && root.probe.certificate && root.probe.certificate.certSha256) return root.probe.certificate
+        return null
+    }
+    function fingerprint(hex) {
+        var h = String(hex || "").replace(/:/g, "").toUpperCase()
+        var out = []
+        for (var i = 0; i < h.length; i += 2) out.push(h.substr(i, 2))
+        return out.join(":")
+    }
+    function certText(c) {
+        if (!c) return ""
+        var day = function (t) { return t ? String(t).slice(0, 10) : "?" }
+        return "Subject " + (c.subject || "—") + ", issued by " + (c.issuer || "—")
+               + "\nValid " + day(c.notBefore) + " to " + day(c.notAfter)
+               + "\nSHA-256 " + root.fingerprint(c.certSha256)
+    }
 
     // ---- the Send form ----
     property var recipientCheck: ({})
@@ -672,6 +758,33 @@ Item {
     }
     // Done on a settled send is local: the backend refuses to cancel a final send, and a refusal
     // must not leave the form wedged behind it.
+    // The summary's warnings of a kind, or of every other kind.
+    function warningsOf(kind, same) {
+        var w = root.summary && Array.isArray(root.summary.warnings) ? root.summary.warnings : []
+        return w.filter(function (x) { return (x.kind === kind) === same })
+    }
+    function warningText(w) {
+        if (w.kind === "change_too_small")
+            return "Its " + root.satsText(w.amountSat) + " would cost about " + root.satsText(w.costToSpendSat)
+                   + " to spend at this fee rate." + (root.canAddChangeToFee ? " Add it to the fee to send without it." : "")
+        if (w.kind === "change_to_fee")
+            return root.satsText(w.amountSat) + " of change would have cost about " + root.satsText(w.costToSpendSat)
+                   + " to spend, so it is part of the fee and no change comes back."
+        return String(w.message || w.kind || "")
+    }
+    // Too-small change into the fee: the open send is withdrawn, then the same request asks again with it.
+    readonly property bool canAddChangeToFee: root.ownSend && root.sendLive && !!root.lastRequest && !!root.lastRequest.send
+                                             && root.send.kind !== "fee_bump" && !root.send.cancelling
+    property var rebuildAfterCancel: null
+    function addChangeToFee() {
+        var r = root.lastRequest
+        if (!r || !r.send) return
+        var req = JSON.parse(JSON.stringify(r.send))
+        req.smallChangeToFee = true
+        root.lastRequest = { send: req }
+        if (root.sendLive) { root.rebuildAfterCancel = req; backend.cancelSend() }
+        else backend.requestSend(JSON.stringify(req))
+    }
     function finishSend() {
         var s = root.sendState
         backend.dismissSend()
@@ -825,6 +938,10 @@ Item {
                                          text: "Without Tor"; color: Theme.palette.warning }
                             LogosBadge { objectName: "suspectBadge_" + modelData.id; visible: modelData.suspect === true
                                          text: "Suspect"; color: Theme.palette.error }
+                            LogosBadge { objectName: "notEncryptedBadge_" + modelData.id; visible: root.notEncrypted(modelData)
+                                         text: "Not encrypted"; color: Theme.palette.warning }
+                            LogosBadge { objectName: "pinnedBadge_" + modelData.id; visible: !!modelData.certSha256
+                                         text: "Pinned"; color: Theme.palette.textSecondary }
                             // Takes the free space but asks for none, so a long error elides instead of
                             // widening the row and pushing its switches out.
                             LogosText { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight
@@ -880,6 +997,14 @@ Item {
                                 onClicked: root.networkCall(backend.clearSuspect(modelData.id), "sources")
                             }
                             LogosButton {
+                                objectName: "probeSource_" + modelData.id
+                                visible: root.isTls(modelData) && !modelData.certSha256 && !root.certOf(modelData)
+                                         && !(root.probe.sourceId === modelData.id && root.probe.state === "probing")
+                                text: "Check certificate"
+                                enabled: root.ready
+                                onClicked: backend.probeSource(modelData.id)
+                            }
+                            LogosButton {
                                 objectName: "removeSource_" + modelData.id
                                 visible: !root.networkLocked && sourceRow.server
                                 text: "Remove"
@@ -914,6 +1039,45 @@ Item {
                                 LogosButton { objectName: "keepTor_" + modelData.id; text: "Keep Tor"
                                               onClicked: root.torOffAskedFor = "" }
                             ]
+                        }
+                        // A pinned certificate, or one to look at before trusting it: untrusted, or just probed.
+                        ColumnLayout {
+                            id: certPane
+                            objectName: "certPane_" + modelData.id
+                            readonly property var cert: root.certOf(modelData)
+                            readonly property bool pinned: !!modelData.certSha256
+                            readonly property bool mine: root.probe.sourceId === modelData.id
+                            visible: pinned || (mine && root.probe.state !== "done") || (!!cert && (cert.trusted === false || mine))
+                            Layout.fillWidth: true
+                            spacing: Theme.spacing.tiny
+                            LogosText { objectName: "certProbing_" + modelData.id; visible: certPane.mine && root.probe.state === "probing"
+                                        font.pixelSize: 12; color: Theme.palette.textSecondary; text: "Checking the server…" }
+                            LogosText { objectName: "certProbeError_" + modelData.id; visible: certPane.mine && root.probe.state === "failed"
+                                        Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; font.pixelSize: 12
+                                        color: Theme.palette.warning; text: "Could not check it: " + (root.probe.error || "") }
+                            RowLayout {
+                                visible: certPane.pinned
+                                Layout.fillWidth: true
+                                LogosText { objectName: "certPin_" + modelData.id; Layout.fillWidth: true; Layout.preferredWidth: 1
+                                            wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText; font.pixelSize: 11
+                                            text: "Pinned certificate, SHA-256 " + root.fingerprint(modelData.certSha256) }
+                                LogosButton { objectName: "removePin_" + modelData.id; visible: !root.networkLocked; text: "Remove pin"
+                                              enabled: root.ready; onClicked: root.setSource(modelData.id, { certSha256: null }) }
+                            }
+                            LogosText { objectName: "certDetails_" + modelData.id; visible: !certPane.pinned && !!certPane.cert
+                                        Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText; font.pixelSize: 11
+                                        text: root.certText(certPane.cert) }
+                            LogosText { visible: !certPane.pinned && !!certPane.cert; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        font.pixelSize: 12; color: certPane.cert && certPane.cert.trusted === false ? Theme.palette.warning : Theme.palette.textSecondary
+                                        text: certPane.cert && certPane.cert.trusted === false
+                                              ? "No authority this computer trusts signed it. Compare the fingerprint with the one its operator gives you before you trust it."
+                                              : "An authority this computer trusts signed it. Trusting it pins it: from then on only this certificate is accepted." }
+                            LogosButton { objectName: "trustCert_" + modelData.id; visible: !certPane.pinned && !!certPane.cert && !root.networkLocked
+                                          text: "Trust this certificate"; enabled: root.ready
+                                          onClicked: root.setSource(modelData.id, { certSha256: certPane.cert.certSha256 }) }
+                            LogosText { objectName: "pinLocked_" + modelData.id; visible: root.networkLocked && (certPane.pinned || !!certPane.cert)
+                                        Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                        text: "Pins change only while no wallet is open, like the other source settings: close the wallet to trust or remove one." }
                         }
                     }
                 }
@@ -1045,13 +1209,27 @@ Item {
             message: shown ? String(root.status.error || "") : ""
         }
         LogosNotice {
+            objectName: "authoritySuspectBanner"
+            Layout.fillWidth: true
+            severity: LogosNotice.Error
+            shown: root.walletOpen && root.authorityAlerts.length > 0
+            title: shown ? root.alertTitle(root.authorityAlerts[0]) : ""
+            message: shown ? "The wallet refused it and keeps the chain it checked: nothing on the refused chain counts. "
+                             + "If this repeats, Kyoto's peers may be lying to it. Check its peers in Settings, or turn on a server."
+                             + (root.authorityAlerts[0].detail ? "\n" + root.authorityAlerts[0].detail : "") : ""
+            actions: [
+                LogosButton { objectName: "authorityAlertSourcesButton"; text: "Sources"; onClicked: root.selectTab(4) },
+                LogosButton { objectName: "dismissAuthorityAlertButton"; text: "Dismiss"; onClicked: backend.dismissAlerts() }
+            ]
+        }
+        LogosNotice {
             objectName: "alertBanner"
             Layout.fillWidth: true
             severity: LogosNotice.Warning
-            shown: root.walletOpen && root.alerts.length > 0
-            title: shown ? root.alertTitle(root.alerts[0]) : ""
-            message: shown ? (root.alerts[0].source || "") + ": " + (root.alerts[0].detail || "")
-                             + (root.alerts.length > 1 ? "\n" + (root.alerts.length - 1) + " earlier alert" + (root.alerts.length > 2 ? "s" : "") : "") : ""
+            shown: root.walletOpen && root.sourceAlerts.length > 0
+            title: shown ? root.alertTitle(root.sourceAlerts[0]) : ""
+            message: shown ? (root.sourceAlerts[0].source || "") + ": " + (root.sourceAlerts[0].detail || "")
+                             + (root.sourceAlerts.length > 1 ? "\n" + (root.sourceAlerts.length - 1) + " earlier alert" + (root.sourceAlerts.length > 2 ? "s" : "") : "") : ""
             actions: [
                 LogosButton { objectName: "alertSourcesButton"; text: "Sources"; onClicked: root.selectTab(4) },
                 LogosButton { objectName: "dismissAlertsButton"; text: "Dismiss"; onClicked: backend.dismissAlerts() }
@@ -1324,6 +1502,45 @@ Item {
                         LogosText { visible: !!root.status.lastError; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning
                                     text: "Last sync error: " + (root.status.lastError || "") }
+                        // A pruned node's gap that another source covers, or has covered.
+                        LogosText { objectName: "prunedGapLine"; visible: !!root.prunedGap && !!root.prunedGap.via
+                                    Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; font.pixelSize: 12
+                                    color: Theme.palette.textSecondary
+                                    text: root.prunedGap ? (root.prunedGap.resolved === true ? "Older blocks scanned via " : "Older blocks via ")
+                                                           + root.prunedGap.via + " (" + root.gapBlocks(root.prunedGap) + ")" : "" }
+                        ColumnLayout {
+                            objectName: "rescanPane"
+                            visible: root.rescanning
+                            Layout.fillWidth: true
+                            spacing: Theme.spacing.tiny
+                            LogosText { objectName: "rescanLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                        font.pixelSize: 12; color: Theme.palette.textSecondary
+                                        // A server's full scan has no height to count: no share then.
+                                        text: "Rescanning from block " + root.group(root.status.rescanFrom)
+                                              + (root.isNum(root.status.syncPercent) ? " · " + root.status.syncPercent + "%" : "…") }
+                            LogosProgressBar { objectName: "rescanProgress"; Layout.fillWidth: true
+                                               indeterminate: !root.isNum(root.status.syncPercent)
+                                               value: root.isNum(root.status.syncPercent) ? Number(root.status.syncPercent) / 100 : 0 }
+                        }
+                    }
+                    LogosNotice {
+                        objectName: "prunedGapNotice"
+                        Layout.fillWidth: true
+                        severity: LogosNotice.Warning
+                        shown: !!root.prunedGap && !root.prunedGap.via && root.prunedGap.resolved !== true
+                        title: "Your node no longer holds some blocks"
+                        message: shown ? "It pruned " + root.gapBlocks(root.prunedGap) + ", which may hold this wallet's payments, and "
+                                         + "no other source can scan them. Turn on a server with History, or Kyoto, in Settings." : ""
+                    }
+                    LogosNotice {
+                        objectName: "needsBirthdayHomeNotice"
+                        Layout.fillWidth: true
+                        shown: root.needsBirthday && !root.rescanning
+                        title: "When was this wallet first used?"
+                        message: "It was restored without a birthday, so it looks for payments from the block where its kind of "
+                                 + "address began. That finds every payment but takes longer; a birthday lets it start later."
+                        actions: [ LogosButton { objectName: "setBirthdayButton"; text: "Set the wallet's birthday"
+                                                 enabled: root.ready && !root.busy; onClicked: birthdaySheet.open() } ]
                     }
                 }
             }
@@ -1555,6 +1772,10 @@ Item {
                                             text: root.intentLine(modelData) }
                                 LogosText { objectName: "historyState_" + modelData.txid; textFormat: Text.PlainText
                                             color: root.rowStateColor(modelData); text: root.rowState(modelData) }
+                                // A reorg moved it: confirmed again, in another block at this height.
+                                LogosText { objectName: "historyReanchored_" + modelData.txid; visible: root.reanchored(modelData.txid)
+                                            textFormat: Text.PlainText; font.pixelSize: 11; color: Theme.palette.warning
+                                            text: "re-anchored at height " + root.group(modelData.height) }
                                 LogosText { textFormat: Text.PlainText; color: Theme.palette.textTertiary; font.pixelSize: 11
                                             text: root.whenOf(modelData.time) }
                                 Item { Layout.fillWidth: true }
@@ -1592,6 +1813,10 @@ Item {
                                 LogosText { visible: !!modelData.replacedBy; text: "Replaced by"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
                                 LogosText { visible: !!modelData.replacedBy; textFormat: Text.PlainText; font.pixelSize: 11
                                             wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; text: modelData.replacedBy || "" }
+                                LogosText { visible: !!modelData.blockHash; text: "Block"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+                                LogosText { objectName: "historyBlock_" + modelData.txid; visible: !!modelData.blockHash
+                                            textFormat: Text.PlainText; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true
+                                            text: root.blockLine(modelData) }
                                 LogosText { visible: !!modelData.reportedBy; text: "Reported by"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
                                 LogosText { visible: !!modelData.reportedBy; textFormat: Text.PlainText; font.pixelSize: 11
                                             text: modelData.reportedBy || "" }
@@ -1633,9 +1858,11 @@ Item {
                     LogosNotice {
                         objectName: "needsBirthdayNotice"
                         Layout.fillWidth: true
-                        shown: root.status.needsBirthday === true
+                        shown: root.needsBirthday
                         message: "The keys app did not say when this wallet was first used, so it scans from the block where its "
                                  + "kind of address began. Nothing is missed, but the first sync takes longer."
+                        actions: [ LogosButton { objectName: "setBirthdaySettingsButton"; text: "Set the wallet's birthday"
+                                                 enabled: root.ready && !root.busy; onClicked: birthdaySheet.open() } ]
                     }
                     RowLayout {
                         spacing: Theme.spacing.small
@@ -1884,17 +2111,34 @@ Item {
                         LogosText { visible: !!root.summary && !!root.summary.replaces; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere
                                     textFormat: Text.PlainText; text: root.summary ? (root.summary.replaces || "") : "" }
                     }
+                    // Too-small change, with its way out; the other warnings say what they say.
                     Repeater {
-                        model: root.summary && Array.isArray(root.summary.warnings) ? root.summary.warnings : []
+                        model: root.warningsOf("change_too_small", true)
                         LogosNotice {
-                            objectName: modelData.kind === "change_too_small" ? "changeTooSmallNotice" : "summaryWarning"
+                            objectName: "changeTooSmallNotice"
                             Layout.fillWidth: true
                             severity: LogosNotice.Warning
-                            title: modelData.kind === "change_too_small" ? "The change is too small to spend" : "Warning"
-                            message: modelData.kind === "change_too_small"
-                                     ? "Its " + root.satsText(modelData.amountSat) + " would cost about " + root.satsText(modelData.costToSpendSat)
-                                       + " to spend at this fee rate. Reject it in the signer app and change the amount to avoid it."
-                                     : String(modelData.message || modelData.kind || "")
+                            title: "The change is too small to spend"
+                            message: root.warningText(modelData)
+                            actions: [
+                                LogosButton {
+                                    objectName: "addChangeToFeeButton"
+                                    visible: root.canAddChangeToFee
+                                    text: "Add it to the fee (+" + root.satsText(modelData.amountSat) + ")"
+                                    enabled: root.ready && root.rebuildAfterCancel === null
+                                    onClicked: root.addChangeToFee()
+                                }
+                            ]
+                        }
+                    }
+                    Repeater {
+                        model: root.warningsOf("change_too_small", false)
+                        LogosNotice {
+                            objectName: modelData.kind === "change_to_fee" ? "changeToFeeNotice" : "summaryWarning"
+                            Layout.fillWidth: true
+                            severity: modelData.kind === "change_to_fee" ? LogosNotice.Info : LogosNotice.Warning
+                            title: modelData.kind === "change_to_fee" ? "The change went to the fee" : "Warning"
+                            message: root.warningText(modelData)
                         }
                     }
                 }
@@ -1990,6 +2234,49 @@ Item {
             LogosButton { objectName: "confirmSpeedUpButton"; text: "Approve in Signer"; variant: LogosButton.Variant.Primary
                           enabled: root.ready && !root.sendLive && !!speedUpSheet.row && Number(speedUpRate.text) > 0
                           onClicked: { root.speedUp(speedUpSheet.row.txid, Number(speedUpRate.text)); speedUpSheet.close() } }
+        ]
+    }
+
+    LogosDialog {
+        id: birthdaySheet
+        objectName: "birthdaySheet"
+        title: "The wallet's birthday"
+        property bool unknown: false
+        readonly property bool dateOk: /^\d{4}-\d{2}-\d{2}$/.test(birthdayDate.text.trim())
+        readonly property bool pending: root.birthdayJob.state === "pending"
+        onOpened: { birthdaySheet.unknown = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false }
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 40, 560)
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing.small
+            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                        text: "The day this wallet was first used. It looks for payments from about two days before it. "
+                              + "A day after its first payment would hide the ones before, so the wallet refuses it." }
+            ButtonGroup { id: birthdayGroup }
+            LogosRadioButton { id: birthdayOnDay; objectName: "birthdayOnDay"; ButtonGroup.group: birthdayGroup; checked: true
+                               text: "It was first used on"; onCheckedChanged: if (checked) birthdaySheet.unknown = false }
+            LogosTextField { id: birthdayDate; objectName: "birthdayDateField"; Layout.preferredWidth: 200
+                             enabled: !birthdaySheet.unknown; placeholderText: "YYYY-MM-DD" }
+            LogosRadioButton { objectName: "birthdayUnknown"; ButtonGroup.group: birthdayGroup
+                               text: "I don't know: look from where this kind of address began, which takes longer"
+                               onCheckedChanged: if (checked) birthdaySheet.unknown = true }
+            LogosText { objectName: "birthdayError"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        textFormat: Text.PlainText; color: Theme.palette.error
+                        text: root.birthdayAsked && root.birthdayJob.state === "failed" ? "Not set: " + (root.birthdayJob.error || "") : "" }
+        }
+        leftActions: [ LogosButton { text: "Cancel"; onClicked: birthdaySheet.close() } ]
+        rightActions: [
+            LogosButton {
+                objectName: "confirmBirthdayButton"
+                text: birthdaySheet.pending ? "Setting…" : "Set"
+                variant: LogosButton.Variant.Primary
+                enabled: root.ready && root.walletOpen && !birthdaySheet.pending && (birthdaySheet.unknown || birthdaySheet.dateOk)
+                // Height 0 is "from the start": the core scans from where the wallet's kind of address began.
+                onClicked: {
+                    root.birthdayAsked = true
+                    backend.setBirthday(JSON.stringify(birthdaySheet.unknown ? { height: 0 } : { date: birthdayDate.text.trim() }))
+                }
+            }
         ]
     }
 

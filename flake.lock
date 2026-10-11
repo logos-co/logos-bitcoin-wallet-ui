@@ -1,25 +1,5 @@
 {
   "nodes": {
-    "bitcoin_wallet_backend": {
-      "inputs": {
-        "logos-module-builder": [
-          "logos-module-builder"
-        ]
-      },
-      "locked": {
-        "lastModified": 1791682128,
-        "narHash": "sha256-QYRJ+6FweLezlnOOWcmXAQhV8yDl2NjcVOo38bxw8LM=",
-        "owner": "logos-co",
-        "repo": "logos-bitcoin-wallet-backend",
-        "rev": "9e512ffea73af23dfa5521b30fc14c0f501f48b4",
-        "type": "github"
-      },
-      "original": {
-        "owner": "logos-co",
-        "repo": "logos-bitcoin-wallet-backend",
-        "type": "github"
-      }
-    },
     "default-container": {
       "inputs": {
         "logos-container": "logos-container",
@@ -9620,7 +9600,6 @@
     },
     "root": {
       "inputs": {
-        "bitcoin_wallet_backend": "bitcoin_wallet_backend",
         "logos-module-builder": "logos-module-builder"
       }
     },

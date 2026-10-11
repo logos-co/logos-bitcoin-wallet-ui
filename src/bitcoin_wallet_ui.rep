@@ -31,6 +31,10 @@ class BitcoinWalletUi
     PROP(QString exposureJson="" READONLY)
     // source_alert payloads, newest first, at most 10.
     PROP(QString alertsJson="[]" READONLY)
+    // A set_birthday job: { state: pending|done|failed, error?, birthday?, rescanFrom? }.
+    PROP(QString birthdayJson="" READONLY)
+    // The last probe: { sourceId, state: probing|done|failed, error?, row?, certificate? }.
+    PROP(QString probeJson="" READONLY)
     // The send on screen ("" when none), its send_status(), and why a request was refused.
     PROP(QString sendRequestId="" READONLY)
     PROP(QString sendStatusJson="{}" READONLY)
@@ -46,9 +50,11 @@ class BitcoinWalletUi
     SLOT(void openWallet(QString paramsJson))
     // Also withdraws an open still waiting in the keys app.
     SLOT(void closeWallet())
+    // { date: "YYYY-MM-DD" } or { height }, for an open wallet; the core scans again from it.
+    SLOT(void setBirthday(QString paramsJson))
 
     // ---- sends: requested here, approved in the signer app ----
-    // { recipients: [{ address, amountSat | amountBtc }], feeRate | target, sendMax? }
+    // { recipients: [{ address, amountSat | amountBtc }], feeRate | target, sendMax?, smallChangeToFee? }
     SLOT(void requestSend(QString requestJson))
     SLOT(void requestFeeBump(QString txid, double feeRate))
     SLOT(void cancelSend())
@@ -70,15 +76,17 @@ class BitcoinWalletUi
     SLOT(void dismissAlerts())
 
     // ---- sources: each returns "" or the refusal; locked while a wallet is open ----
-    // { use?, history?, tor? }
+    // { use?, history?, tor?, certSha256? }; certSha256 null removes a pin.
     SLOT(QString setSource(QString sourceId, QString changesJson))
-    // kind is electrum or esplora; the node module normalizes the address.
+    // kind is electrum or esplora; the node module normalizes the address. The new server is probed.
     SLOT(QString addSource(QString address, QString kind, QString name))
     SLOT(QString removeSource(QString sourceId))
     SLOT(QString setProxy(QString proxy))
     // Not locked: the wallet marks sources suspect while it syncs.
     SLOT(QString clearSuspect(QString sourceId))
     SLOT(void refreshSources())
+    // Probes one server now, for its health and a TLS server's certificate: see probeJson.
+    SLOT(void probeSource(QString sourceId))
     // The open wallet's public descriptors, returned for display only.
     SLOT(QString descriptors())
 }

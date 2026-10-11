@@ -13,13 +13,16 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 9e512ff) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend 13566b6) with a script behind it, and no
   wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
   Basecamp answers both intents `unavailable`, and the stand-in plays the person: it never approves
   the first open of a run, approves the next after 4 s, and picks a send's fate by its amount:
   0.0002 BTC is rejected, 0.0003 BTC expires unacknowledged, 0.0004 BTC goes out with an unknown
-  outcome, 0.0005 BTC leaves change too small to spend, and the first payment sent makes the history
-  server report a confirmation on another chain.
+  outcome, 0.0005 BTC leaves change too small to spend (added to the fee when asked), and the first
+  payment sent makes the history server report a confirmation on another chain. A wallet opens
+  without a birthday (one after its first payment, 2026-05-31, is refused), a reorg re-anchors the
+  transfer to yourself 5 s after the first open is ready, and with Kyoto in use it is the authority
+  and names a chain the wallet refuses. A TLS server of your own is probed and pinned.
 
 sections:
   - title: "Build Basecamp, the app, and the stand-in backend"
@@ -105,6 +108,12 @@ sections:
               property: "visible"
               value: true
               timeout: 15000
+            - name: "Plain text to it is marked"
+              action: expect_property
+              find_value: "notEncryptedBadge_192.168.1.20"
+              property: "visible"
+              value: true
+              timeout: 10000
             - name: "A second operator now decides the chain too"
               action: expect_property
               find_value: "oneOperatorNotice"
@@ -180,6 +189,65 @@ sections:
               method: "clicked"
               args: []
             - name: "One operator again"
+              action: expect_property
+              find_value: "oneOperatorNotice"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "Add a TLS server of your own"
+              action: set_text
+              find_by: "objectName"
+              find_value: "addSourceAddress"
+              value: "ssl://electrs.lan:50002"
+            - name: "Name it"
+              action: set_text
+              find_by: "objectName"
+              find_value: "addSourceName"
+              value: "TLS node"
+            - name: "Add it: the app probes it"
+              action: click_object
+              find_value: "addSourceButton"
+            - name: "Its self-signed certificate shows before anything trusts it"
+              action: expect_property
+              find_value: "certDetails_electrs.lan"
+              property: "text"
+              value: "Subject CN=electrs.lan, issued by CN=electrs.lan\nValid 2026-10-11 to 2126-09-17\nSHA-256 C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42"
+              timeout: 20000
+              screenshot: "wallet-certificate.png"
+            - name: "Trust this certificate"
+              action: call_method
+              find_value: "trustCert_electrs.lan"
+              method: "clicked"
+              args: []
+            - name: "It is pinned"
+              action: expect_property
+              find_value: "pinnedBadge_electrs.lan"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "...and the row shows the pin"
+              action: expect_property
+              find_value: "certPin_electrs.lan"
+              property: "text"
+              value: "Pinned certificate, SHA-256 C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42"
+              timeout: 5000
+            - name: "Remove the pin"
+              action: call_method
+              find_value: "removePin_electrs.lan"
+              method: "clicked"
+              args: []
+            - name: "It is no longer pinned"
+              action: expect_property
+              find_value: "pinnedBadge_electrs.lan"
+              property: "visible"
+              value: false
+              timeout: 15000
+            - name: "Remove the TLS server again"
+              action: call_method
+              find_value: "removeSource_electrs.lan"
+              method: "clicked"
+              args: []
+            - name: "One operator again, the example's"
               action: expect_property
               find_value: "oneOperatorNotice"
               property: "visible"
@@ -265,8 +333,78 @@ sections:
               action: expect_property
               find_value: "syncLine"
               property: "text"
-              value: "Synchronized · block 290,123, tip 4 min old"
+              value: "Synchronized · block 290,123, tip 4 min old · Servers' headers"
               timeout: 30000
+            - name: "Restored without a birthday: Home asks for one"
+              action: expect_property
+              find_value: "needsBirthdayHomeNotice"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "Set the wallet's birthday"
+              action: call_method
+              find_value: "setBirthdayButton"
+              method: "clicked"
+              args: []
+            - name: "The birthday sheet opens"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "A day after the wallet's first payment"
+              action: set_text
+              find_by: "objectName"
+              find_value: "birthdayDateField"
+              value: "2026-07-01"
+            - name: "Set it"
+              action: call_method
+              find_value: "confirmBirthdayButton"
+              method: "clicked"
+              args: []
+            - name: "The core refuses it, and the sheet says why"
+              action: expect_property
+              find_value: "birthdayError"
+              property: "text"
+              value: "Not set: the wallet has a transaction from before 2026-07-01, at height 290023"
+              timeout: 15000
+              screenshot: "wallet-birthday-refused.png"
+            - name: "I don't know"
+              action: set_property
+              find_by: "objectName"
+              find_value: "birthdayUnknown"
+              property: "checked"
+              value: true
+            - name: "Set that"
+              action: call_method
+              find_value: "confirmBirthdayButton"
+              method: "clicked"
+              args: []
+            - name: "The sheet closes"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "visible"
+              value: false
+              timeout: 15000
+            - name: "It rescans from where its kind of address began; a server's full scan has no share to show"
+              action: expect_property
+              find_value: "rescanLine"
+              property: "text"
+              value: "Rescanning from block 0…"
+              timeout: 10000
+              screenshot: "wallet-rescanning.png"
+            - name: "The rescan ends"
+              action: expect_property
+              find_value: "rescanPane"
+              property: "visible"
+              value: false
+              timeout: 15000
+            - name: "...and nobody asks for a birthday any more"
+              action: expect_property
+              find_value: "needsBirthdayHomeNotice"
+              property: "visible"
+              value: false
+              timeout: 5000
             - name: "The confirmed balance"
               action: expect_property
               find_value: "confirmedCard"
@@ -590,6 +728,18 @@ sections:
               value: true
               timeout: 15000
               screenshot: "wallet-send-small-change.png"
+            - name: "Add it to the fee instead"
+              action: call_method
+              find_value: "addChangeToFeeButton"
+              method: "clicked"
+              args: []
+            - name: "Withdrawn and asked again with smallChangeToFee: the change is in the fee"
+              action: expect_property
+              find_value: "changeToFeeNotice"
+              property: "message"
+              value: "400 sats of change would have cost about 408 sats to spend, so it is part of the fee and no change comes back."
+              timeout: 15000
+              screenshot: "wallet-change-to-fee.png"
             - name: "The person approves it, and it is sent"
               action: expect_property
               find_value: "sendHeadline"
@@ -622,7 +772,7 @@ sections:
               action: expect_property
               find_value: "syncLine"
               property: "text"
-              value: "No source agrees · block 290,123, tip 4 min old"
+              value: "No source agrees · block 290,123, tip 4 min old · Servers' headers"
               timeout: 10000
               screenshot: "wallet-alert.png"
             - name: "Settings"
@@ -672,7 +822,7 @@ sections:
               action: expect_property
               find_value: "syncLine"
               property: "text"
-              value: "Synchronized · block 290,123, tip 4 min old"
+              value: "Synchronized · block 290,123, tip 4 min old · Servers' headers"
               timeout: 15000
             - name: "Dismiss the alert"
               action: click_object
@@ -693,7 +843,7 @@ sections:
               action: expect_property
               find_value: "historyIntent_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
               property: "text"
-              value: "−0.0005 BTC · fee 846 sats"
+              value: "−0.0005 BTC · fee 1,246 sats"
               timeout: 30000
             - name: "A transfer to the wallet's own address"
               action: expect_property
@@ -731,6 +881,24 @@ sections:
               value: true
               timeout: 5000
               screenshot: "wallet-activity-details.png"
+            - name: "A reorg moved the transfer to yourself to a new block at its height"
+              action: expect_property
+              find_value: "historyReanchored_b17c000000000003b17c000000000003b17c000000000003b17c000000000003"
+              property: "text"
+              value: "re-anchored at height 290,120"
+              timeout: 10000
+            - name: "Open its details"
+              action: call_method
+              find_value: "details_b17c000000000003b17c000000000003b17c000000000003b17c000000000003"
+              method: "clicked"
+              args: []
+            - name: "They name the block that confirms it again"
+              action: expect_property
+              find_value: "historyBlock_b17c000000000003b17c000000000003b17c000000000003b17c000000000003"
+              property: "text"
+              value: "Moved to a new block by a reorg of 1 block: re-anchored at height 290,120, block 00000000000000000000000000000000000000000000000000000e0e00046d48"
+              timeout: 5000
+              screenshot: "wallet-reanchored.png"
             - name: "Speed up the unconfirmed payment"
               action: call_method
               find_value: "speedUp_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
@@ -814,3 +982,73 @@ sections:
               value: true
               timeout: 15000
               screenshot: "wallet-closed.png"
+            - name: "Sources and privacy, with the wallet closed"
+              action: call_method
+              find_value: "networkSettingsButton"
+              method: "clicked"
+              args: []
+            - name: "The sheet opens again"
+              action: expect_property
+              find_value: "networkSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "Turn on Kyoto"
+              action: call_method
+              find_value: "useSwitch_kyoto"
+              method: "clicked"
+              args: []
+            - name: "Kyoto is in use"
+              action: expect_property
+              find_value: "useSwitch_kyoto"
+              property: "checked"
+              value: true
+              timeout: 15000
+            - name: "Close the sheet"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "closeSheets"
+              args: []
+            - name: "Open the wallet again"
+              action: call_method
+              find_value: "reopen_g_fixture2"
+              method: "clicked"
+              args: []
+            - name: "Kyoto feeds the chain now, and the sync line names it"
+              action: expect_property
+              find_value: "syncLine"
+              property: "text"
+              value: "Synchronized · block 290,123, tip 4 min old · Kyoto · 4 peers"
+              timeout: 30000
+            - name: "Kyoto's peers name a chain the wallet refuses: a banner of its own"
+              action: expect_property
+              find_value: "authoritySuspectBanner"
+              property: "visible"
+              value: true
+              timeout: 15000
+              screenshot: "wallet-authority-suspect.png"
+            - name: "...not the shared one"
+              action: expect_property
+              find_value: "alertBanner"
+              property: "visible"
+              value: false
+            - name: "Dismiss it"
+              action: call_method
+              find_value: "dismissAuthorityAlertButton"
+              method: "clicked"
+              args: []
+            - name: "It is gone"
+              action: expect_property
+              find_value: "authoritySuspectBanner"
+              property: "visible"
+              value: false
+              timeout: 10000
+            - name: "Close the wallet for good"
+              action: click_object
+              find_value: "closeWalletButton"
+            - name: "Closed"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "no_wallet"
+              timeout: 20000

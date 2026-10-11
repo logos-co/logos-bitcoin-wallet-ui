@@ -37,16 +37,8 @@ bool openState(const QString &s) {
     return s == "awaiting_open" || s == "opening" || readyState(s) || s == "closing";
 }
 bool due(const QElapsedTimer &t, int ms) { return !t.isValid() || t.elapsed() >= ms; }
-
-// abandon_send is newer than some backends this view builds against; those answer that they lack it.
-template <typename B>
-auto callAbandonSend(B &b, const QString &request, int) -> decltype(b.abandon_send(request)) {
-    return b.abandon_send(request);
-}
-template <typename B>
-QString callAbandonSend(B &, const QString &, long) {
-    return QStringLiteral(R"({"ok":false,"error":"this wallet backend cannot forget a payment yet"})");
-}
+// The node module answers a probe within 15 s; the backend waits 17.
+constexpr int kProbeTimeoutMs = 25000;
 }
 
 quint64 BitcoinWalletUiBackend::begin(Read &r) {
@@ -245,6 +237,7 @@ void BitcoinWalletUiBackend::clearWalletReads() {
     setExposureJson({});
     m_exposureAge.invalidate();
     setAlertsJson(QStringLiteral("[]"));
+    setBirthdayJson({});
 }
 
 void BitcoinWalletUiBackend::loadRegistry() {
@@ -477,7 +470,8 @@ QString BitcoinWalletUiBackend::addSource(QString address, QString kind, QString
     const QString host = QUrl(address.contains(QLatin1String("://")) ? address : QStringLiteral("tcp://") + address).host();
     if (host.isEmpty()) return QStringLiteral("Enter a server address, such as 192.168.1.20:50001 or electrs.lan.");
     if (name.size() > 128) return QStringLiteral("A name is at most 128 characters.");
-    return editSources([&](QJsonArray &list) {
+    QString added;
+    const QString refused = editSources([&](QJsonArray &list) {
         QString base = host;
         base.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]")), QStringLiteral("-"));
         base.truncate(56);
@@ -491,8 +485,12 @@ QString BitcoinWalletUiBackend::addSource(QString address, QString kind, QString
         QJsonObject s{{"id", id}, {"kind", kind}, {"url", address}, {"use", true}, {"history", false}, {"tor", true}};
         if (!name.isEmpty()) s.insert("label", name);
         list.append(s);
+        added = id;
         return QString();
     });
+    // What the server presents, a TLS certificate above all, is shown before anything trusts it.
+    if (refused.isEmpty() && !added.isEmpty()) probeSource(added);
+    return refused;
 }
 
 QString BitcoinWalletUiBackend::removeSource(QString sourceId) {
@@ -504,6 +502,32 @@ QString BitcoinWalletUiBackend::removeSource(QString sourceId) {
         }
         return QStringLiteral("%1 is not in the list.").arg(sourceId);
     });
+}
+
+// A newer probe replaces the one on screen; the health read after it carries the certificate too.
+void BitcoinWalletUiBackend::probeSource(QString sourceId) {
+    sourceId = sourceId.trimmed();
+    if (sourceId.isEmpty()) return;
+    setProbeJson(compact(QJsonObject{{"sourceId", sourceId}, {"state", "probing"}}));
+    modules().bitcoin_wallet_backend.probeAsync(compact(QJsonObject{{"source", sourceId}}), [this, sourceId](QString r) {
+        QTimer::singleShot(0, this, [this, sourceId, r] {
+            if (parse(probeJson()).value("sourceId").toString() != sourceId) return;
+            const QJsonObject o = parse(r);
+            if (!o.value("ok").toBool()) {
+                setProbeJson(compact(QJsonObject{{"sourceId", sourceId}, {"state", "failed"}, {"error", errorOf(o)}}));
+                return;
+            }
+            QJsonObject done{{"sourceId", sourceId}, {"state", "done"}};
+            for (const QJsonValue &v : o.value("sources").toArray()) {
+                const QJsonObject row = v.toObject();
+                if (row.value("id").toString() != sourceId) continue;
+                done.insert("row", row);
+                if (row.value("certificate").isObject()) done.insert("certificate", row.value("certificate"));
+            }
+            setProbeJson(compact(done));
+            loadHealth();
+        });
+    }, Timeout(kProbeTimeoutMs));
 }
 
 // Returned for display only: not a PROP, so no other replica receives it.
@@ -596,7 +620,15 @@ void BitcoinWalletUiBackend::pollJobs() {
         m_jobs.removeIf([&](const Job &j) { return j.id == job.id; });
         const QString error = st.value("error").toString();
         const bool withdrawn = job.kind == "open" && m_openCancelled && state != "done";
-        if (state != "done" && !withdrawn) say(job.kind + QStringLiteral(": ") + (error.isEmpty() ? state : error));
+        if (job.kind == "birthday") {
+            // Said in the birthday sheet, beside the date it refused.
+            QJsonObject b = st.value("result").toObject();
+            b.insert("state", state == "done" ? QStringLiteral("done") : QStringLiteral("failed"));
+            if (state != "done") b.insert("error", error.isEmpty() ? state : error);
+            setBirthdayJson(compact(b));
+        } else if (state != "done" && !withdrawn) {
+            say(job.kind + QStringLiteral(": ") + (error.isEmpty() ? state : error));
+        }
         settled = QJsonObject{{"jobId", job.id}, {"kind", job.kind}, {"state", state}, {"error", error},
                               {"withdrawn", withdrawn}};
     }
@@ -619,6 +651,23 @@ void BitcoinWalletUiBackend::openWallet(QString paramsJson) {
     if (hasJob("open") || hasJob("close") || hasJob("cancel")) { say(QStringLiteral("open: a wallet is opening or closing")); return; }
     m_openCancelled = false;
     track(modules().bitcoin_wallet_backend.open_wallet(paramsJson), QStringLiteral("open"));
+}
+
+// For a wallet restored without a birthday; a refusal says why, such as a day after its first payment.
+void BitcoinWalletUiBackend::setBirthday(QString paramsJson) {
+    if (hasJob("birthday")) return;
+    const QString r = modules().bitcoin_wallet_backend.set_birthday(paramsJson);
+    const QJsonObject o = parse(r);
+    const QString id = o.value("jobId").toString();
+    if (!o.value("ok").toBool() || id.isEmpty()) {
+        setBirthdayJson(compact(QJsonObject{{"state", "failed"}, {"error", errorOf(o)}}));
+        return;
+    }
+    setBirthdayJson(compact(QJsonObject{{"state", "pending"}, {"jobId", id}}));
+    m_jobs.append({id, QStringLiteral("birthday")});
+    setPendingJobKind(QStringLiteral("birthday"));
+    setBusy(true);
+    m_jobPoll.start(kJobPollMs);
 }
 
 // While the person still decides in the keys app, closing withdraws the open.
@@ -771,7 +820,7 @@ void BitcoinWalletUiBackend::rebroadcast() {
 // The core frees the coins; the send stays unknown, marked abandoned, so it is read again.
 QString BitcoinWalletUiBackend::abandonSend(QString txid) {
     const QString request = compact(QJsonObject{{"txid", txid.trimmed()}});
-    const QString reply = callAbandonSend(modules().bitcoin_wallet_backend, request, 0);
+    const QString reply = modules().bitcoin_wallet_backend.abandon_send(request);
     const QJsonObject o = parse(reply);
     if (!o.value("ok").toBool()) return compact(QJsonObject{{"ok", false}, {"error", errorOf(o)}});
     pollSend();

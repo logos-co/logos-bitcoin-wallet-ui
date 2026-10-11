@@ -25,6 +25,7 @@ public:
     void setActiveNetwork(QString network) override;
     void openWallet(QString paramsJson) override;
     void closeWallet() override;
+    void setBirthday(QString paramsJson) override;
 
     void requestSend(QString requestJson) override;
     void requestFeeBump(QString txid, double feeRate) override;
@@ -46,6 +47,7 @@ public:
     QString setProxy(QString proxy) override;
     QString clearSuspect(QString sourceId) override;
     void refreshSources() override;
+    void probeSource(QString sourceId) override;
     QString descriptors() override;
 
 protected:

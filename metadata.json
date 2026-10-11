@@ -13,6 +13,11 @@
   "dependencies": [
     "bitcoin_wallet_backend"
   ],
+  "dependency_overrides": {
+    "bitcoin_wallet_backend": {
+      "file": "contracts/bitcoin_wallet_backend.lidl"
+    }
+  },
   "uses": [
     {
       "intent": "keystore.accounts.open",
