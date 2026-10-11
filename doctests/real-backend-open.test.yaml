@@ -5,12 +5,14 @@ project_name: logos-bitcoin-wallet-ui
 # handle for the keys app. HOME is the run's own.
 
 intro: |
-  The app against the modules it ships with: bitcoin_wallet_backend 9e512ff,
-  bitcoin_wallet_core_module 654741d, bitcoin_node_module 5b93267, signer_manager_module 612808e
-  and keystore_module a3f54d1. The node module's own sources for signet, a server of your own
-  added and given History through the app, and an open that reaches the signer manager and comes
-  back as the core's handle for the keys app, then is withdrawn. No keys app is installed and the
-  signer manager has no custodian here, so nothing can approve the open, and sends are not reached.
+  The app against the modules it ships with: bitcoin_wallet_backend 13566b6,
+  bitcoin_wallet_core_module 00d72a2, bitcoin_node_module fb8dcd6, signer_manager_module 80bc40c
+  and keystore_module 1f3d62f. The node module's own sources for signet, a server of your own
+  added and given History through the app, a TLS server of your own whose self-signed certificate
+  the node module's probe reads and the app pins and unpins, and an open that reaches the signer
+  manager and comes back as the core's handle for the keys app, then is withdrawn. No keys app is
+  installed and the signer manager has no custodian here, so nothing can approve the open, and
+  sends are not reached.
 
 sections:
   - title: "Build Basecamp, the app, and the real module chain"
@@ -20,11 +22,11 @@ sections:
           set -eu
           nix build 'github:logos-co/logos-basecamp#app-standalone' --no-write-lock-file -o result-basecamp
           nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
-          nix build 'github:logos-co/logos-bitcoin-wallet-backend/9e512ffea73af23dfa5521b30fc14c0f501f48b4#install' -o result-real-backend
-          nix build 'github:logos-co/logos-bitcoin-wallet-core-module/654741d85d3bfb10f209cf0b94a05f6cb0a93dc4#install' -o result-real-core
-          nix build 'github:logos-co/logos-bitcoin-node-module/5b9326720c7d41b4ddaee6a4d4b732b64501c8ff#install' -o result-real-node
-          nix build 'github:logos-co/logos-signer-manager-module/612808e4c4ac2555d4695d1e4c2a6270cd1e945e#install' -o result-real-manager
-          nix build 'github:logos-co/logos-evm-keystore-module/a3f54d1e8d70b8d5e882b372d13f12ed41051a03#install' -o result-real-keystore
+          nix build 'github:logos-co/logos-bitcoin-wallet-backend/13566b66578f3382f3e4d8d9ddae4eaaa852f7dd#install' -o result-real-backend
+          nix build 'github:logos-co/logos-bitcoin-wallet-core-module/00d72a2211072f1cac29aab30b6b393ae9269a8e#install' -o result-real-core
+          nix build 'github:logos-co/logos-bitcoin-node-module/fb8dcd60354c3a13be1a0b1376b42a7535b7818e#install' -o result-real-node
+          nix build 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install' -o result-real-manager
+          nix build 'github:logos-co/logos-evm-keystore-module/1f3d62f306f0e4dc7e5d96d478f9770ab3713ce6#install' -o result-real-keystore
           nix build "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install" -o result-wallet
           # Its own tree, user dir and HOME: run.sh runs every spec in one output directory.
           mkdir -p real/tree/modules real/home
@@ -32,6 +34,17 @@ sections:
           chmod -R u+w real/tree
           ls real/tree/modules
         expect_contains: ["bitcoin_wallet_backend", "bitcoin_wallet_core_module", "bitcoin_node_module", "signer_manager_module", "keystore_module"]
+
+  - title: "A TLS server of your own"
+    steps:
+      - title: "A self-signed certificate on 127.0.0.1:50902, for the node module's probe to read"
+        run: |
+          set -eu
+          mkdir -p real/tls
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout real/tls/key.pem -out real/tls/cert.pem -days 30 -subj "/CN=electrs.test" 2>/dev/null
+          python3 "${E2E_REPO:?run this spec through doctests/run.sh}/doctests/e2e/tls_server.py" real/tls 50902
+          echo "SHA-256 $(openssl x509 -in real/tls/cert.pem -outform der | shasum -a 256 | cut -c1-64)"
+        expect_contains: ["SHA-256 "]
 
   - title: "Drive the app"
     steps:
@@ -132,6 +145,65 @@ sections:
               property: "visible"
               value: false
               timeout: 10000
+            - name: "Add your TLS server"
+              action: set_text
+              find_by: "objectName"
+              find_value: "addSourceAddress"
+              value: "ssl://127.0.0.1:50902"
+            - name: "Name it"
+              action: set_text
+              find_by: "objectName"
+              find_value: "addSourceName"
+              value: "TLS test"
+            - name: "Add it: the app asks the node module to probe it"
+              action: click_object
+              find_value: "addSourceButton"
+            - name: "The probe read its self-signed certificate, which nothing trusts yet"
+              action: expect_property
+              find_value: "trustCert_127.0.0.1"
+              property: "visible"
+              value: true
+              timeout: 30000
+              screenshot: "real-certificate.png"
+            - name: "Trust this certificate: the node module pins it"
+              action: call_method
+              find_value: "trustCert_127.0.0.1"
+              method: "clicked"
+              args: []
+            - name: "It is pinned"
+              action: expect_property
+              find_value: "pinnedBadge_127.0.0.1"
+              property: "visible"
+              value: true
+              timeout: 20000
+            - name: "...and the row shows the pin"
+              action: expect_property
+              find_value: "certPin_127.0.0.1"
+              property: "visible"
+              value: true
+              timeout: 5000
+            - name: "Remove the pin"
+              action: call_method
+              find_value: "removePin_127.0.0.1"
+              method: "clicked"
+              args: []
+            - name: "It is no longer pinned"
+              action: expect_property
+              find_value: "pinnedBadge_127.0.0.1"
+              property: "visible"
+              value: false
+              timeout: 20000
+            - name: "Remove the TLS server"
+              action: call_method
+              find_value: "removeSource_127.0.0.1"
+              method: "clicked"
+              args: []
+            - name: "It is gone"
+              action: expect_property
+              find_value: "sourcesNote"
+              property: "visible"
+              value: false
+              timeout: 10000
             - name: "Close the sheet"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -193,3 +265,9 @@ sections:
               value: false
               timeout: 5000
               screenshot: "real-withdrawn.png"
+
+  - title: "Stop the TLS server"
+    steps:
+      - title: "By its PID"
+        run: kill "$(cat real/tls/server.pid)" && echo stopped
+        expect_contains: ["stopped"]
