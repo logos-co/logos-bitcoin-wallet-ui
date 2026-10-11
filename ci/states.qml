@@ -307,6 +307,7 @@ Item {
         function (v) {
             expect("badge from the open wallet's sources", prop("healthBadge", "text"), "Sources OK")
             expect("wallet's own servers", v.walletOnlySources.map(function (s) { return s.id }), ["regtest-0", "regtest-1"])
+            expect("a server's line, through its delegate", prop("walletSourceState_regtest-0", "text"), "ok · chain, history · history server")
             fake.healthJson = ""
             var st = JSON.parse(scene.syncedMainnet)
             st.authority.peers = 0

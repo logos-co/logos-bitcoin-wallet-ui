@@ -546,7 +546,9 @@ Item {
     }
     function walletSourceLine(w) {
         var parts = [w.suspect === true ? "suspect" + (w.suspectReason ? ": " + w.suspectReason : "") : (w.state || "unknown")]
-        if (Array.isArray(w.roles) && w.roles.length) parts.push(w.roles.join(", "))
+        // A delegate's nested list is a sequence, not an Array, so no Array.isArray here.
+        var roles = w.roles ? Array.prototype.slice.call(w.roles) : []
+        if (roles.length) parts.push(roles.join(", "))
         if (w.history === true) parts.push("history server")
         if (w.state !== "ok" && w.suspect !== true && w.error) parts.push(w.error)
         return parts.join(" · ")

@@ -719,6 +719,9 @@ def phase_send_expire():
     wallet_tab(ins, 3)
     wait_row(ins, "historyState", txid, "1 confirmation", 60)
     passed("Activity shows the send confirmed: %s" % row_text(ins, "historyIntent", txid))
+    ins.press("details_" + txid)
+    paid = ins.wait("historyPaid_" + txid, "text", lambda t: to in (t or ""), 20, "Details list the address paid")
+    passed("Details list the address paid (%s) and the txid" % paid.strip())
     save(send1_txid=txid, send1_to=to)
     log("PHASE send-expire OK")
 
