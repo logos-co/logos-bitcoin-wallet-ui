@@ -39,6 +39,12 @@ Item {
     readonly property var lastJob: ready ? j(backend.lastJobJson, "{}") : ({})
     readonly property var networks: ready ? j(backend.networksJson, "{}") : ({})
     readonly property string activeNetwork: networks.active || status.activeNetwork || ""
+    // A switch queued behind a close, the last switch's outcome, and an open waiting for either.
+    readonly property string pendingNetwork: networks.pending || ""
+    readonly property var switchState: ready && backend.switchJson !== "" ? j(backend.switchJson, "{}") : ({})
+    readonly property var openQueued: ready && backend.openQueuedJson !== "" ? j(backend.openQueuedJson, "{}") : ({})
+    // The network can be picked again as soon as no wallet is open or opening; a closing one queues it.
+    readonly property bool canPickNetwork: ready && !walletOpen && !opening
     readonly property string displayedNetwork: (walletOpen || opening) && status.network ? status.network : activeNetwork
     readonly property var wallets: ready ? j(backend.walletsJson, "[]") : []
     readonly property var walletsOnNetwork: wallets.filter(function (w) { return !w.network || w.network === root.activeNetwork })
@@ -112,6 +118,24 @@ Item {
     readonly property var prunedGap: walletOpen && status.node && status.node.prunedGap && typeof status.node.prunedGap === "object"
                                      ? status.node.prunedGap : null
     readonly property var probe: ready && backend.probeJson !== "" ? j(backend.probeJson, "{}") : ({})
+    // Kyoto's peers: the curated list, and your own, which replace it.
+    readonly property var peerList: ready && backend.peerListJson !== "" ? j(backend.peerListJson, "{}") : ({})
+    readonly property var ownPeers: Array.isArray(peerList.ownPeers) ? peerList.ownPeers : []
+    readonly property var curated: peerList.list && typeof peerList.list === "object" ? peerList.list : ({})
+    function curatedLine() {
+        var n = Array.isArray(root.curated.peers) ? root.curated.peers.length : 0
+        var parts = ["The curated list: " + n + (n === 1 ? " peer" : " peers")]
+        if (/^\s*provisional/i.test(String(root.curated.note || ""))) parts.push("provisional")
+        if (/^test-/.test(String(root.curated.keyId || ""))) parts.push("signed with a test key, not a release")
+        return parts.join(", ")
+    }
+    property string ownPeersNote: ""
+    function setOwnPeers(list, done) {
+        root.ownPeersNote = ""
+        logos.watch(backend.setOwnPeers(JSON.stringify(list)),
+                    function (e) { root.ownPeersNote = e || ""; if (!e && done) done() },
+                    function () { root.ownPeersNote = "The wallet backend did not answer." })
+    }
 
     // ---- the send on screen ----
     readonly property string sendId: ready ? backend.sendRequestId : ""
@@ -224,7 +248,18 @@ Item {
     property int page: 0
     function selectTab(i) { root.page = i; tabs.currentIndex = i }
     function selectNetwork(network) {
-        if (root.ready && !root.networkLocked) backend.setActiveNetwork(network)
+        if (root.canPickNetwork) backend.setActiveNetwork(network)
+    }
+    function switchNote() {
+        if (root.pendingNetwork !== "") return "Switching to " + root.pendingNetwork + " when the wallet has closed"
+        if (root.switchState.state !== "refused") return ""
+        // Each reason shows only while it still holds, so a stale one never lingers.
+        var c = root.switchState.code || ""
+        if (c === "wallet_open" && root.walletOpen) return "Close the wallet before switching networks."
+        if (c === "send_open" && root.walletState !== "no_wallet")
+            return "A send is still open: approve, reject or cancel it, then switch networks."
+        if (c === "busy" && root.opening) return "A wallet is opening: let it open, or cancel it, then switch networks."
+        return ""
     }
     function closeSheets() {
         reviewSheet.close(); speedUpSheet.close(); forgetSheet.close(); networkSheet.close(); descriptorsSheet.close(); birthdaySheet.close()
@@ -1053,6 +1088,53 @@ Item {
                                               onClicked: root.torOffAskedFor = "" }
                             ]
                         }
+                        ColumnLayout {
+                            objectName: "ownPeersPane"
+                            visible: modelData.kind === "kyoto"
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spacing.tiny
+                            spacing: Theme.spacing.tiny
+                            LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
+                            LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                        font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
+                            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                        text: "A peer of your own replaces the curated list: Kyoto then connects to your peers alone, "
+                                              + "directly when they are on your network, otherwise through Tor." }
+                            Repeater {
+                                model: root.ownPeers
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    LogosText { objectName: "ownPeer_" + modelData; textFormat: Text.PlainText; font.pixelSize: 12; text: modelData }
+                                    Item { Layout.fillWidth: true }
+                                    LogosButton { objectName: "removeOwnPeer_" + modelData; visible: !root.networkLocked; text: "Remove"
+                                                  enabled: root.ready
+                                                  onClicked: root.setOwnPeers(root.ownPeers.filter(function (p) { return p !== modelData })) }
+                                }
+                            }
+                            LogosText { objectName: "ownPeersRoute"; visible: root.ownPeers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        font.pixelSize: 12; color: Theme.palette.textSecondary
+                                        // Direct also when Kyoto's Tor is off, whatever the peers.
+                                        text: root.peerList.route !== "direct" ? "Kyoto reaches them through Tor."
+                                              : (root.peerList.kyotoTor === false ? "Kyoto reaches them directly: its Tor is off."
+                                                                                  : "Kyoto reaches them directly, on your network.") }
+                            RowLayout {
+                                visible: !root.networkLocked
+                                Layout.fillWidth: true
+                                LogosTextField { id: ownPeerField; objectName: "ownPeerField"; Layout.fillWidth: true
+                                                 placeholderText: "host:port, such as 192.168.1.20:8333" }
+                                LogosButton { objectName: "addOwnPeerButton"; text: "Add"
+                                              enabled: root.ready && ownPeerField.text.trim() !== "" && root.ownPeers.length < 64
+                                              onClicked: root.setOwnPeers(root.ownPeers.concat([ownPeerField.text.trim()]),
+                                                                          function () { ownPeerField.text = "" }) }
+                            }
+                            LogosButton { objectName: "useCuratedButton"; visible: !root.networkLocked && root.ownPeers.length > 0
+                                          text: "Use the curated list again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
+                            LogosText { objectName: "ownPeersLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        font.pixelSize: 12; color: Theme.palette.textSecondary
+                                        text: "Kyoto's peers change only while no wallet is open, like the other source settings." }
+                            LogosText { objectName: "ownPeersNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning; text: root.ownPeersNote }
+                        }
                         // A pinned certificate, or one to look at before trusting it: untrusted, or just probed.
                         ColumnLayout {
                             id: certPane
@@ -1202,6 +1284,15 @@ Item {
                   ? "Open: " + (root.status.label || root.familyLabel(root.status.family)) + " · " + (root.status.network || "")
                   : (root.opening ? "Opening a wallet on " + (root.displayedNetwork || "this network") : "No wallet open")
         }
+        // Under the status on every page: a refused switch can race a wallet another app opens.
+        LogosText { objectName: "switchNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                    textFormat: Text.PlainText
+                    color: root.pendingNetwork !== "" ? Theme.palette.textSecondary : Theme.palette.warning
+                    text: root.switchNote() }
+        LogosText { objectName: "openQueuedNote"; visible: !!root.openQueued.error; Layout.fillWidth: true; wrapMode: Text.Wrap
+                    textFormat: Text.PlainText; color: Theme.palette.textSecondary
+                    text: root.openQueued.network ? "Opening on " + root.openQueued.network + " once the switch applies…"
+                                                  : "Opening once the last wallet has closed…" }
 
         LogosNotice {
             objectName: "errorNotice"
@@ -1283,7 +1374,7 @@ Item {
                 LogosText { text: "Network"; color: Theme.palette.textSecondary }
                 LogosComboBox {
                     objectName: "networkBox"
-                    enabled: root.ready && !root.networkLocked
+                    enabled: root.canPickNetwork
                     model: root.networks.networks || []
                     currentIndex: Math.max(0, (root.networks.networks || []).indexOf(root.activeNetwork))
                     onActivated: root.selectNetwork(currentText)

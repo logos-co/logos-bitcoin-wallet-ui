@@ -1,5 +1,5 @@
 //! A stand-in for `bitcoin_wallet_backend` in the wallet app's doctest. The trait is the real
-//! backend's (logos-bitcoin-wallet-backend 13566b6), so the contract matches; behind it, sim.rs.
+//! backend's (logos-bitcoin-wallet-backend 96cb103), so the contract matches; behind it, sim.rs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,9 +19,10 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     /// role, and the file a headless operator writes to enrol a module.
     fn caller_identity(&self) -> String;
 
-    /// `{ ok, networks, active }`.
+    /// `{ ok, networks, active, pending }`; `pending` is a switch waiting for a close to settle.
     fn list_networks(&self) -> String;
-    /// CUSTODIAN. Refused while a wallet or a send is open.
+    /// CUSTODIAN. While a close settles the switch is queued: `{ ok, active, pending }`, and opens are
+    /// refused with code busy until it applies. Refusals carry `code`: busy, wallet_open, send_open.
     fn set_active_network(&self, network: String) -> String;
     /// `{ ok, active, wallets: [{ group, family, network, label, birthday, firstOpened, lastOpened }] }`:
     /// wallets opened before, newest first. No secrets.
@@ -74,6 +75,11 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     fn set_proxy(&self, proxy: String) -> String;
     /// CUSTODIAN. Clears a suspect mark in the node module and, with a wallet open, in the core.
     fn clear_suspect(&self, source_id: String) -> String;
+    /// CUSTODIAN. `{ network, peers: [host[:port]] }`, at most 64: Kyoto's own peers, which replace the
+    /// curated list (`[]` restores it). Refused while a wallet is open. Answers as peer_list.
+    fn set_own_peers(&self, params_json: String) -> String;
+    /// CUSTODIAN. `{ network? }`: the node module's peer list, with `ownPeers` and `usable`.
+    fn peer_list(&self, params_json: String) -> String;
 
     /// Any named module. `{ recipients: [{ address, amountSat | amountBtc }], feeRate? | target?,
     /// sendMax? }` → `{ ok, requestId }`. One open send per wallet.
@@ -183,7 +189,7 @@ impl BitcoinWalletBackendModule for BitcoinWalletBackendModuleImpl {
     }
 
     fn list_networks(&self) -> String {
-        self.with(|s, _, _| json!({"ok": true, "networks": s.networks(), "active": s.active()}))
+        self.with(|s, _, _| json!({"ok": true, "networks": s.networks(), "active": s.active(), "pending": s.pending_network()}))
     }
 
     fn set_active_network(&self, network: String) -> String {
@@ -278,6 +284,14 @@ impl BitcoinWalletBackendModule for BitcoinWalletBackendModuleImpl {
 
     fn set_proxy(&self, proxy: String) -> String {
         self.gated(|s, _, _| s.set_proxy(&proxy))
+    }
+
+    fn set_own_peers(&self, params_json: String) -> String {
+        self.gated(|s, _, _| s.set_own_peers(&params_json))
+    }
+
+    fn peer_list(&self, params_json: String) -> String {
+        self.gated(|s, _, _| s.peer_list(&params_json))
     }
 
     fn clear_suspect(&self, source_id: String) -> String {

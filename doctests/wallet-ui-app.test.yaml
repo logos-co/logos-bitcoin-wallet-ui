@@ -13,7 +13,7 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 13566b6) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend 96cb103) with a script behind it, and no
   wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
   Basecamp answers both intents `unavailable`, and the stand-in plays the person: it never approves
   the first open of a run, approves the next after 4 s, and picks a send's fate by its amount:
@@ -22,7 +22,9 @@ intro: |
   payment sent makes the history server report a confirmation on another chain. A wallet opens
   without a birthday (one after its first payment, 2026-05-31, is refused), a reorg re-anchors the
   transfer to yourself 5 s after the first open is ready, and with Kyoto in use it is the authority
-  and names a chain the wallet refuses. A TLS server of your own is probed and pinned.
+  and names a chain the wallet refuses. A TLS server of your own is probed and pinned, a peer of
+  your own replaces Kyoto's curated list, and a switch asked for while the wallet closes waits for
+  the close, while an open asked for meanwhile waits for the switch.
 
 sections:
   - title: "Build Basecamp, the app, and the stand-in backend"
@@ -252,6 +254,46 @@ sections:
               find_value: "oneOperatorNotice"
               property: "visible"
               value: true
+              timeout: 10000
+            - name: "Under Kyoto, the curated list: its size, and that it is provisional and test-signed"
+              action: expect_property
+              find_value: "curatedLine"
+              property: "text"
+              value: "The curated list: 11 peers, provisional, signed with a test key, not a release"
+              timeout: 15000
+            - name: "A peer of your own"
+              action: set_text
+              find_by: "objectName"
+              find_value: "ownPeerField"
+              value: "192.168.1.20:38333"
+            - name: "Add it: it replaces the curated list"
+              action: call_method
+              find_value: "addOwnPeerButton"
+              method: "clicked"
+              args: []
+            - name: "It is listed"
+              action: expect_property
+              find_value: "ownPeer_192.168.1.20:38333"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "On your network, Kyoto reaches it directly"
+              action: expect_property
+              find_value: "ownPeersRoute"
+              property: "text"
+              value: "Kyoto reaches them directly, on your network."
+              timeout: 5000
+              screenshot: "wallet-own-peers.png"
+            - name: "Use the curated list again"
+              action: call_method
+              find_value: "useCuratedButton"
+              method: "clicked"
+              args: []
+            - name: "Back to the curated list"
+              action: expect_property
+              find_value: "useCuratedButton"
+              property: "visible"
+              value: false
               timeout: 10000
             - name: "Close the sheet"
               action: call_method
@@ -1043,7 +1085,63 @@ sections:
               property: "visible"
               value: false
               timeout: 10000
-            - name: "Close the wallet for good"
+            - name: "Close the wallet"
+              action: click_object
+              find_value: "closeWalletButton"
+            - name: "It is closing"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "closing"
+              timeout: 5000
+            - name: "While it closes, pick testnet4"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectNetwork"
+              args: ["testnet4"]
+            - name: "The switch waits for the close"
+              action: expect_property
+              find_value: "switchNote"
+              property: "text"
+              value: "Switching to testnet4 when the wallet has closed"
+              timeout: 5000
+              screenshot: "wallet-switch-pending.png"
+            - name: "The wallet has closed"
+              action: expect_property
+              find_value: "openWalletButton"
+              property: "enabled"
+              value: true
+              timeout: 20000
+            - name: "Open a wallet before the switch has applied"
+              action: call_method
+              find_value: "openWalletButton"
+              method: "clicked"
+              args: []
+            - name: "The backend answers busy, and the app opens once the switch applies"
+              action: expect_property
+              find_value: "openQueuedNote"
+              property: "text"
+              value: "Opening on testnet4 once the switch applies…"
+              timeout: 5000
+              screenshot: "wallet-open-queued.png"
+            - name: "The switch applied: the open goes ahead, on testnet4"
+              action: expect_property
+              find_value: "networkChip"
+              property: "text"
+              value: "testnet4"
+              timeout: 20000
+            - name: "The wallet opens there"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "ready"
+              timeout: 30000
+            - name: "...not on the old network"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "displayedNetwork"
+              value: "testnet4"
+            - name: "Close it for good"
               action: click_object
               find_value: "closeWalletButton"
             - name: "Closed"

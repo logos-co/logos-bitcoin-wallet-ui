@@ -45,6 +45,7 @@ public:
     QString addSource(QString address, QString kind, QString name) override;
     QString removeSource(QString sourceId) override;
     QString setProxy(QString proxy) override;
+    QString setOwnPeers(QString peersJson) override;
     QString clearSuspect(QString sourceId) override;
     void refreshSources() override;
     void probeSource(QString sourceId) override;
@@ -88,6 +89,9 @@ private:
     void syncHistory();
     void loadFeeRates();
     void loadSources();
+    void loadPeerList();
+    QString sourcesNetwork() const;
+    void retryQueuedOpen();
     void loadHealth();
     void loadExposure();
     void addAlert(const QString &payload);
@@ -116,6 +120,9 @@ private:
     QList<Job> m_jobs;
     // The person withdrew an open still waiting in the keys app: its failure is no error.
     bool m_openCancelled = false;
+    // An open answered busy (a switch or a close settling), and how often it was asked.
+    QString m_openQueued;
+    int m_openTries = 0;
     // Bumped whenever the open wallet changes, so a reply about the previous one is dropped.
     quint64 m_epoch = 0;
     // The wallet tip the history on screen was read at; -1 is "none read".

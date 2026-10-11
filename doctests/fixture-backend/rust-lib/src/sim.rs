@@ -32,6 +32,11 @@ const RESCAN_TIME: Duration = Duration::from_secs(4);
 const REORG_AFTER: Duration = Duration::from_secs(5);
 const AUTHORITY_ALERT_AFTER: Duration = Duration::from_secs(3);
 const KYOTO_PEERS: u64 = 4;
+/// A close settles this long, and a switch queued behind it applies this long after: room to ask
+/// for a switch while it closes, and to open before the switch applies.
+const CLOSE_TIME: Duration = Duration::from_secs(3);
+const SWITCH_AFTER_CLOSE: Duration = Duration::from_secs(4);
+const MAX_OWN_PEERS: usize = 64;
 /// The wallet's first payment, a fixed day so a birthday after it is refused the same way every run.
 const FIRST_TX_DAY: &str = "2026-05-31";
 // The core's own refusals.
@@ -166,6 +171,9 @@ pub struct Sim {
     last_reorg: Value,
     authority_alert_at: Option<Instant>,
     authority_alerted: bool,
+    pending_network: Option<String>,
+    switch_at: Option<Instant>,
+    own_peers: BTreeMap<String, Vec<String>>,
     last_status: String,
     last_balance: String,
 }
@@ -402,6 +410,9 @@ impl Sim {
             last_reorg: Value::Null,
             authority_alert_at: None,
             authority_alerted: false,
+            pending_network: None,
+            switch_at: None,
+            own_peers: BTreeMap::new(),
             last_status: String::new(),
             last_balance: String::new(),
         };
@@ -779,15 +790,42 @@ impl Sim {
 
     // ---- writes ---------------------------------------------------------------------------------
 
+    pub fn pending_network(&self) -> Option<String> {
+        self.pending_network.clone()
+    }
+
+    /// The backend's plan: a send open refuses, a close settling queues, an open refuses as busy.
     pub fn set_active_network(&mut self, network: &str) -> Value {
         if !self.networks().contains(&network) {
             return json!({"ok": false, "error": format!("unknown network {network}")});
         }
-        if self.locked() {
-            return json!({"ok": false, "error": "close the open wallet before switching networks"});
+        if network == self.active {
+            self.pending_network = None;
+            return json!({"ok": true, "active": network, "pending": null});
         }
-        self.active = network.into();
-        json!({"ok": true, "active": network})
+        if let Some(s) = self.open_send() {
+            return json!({"ok": false, "code": "send_open", "error": format!("send {s} is still open")});
+        }
+        match self.state {
+            WState::Closing => {
+                self.pending_network = Some(network.into());
+                json!({"ok": true, "active": self.active, "pending": network})
+            }
+            WState::AwaitingOpen | WState::Opening => {
+                json!({"ok": false, "code": "busy", "error": "a wallet is opening; close it, or wait, then switch"})
+            }
+            WState::Syncing | WState::Ready => {
+                json!({"ok": false, "code": "wallet_open", "error": "close the open wallet before switching networks"})
+            }
+            WState::NoWallet if self.switch_at.is_some() => {
+                self.pending_network = Some(network.into());
+                json!({"ok": true, "active": self.active, "pending": network})
+            }
+            WState::NoWallet => {
+                self.active = network.into();
+                json!({"ok": true, "active": network, "pending": null})
+            }
+        }
     }
 
     /// The first open of a run is never approved, so the app's Cancel has something to withdraw.
@@ -798,6 +836,9 @@ impl Sim {
         };
         if self.locked() {
             return json!({"ok": false, "error": "a wallet is already open; close it first"});
+        }
+        if let Some(n) = &self.pending_network {
+            return json!({"ok": false, "code": "busy", "error": format!("switching to {n} once the wallet has closed; try again")});
         }
         let group = p["group"].as_str().map(String::from);
         let family = p["family"].as_str().map(String::from).or_else(|| {
@@ -1156,6 +1197,60 @@ impl Sim {
         self.sources()
     }
 
+    fn curated(net: &str) -> Value {
+        let peers: Vec<String> = (0..11).map(|i| format!("peer{i}{}.onion:38333", "a".repeat(46))).collect();
+        json!({"format": 1, "network": net, "version": "202610110405", "created": "2026-10-11T04:05:49Z", "date": "2026-10-11",
+               "note": "PROVISIONAL: from 1 run (2026-10-11), not the plan's 6 of 7 days. Signed with a TEST key: not a release.",
+               "refreshUrl": null, "peers": peers, "keyId": "test-d680f3cac9837bf9", "signature": "00"})
+    }
+
+    /// The node module's peer_list: the curated list, your own peers, and how Kyoto reaches them.
+    pub fn peer_list(&self, params: &str) -> Value {
+        let p: Value = serde_json::from_str(params).unwrap_or(Value::Null);
+        let net = p["network"].as_str().filter(|n| !n.is_empty()).map(String::from).unwrap_or_else(|| self.net());
+        let own = self.own_peers.get(&net).cloned().unwrap_or_default();
+        let list = Self::curated(&net);
+        let host = |h: &String| host_of(&format!("x://{h}"));
+        let route = if !own.is_empty() && own.iter().all(|h| is_lan(&host(h))) { "direct" }
+                    else if own.iter().all(|h| host(h).ends_with(".onion")) { "onion" } else { "tor" };
+        let usable = if own.is_empty() { list["peers"].clone() } else { json!(own) };
+        json!({"ok": true, "network": net, "list": list, "source": "shipped", "ownPeers": own, "usable": usable,
+               "route": route, "kyotoTor": true})
+    }
+
+    /// `{ network, peers }`, at most 64; [] goes back to the curated list. Refused while a wallet is open.
+    pub fn set_own_peers(&mut self, params: &str) -> Value {
+        if self.locked() {
+            return json!({"ok": false, "error": LOCKED});
+        }
+        let p: Value = match serde_json::from_str::<Value>(params) {
+            Ok(v) if v.is_object() => v,
+            _ => return json!({"ok": false, "error": "set_own_peers takes { network, peers: [host[:port]] }"}),
+        };
+        let net = p["network"].as_str().filter(|n| !n.is_empty()).map(String::from).unwrap_or_else(|| self.net());
+        let Some(peers) = p["peers"].as_array() else { return json!({"ok": false, "error": "peers must be a list"}) };
+        if peers.len() > MAX_OWN_PEERS {
+            return json!({"ok": false, "error": format!("invalid parameters: at most {MAX_OWN_PEERS} peers of your own")});
+        }
+        let mut own: Vec<String> = vec![];
+        for v in peers {
+            let h = v.as_str().map(str::trim).unwrap_or_default().to_string();
+            let host = host_of(&format!("x://{h}"));
+            if host.is_empty() || !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
+                return json!({"ok": false, "error": format!("invalid parameters: {h:?} is not host[:port]")});
+            }
+            if !own.contains(&h) {
+                own.push(h);
+            }
+        }
+        let lan = own.iter().filter(|h| is_lan(&host_of(&format!("x://{h}")))).count();
+        if lan != 0 && lan != own.len() {
+            return json!({"ok": false, "error": "invalid parameters: peers on your network and peers through Tor can't be mixed"});
+        }
+        self.own_peers.insert(net.clone(), own);
+        self.peer_list(&json!({"network": net}).to_string())
+    }
+
     pub fn set_proxy(&mut self, proxy: &str) -> Value {
         if self.locked() {
             return json!({"ok": false, "error": LOCKED});
@@ -1223,8 +1318,11 @@ impl Sim {
                     self.reorg_at = Some(now + REORG_AFTER);
                 }
             }
-            WState::Closing if elapsed >= STEP => {
+            WState::Closing if elapsed >= CLOSE_TIME => {
                 self.reset();
+                if self.pending_network.is_some() {
+                    self.switch_at = Some(now + SWITCH_AFTER_CLOSE);
+                }
                 self.alert_at = None;
                 self.rescan_from = None;
                 self.rescan_until = None;
@@ -1241,6 +1339,13 @@ impl Sim {
         if self.alert_at.is_some_and(|t| now >= t) && self.open() {
             self.alert_at = None;
             self.raise_alert(&mut out);
+        }
+        // A switch queued behind the close applies once it has settled.
+        if self.switch_at.is_some_and(|t| now >= t) {
+            self.switch_at = None;
+            if let Some(n) = self.pending_network.take() {
+                self.active = n;
+            }
         }
         if self.rescan_until.is_some_and(|t| now >= t) {
             self.rescan_until = None;
@@ -1600,7 +1705,7 @@ mod tests {
         assert!(row["blockHash"].as_str().unwrap().starts_with("00000000000000000000000000000000000000000000000000000e0e"));
         let mut ev = vec![];
         sim.close_wallet(t, &mut ev);
-        let t = run(&mut sim, t, 2);
+        let t = run(&mut sim, t, 4);
         assert!(sim.set_source("kyoto", r#"{"use":true}"#)["ok"] == true);
         sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
         let mut out = vec![];
@@ -1636,6 +1741,40 @@ mod tests {
         assert_eq!(row(&kept, "electrs.lan")["certSha256"], cert["certSha256"], "kept when the entry names it");
         let cleared = sim.set_source("electrs.lan", r#"{"certSha256":null}"#);
         assert!(row(&cleared, "electrs.lan").get("certSha256").is_none());
+    }
+
+    #[test]
+    fn a_switch_waits_for_the_close_and_an_open_waits_for_the_switch() {
+        let (mut sim, t) = opened("signet");
+        assert_eq!(sim.set_active_network("testnet4")["code"], "wallet_open");
+        let mut ev = vec![];
+        sim.close_wallet(t, &mut ev);
+        let r = sim.set_active_network("testnet4");
+        assert_eq!((r["active"].clone(), r["pending"].clone()), (json!("signet"), json!("testnet4")));
+        let t = run(&mut sim, t, 4);
+        assert_eq!(sim.status(t)["state"], "no_wallet");
+        let busy = sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
+        assert_eq!(busy["code"], "busy", "never on the old network");
+        let t = run(&mut sim, t, 5);
+        assert_eq!((sim.active(), sim.pending_network()), ("testnet4".to_string(), None));
+        assert_eq!(sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev)["ok"], true);
+        assert_eq!(sim.set_active_network("signet")["code"], "busy", "an open in progress");
+    }
+
+    #[test]
+    fn your_own_peers_replace_the_curated_list() {
+        let mut sim = Sim::new(false, Instant::now());
+        let p = sim.peer_list("{}");
+        assert_eq!((p["list"]["peers"].as_array().unwrap().len(), p["ownPeers"].clone()), (11, json!([])));
+        let r = sim.set_own_peers(r#"{"network":"mainnet","peers":["192.168.1.20:8333"]}"#);
+        assert_eq!((r["ownPeers"].clone(), r["route"].clone()), (json!(["192.168.1.20:8333"]), json!("direct")));
+        assert!(sim.set_own_peers(r#"{"peers":["192.168.1.20:8333","example.org:8333"]}"#)["error"].as_str().unwrap().contains("mixed"));
+        let many: Vec<String> = (0..65).map(|i| format!("10.0.0.{i}:8333")).collect();
+        assert!(sim.set_own_peers(&json!({"peers": many}).to_string())["error"].as_str().unwrap().contains("64"));
+        assert_eq!(sim.set_own_peers(r#"{"peers":[]}"#)["ownPeers"], json!([]));
+        let mut ev = vec![];
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, Instant::now(), &mut ev);
+        assert_eq!(sim.set_own_peers(r#"{"peers":["192.168.1.20:8333"]}"#)["error"], LOCKED);
     }
 
     #[test]

@@ -11,8 +11,12 @@ class BitcoinWalletUi
     // wallet_status() without ok: { state, network, group, family, authority, walletTip,
     // syncPercent, synced, openHandle?, label, openSend, ... }, or { state: "unavailable", error }.
     PROP(QString statusJson="" READONLY)
-    // { networks, active }
+    // { networks, active, pending }: pending is a switch waiting for a close to settle.
     PROP(QString networksJson="" READONLY)
+    // The last switch asked for: { network, state: done|queued|refused, code?, error? }.
+    PROP(QString switchJson="" READONLY)
+    // An open the backend answered busy, retried once the switch or close applies: { network, error }.
+    PROP(QString openQueuedJson="" READONLY)
     // list_wallets().wallets: [{ group, family, network, label, birthday, lastOpened }]
     PROP(QString walletsJson="[]" READONLY)
     // balances() without ok: the last read that was not busy.
@@ -25,6 +29,8 @@ class BitcoinWalletUi
     PROP(QString receiveQrJson="" READONLY)
     // fee_rates(): { fast, normal, slow, minimum, sources } in sat/vB.
     PROP(QString feeRatesJson="" READONLY)
+    // peer_list({ network }) without ok: the curated list, ownPeers, usable, route.
+    PROP(QString peerListJson="" READONLY)
     // sources(), source_health() and exposure(), each without ok.
     PROP(QString sourcesJson="" READONLY)
     PROP(QString healthJson="" READONLY)
@@ -82,6 +88,8 @@ class BitcoinWalletUi
     SLOT(QString addSource(QString address, QString kind, QString name))
     SLOT(QString removeSource(QString sourceId))
     SLOT(QString setProxy(QString proxy))
+    // Kyoto's own peers, a JSON array of host[:port], at most 64; [] restores the curated list.
+    SLOT(QString setOwnPeers(QString peersJson))
     // Not locked: the wallet marks sources suspect while it syncs.
     SLOT(QString clearSuspect(QString sourceId))
     SLOT(void refreshSources())

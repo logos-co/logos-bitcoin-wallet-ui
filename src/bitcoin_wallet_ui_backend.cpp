@@ -165,6 +165,8 @@ void BitcoinWalletUiBackend::poll() {
     if (due(m_sourcesAge, configured ? kSourcesPollMs : kReadPollMs)) loadSources();
     const bool fresh = walletReady() && m_readySince.isValid() && m_readySince.elapsed() < kFreshHealthMs;
     if (due(m_healthAge, fresh ? kReadPollMs : kHealthPollMs)) loadHealth();
+    // A switch queued behind a close, or an open waiting for it, is read every tick until it applies.
+    if (!parse(networksJson()).value("pending").toString().isEmpty() || !m_openQueued.isEmpty()) loadRegistry();
     // A rebroadcast, or the history after a restart, can still turn an unknown outcome into sent.
     const QJsonObject send = parse(sendStatusJson());
     if (!m_sendPoll.isActive() && send.value("state").toString() == "unknown" && !send.value("abandoned").toBool()) pollSend();
@@ -250,7 +252,12 @@ void BitcoinWalletUiBackend::loadRegistry() {
     auto &b = modules().bitcoin_wallet_backend;
     b.list_networksAsync([this](QString r) {
         QTimer::singleShot(0, this, [this, r] {
-            if (parse(r).value("ok").toBool()) setNetworksJson(stripOk(r));
+            if (!parse(r).value("ok").toBool()) return;
+            const QString before = parse(networksJson()).value("active").toString();
+            setNetworksJson(stripOk(r));
+            // A queued switch that applied changes the network the sources and the peer list describe.
+            if (parse(networksJson()).value("active").toString() != before) { loadSources(); loadHealth(); }
+            retryQueuedOpen();
         });
     });
     const quint64 seq = begin(m_walletsRead);
@@ -367,7 +374,26 @@ void BitcoinWalletUiBackend::loadSources() {
         QTimer::singleShot(0, this, [this, seq, r] {
             if (!finish(m_sourcesRead, seq)) return;
             if (parse(r).value("ok").toBool()) setSourcesJson(stripOk(r));
+            loadPeerList();
             if (m_sourcesRead.again) loadSources();
+        });
+    });
+}
+
+// The network the sources pane describes: the open wallet's, else the active one.
+QString BitcoinWalletUiBackend::sourcesNetwork() const {
+    const QString n = parse(sourcesJson()).value("network").toString();
+    return n.isEmpty() ? parse(networksJson()).value("active").toString() : n;
+}
+
+void BitcoinWalletUiBackend::loadPeerList() {
+    const QString network = sourcesNetwork();
+    QJsonObject params;
+    if (!network.isEmpty()) params.insert("network", network);
+    modules().bitcoin_wallet_backend.peer_listAsync(compact(params), [this, network](QString r) {
+        QTimer::singleShot(0, this, [this, network, r] {
+            if (network != sourcesNetwork()) return;
+            if (parse(r).value("ok").toBool()) setPeerListJson(stripOk(r));
         });
     });
 }
@@ -435,6 +461,22 @@ QString BitcoinWalletUiBackend::setSource(QString sourceId, QString changesJson)
 QString BitcoinWalletUiBackend::setProxy(QString proxy) {
     if (settingsLocked()) return kLocked;
     return settingsReply(modules().bitcoin_wallet_backend.set_proxy(proxy.trimmed()));
+}
+
+// Answers as peer_list; refused while a wallet is open, like every source setting.
+QString BitcoinWalletUiBackend::setOwnPeers(QString peersJson) {
+    if (settingsLocked()) return kLocked;
+    const QJsonArray peers = QJsonDocument::fromJson(peersJson.toUtf8()).array();
+    QJsonObject params{{"peers", peers}};
+    if (const QString n = sourcesNetwork(); !n.isEmpty()) params.insert("network", n);
+    const QJsonObject o = parse(modules().bitcoin_wallet_backend.set_own_peers(compact(params)));
+    loadHealth();
+    if (!o.value("ok").toBool()) return errorOf(o);
+    QJsonObject list = o;
+    list.remove("ok");
+    setPeerListJson(compact(list));
+    loadSources();
+    return {};
 }
 
 QString BitcoinWalletUiBackend::clearSuspect(QString sourceId) {
@@ -593,9 +635,20 @@ QString BitcoinWalletUiBackend::addressValid(QString text) {
 
 // ---- wallets -----------------------------------------------------------------------------------
 
+// Queued while a close settles; a refusal's code says why (wallet_open, send_open, busy).
 void BitcoinWalletUiBackend::setActiveNetwork(QString network) {
     setLastError({});
-    if (!ok(modules().bitcoin_wallet_backend.set_active_network(network), QStringLiteral("network"))) return;
+    const QJsonObject o = parse(modules().bitcoin_wallet_backend.set_active_network(network));
+    if (!o.value("ok").toBool()) {
+        const QString code = o.value("code").toString();
+        setSwitchJson(compact(QJsonObject{{"network", network}, {"state", "refused"}, {"code", code}, {"error", errorOf(o)}}));
+        if (code.isEmpty()) say(QStringLiteral("network: ") + errorOf(o));
+        loadRegistry();
+        loadStatus();
+        return;
+    }
+    const bool queued = !o.value("pending").toString().isEmpty();
+    setSwitchJson(compact(QJsonObject{{"network", network}, {"state", queued ? "queued" : "done"}}));
     loadRegistry();
     loadStatus();
     loadSources();
@@ -656,7 +709,39 @@ void BitcoinWalletUiBackend::openWallet(QString paramsJson) {
     setLastError({});
     if (hasJob("open") || hasJob("close") || hasJob("cancel")) { say(QStringLiteral("open: a wallet is opening or closing")); return; }
     m_openCancelled = false;
-    track(modules().bitcoin_wallet_backend.open_wallet(paramsJson), QStringLiteral("open"));
+    const QString reply = modules().bitcoin_wallet_backend.open_wallet(paramsJson);
+    const QJsonObject o = parse(reply);
+    // Busy: a switch queued behind a close, or a close settling. Asked again once that applies, so an
+    // open never lands on the old network; three answers of busy in a row are said instead.
+    if (!o.value("ok").toBool() && o.value("code").toString() == QLatin1String("busy") && m_openTries < 3) {
+        ++m_openTries;
+        m_openQueued = paramsJson;
+        setOpenQueuedJson(compact(QJsonObject{{"network", parse(networksJson()).value("pending").toString()}, {"error", errorOf(o)}}));
+        loadRegistry();
+        return;
+    }
+    m_openTries = 0;
+    m_openQueued.clear();
+    setOpenQueuedJson({});
+    track(reply, QStringLiteral("open"));
+}
+
+void BitcoinWalletUiBackend::retryQueuedOpen() {
+    if (m_openQueued.isEmpty()) return;
+    const QJsonObject n = parse(networksJson());
+    if (!n.value("pending").toString().isEmpty() || hasJob("close") || hasJob("cancel")) return;
+    const QString s = walletState();
+    if (s == QLatin1String("closing")) return;
+    // A wallet opened meanwhile: there is nothing left to open.
+    if (s != QLatin1String("no_wallet") && s != QLatin1String("failed")) {
+        m_openQueued.clear();
+        m_openTries = 0;
+        setOpenQueuedJson({});
+        return;
+    }
+    const QString params = m_openQueued;
+    m_openQueued.clear();
+    openWallet(params);
 }
 
 // For a wallet restored without a birthday; a refusal says why, such as a day after its first payment.

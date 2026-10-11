@@ -45,6 +45,9 @@ Item {
         property string sendError: ""
         property string birthdayJson: ""
         property string probeJson: ""
+        property string switchJson: ""
+        property string openQueuedJson: ""
+        property string peerListJson: ""
         property var calls: []
         function note(name, args) { calls = calls.concat([[name].concat(args)]) }
         function last(name) {
@@ -82,6 +85,7 @@ Item {
         function addSource(a, k, n) { note("addSource", [a, k, n]); return "" }
         function removeSource(id) { note("removeSource", [id]); return "" }
         function setProxy(p) { note("setProxy", [p]); return "" }
+        function setOwnPeers(p) { note("setOwnPeers", [p]); return "" }
         function clearSuspect(id) { note("clearSuspect", [id]); return "" }
         function refreshSources() {}
         function descriptors() { return JSON.stringify({ ok: true, external: "wpkh([73c5da0a/84h/1h/0h]tpubD6/0/*)", internal: "wpkh([73c5da0a/84h/1h/0h]tpubD6/1/*)" }) }
@@ -667,6 +671,95 @@ Item {
             expect("locked while open", shownAny("pinLocked_mine"), true)
             expect("no unpin while open", shownAny("removePin_mine"), false)
             expect("no trust while open", shownAny("trustCert_newsrv"), false)
+            v.closeSheets()
+            fake.statusJson = JSON.stringify({ state: "closing", network: "regtest", activeNetwork: "regtest" })
+            fake.networksJson = JSON.stringify({ networks: ["mainnet", "testnet4", "signet", "regtest"], active: "regtest", pending: "signet" })
+        },
+        function (v) {
+            expect("a switch can be asked for while the wallet closes", v.canPickNetwork, true)
+            expect("queued behind the close", prop("switchNote", "text"), "Switching to signet when the wallet has closed")
+            fake.networksJson = JSON.stringify({ networks: ["mainnet", "testnet4", "signet", "regtest"], active: "regtest", pending: null })
+            fake.switchJson = JSON.stringify({ network: "signet", state: "refused", code: "send_open", error: "send s3 is still open" })
+        },
+        function (v) {
+            expect("send open", prop("switchNote", "text"), "A send is still open: approve, reject or cancel it, then switch networks.")
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+        },
+        function (v) {
+            expect("a reason that no longer holds is not shown", shown("switchNote"), false)
+            fake.statusJson = JSON.stringify({ state: "opening", network: "regtest", activeNetwork: "regtest" })
+            fake.switchJson = JSON.stringify({ network: "signet", state: "refused", code: "busy", error: "a wallet is opening" })
+        },
+        function (v) {
+            expect("busy", prop("switchNote", "text"), "A wallet is opening: let it open, or cancel it, then switch networks.")
+            var st = JSON.parse(scene.syncedMainnet)
+            st.network = "regtest"
+            fake.statusJson = JSON.stringify(st)
+            fake.switchJson = JSON.stringify({ network: "signet", state: "refused", code: "wallet_open", error: "close the open wallet" })
+        },
+        function (v) {
+            expect("wallet open, said on any page", prop("switchNote", "text"), "Close the wallet before switching networks.")
+            expect("...and shown there", shown("switchNote"), true)
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+            fake.switchJson = JSON.stringify({ network: "signet", state: "done" })
+            fake.openQueuedJson = JSON.stringify({ network: "signet", error: "switching to signet once the wallet has closed; try again" })
+        },
+        function (v) {
+            expect("done says nothing", shown("switchNote"), false)
+            expect("an open waits for the switch", prop("openQueuedNote", "text"), "Opening on signet once the switch applies…")
+            fake.openQueuedJson = ""
+            fake.sourcesJson = JSON.stringify({ network: "regtest", configured: true, walletOpen: false, exposes: [], withoutTor: [], sources: [
+                { id: "kyoto", kind: "kyoto", url: "p2p://peer-list", operator: "peers", label: "Bitcoin peers", use: true, history: false, tor: true, lan: false, route: "tor" }] })
+            var peers = []
+            for (var i = 0; i < 11; i++) peers.push("p" + i + ".onion:38333")
+            fake.peerListJson = JSON.stringify({ network: "regtest", source: "shipped", ownPeers: [], usable: peers, route: "onion", kyotoTor: true,
+                list: { format: 1, network: "regtest", version: "1", peers: peers, keyId: "test-d680f3cac9837bf9",
+                        note: "PROVISIONAL: from 1 run, not the plan's 6 of 7 days. Signed with a TEST key: not a release." } })
+            find(view.item, "networkSettingsButton", 0).clicked()
+        },
+        function (v) {
+            expect("the curated list", prop("curatedLine", "text"), "The curated list: 11 peers, provisional, signed with a test key, not a release")
+            expect("no peers of your own yet", shownAny("useCuratedButton"), false)
+            findAll(view.item, "ownPeerField", 0, []).forEach(function (f) { f.text = "192.168.1.20:8333" })
+            var add = findAll(view.item, "addOwnPeerButton", 0, []).filter(function (b) { return b.visible })[0]
+            add.clicked()
+            expect("added", fake.last("setOwnPeers"), ["setOwnPeers", JSON.stringify(["192.168.1.20:8333"])])
+            var list = JSON.parse(fake.peerListJson)
+            list.ownPeers = ["192.168.1.20:8333"]
+            list.usable = ["192.168.1.20:8333"]
+            list.route = "direct"
+            fake.peerListJson = JSON.stringify(list)
+        },
+        function (v) {
+            expect("your peer", shownAny("ownPeer_192.168.1.20:8333"), true)
+            expect("reached directly", prop("ownPeersRoute", "text"), "Kyoto reaches them directly, on your network.")
+            var off = JSON.parse(fake.peerListJson)
+            off.kyotoTor = false
+            fake.peerListJson = JSON.stringify(off)
+        },
+        function (v) {
+            expect("direct with Kyoto's Tor off", prop("ownPeersRoute", "text"), "Kyoto reaches them directly: its Tor is off.")
+            var t = JSON.parse(fake.peerListJson)
+            t.kyotoTor = true
+            t.ownPeers = ["example.org:38333"]
+            t.route = "tor"
+            fake.peerListJson = JSON.stringify(t)
+        },
+        function (v) {
+            expect("through Tor", prop("ownPeersRoute", "text"), "Kyoto reaches them through Tor.")
+            findAll(view.item, "useCuratedButton", 0, []).filter(function (b) { return b.visible })[0].clicked()
+            expect("the curated list again", fake.last("setOwnPeers"), ["setOwnPeers", "[]"])
+            var st = JSON.parse(scene.syncedMainnet)
+            st.network = "regtest"
+            fake.statusJson = JSON.stringify(st)
+        },
+        function (v) {
+            v.selectTab(4)
+        },
+        function (v) {
+            expect("own peers locked while open", shownAny("ownPeersLocked"), true)
+            expect("no adding while open", shownAny("addOwnPeerButton"), false)
+            expect("no picking a network while open", v.canPickNetwork, false)
         }
     ]
     property int step: 0

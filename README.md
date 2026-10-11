@@ -9,6 +9,10 @@ is approved in the signer app.
   `open_wallet` answers a job, and while `wallet_status` carries an `openHandle` the app raises
   `keystore.accounts.open` with `{ handle }` and shows "Waiting for the keys app", with Ask again and
   Cancel. Cancel closes the wallet, which withdraws the open.
+  - A network picked while the wallet closes waits for the close: "Switching to X when the wallet
+    has closed" (`set_active_network`'s `pending`, also in `list_networks`). A refusal says why
+    (`wallet_open`, `send_open` or `busy`). An open the backend answers `busy` meanwhile is asked
+    again once the switch applies, so it never opens on the old network.
 - **Home:** the confirmed balance, then rows for payments waiting for the wallet's chain, pending
   payments with the source that reported them, sent transactions not yet confirmed (with Speed
   up), mined coins not yet mature, and coins too small to spend at today's fee rate. A busy read
@@ -57,6 +61,10 @@ is approved in the signer app.
     servers of one operator alone decide the chain.
   - Your own servers, added by address; the Tor proxy; the exposure record. A server reached in
     plain text outside Tor is marked "Not encrypted".
+  - Under Kyoto, your own peers (`peer_list`, `set_own_peers`, at most 64): the curated list's size,
+    and whether it is provisional or signed with a test key. One of your own replaces the curated
+    list, so Kyoto connects to your peers alone, directly on your network, otherwise through Tor;
+    "Use the curated list again" sends `[]`.
   - A server you add is probed (`probe`), and a TLS certificate that no authority this computer
     trusts shows its subject, issuer, validity and SHA-256 fingerprint, with "Trust this
     certificate", which pins it (`set_source` `certSha256`). A pinned server shows its pin, with
@@ -80,7 +88,7 @@ is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend 13566b6.
+interface changes; this copy is from logos-bitcoin-wallet-backend 96cb103.
 
 ## Intents
 
@@ -109,12 +117,13 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
 - `wallet-ui-app.test.yaml` runs against `doctests/fixture-backend`, a scripted
   `bitcoin_wallet_backend` with the real backend's contract (its trait is copied verbatim) and
   nothing behind it: every flow, to every send outcome, a birthday refused and set, change added
-  to the fee, a reorg, Kyoto as the authority and a chain it names that is refused, and a TLS
-  server's certificate pinned. A send's fate is picked by its amount; the header of `sim.rs` says
-  how.
+  to the fee, a reorg, Kyoto as the authority and a chain it names that is refused, a TLS
+  server's certificate pinned, a Kyoto peer of your own, and a network switch queued behind a
+  close with an open waiting for it. A send's fate is picked by its amount; the header of `sim.rs`
+  says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
-  manager and keystore: the node module's sources, and an open up to the keys app's handle,
-  withdrawn. Nothing can approve an open there, so sends are not reached.
+  manager and keystore: the node module's sources, certificate pin and curated Kyoto list with a
+  peer of your own, and an open up to the keys app's handle, withdrawn. Nothing can approve an open there, so sends are not reached.
 
 `basecamp-e2e.test.yaml` runs the app in the full Basecamp bundle beside the real keys app and
 signer app, on a regtest chain from the wallet core's chain script (bitcoind, two electrs and a

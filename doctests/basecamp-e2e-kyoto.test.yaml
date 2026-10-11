@@ -23,7 +23,7 @@ sections:
           b manager 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install-portable'
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
-          b backend 'github:logos-co/logos-bitcoin-wallet-backend/13566b66578f3382f3e4d8d9ddae4eaaa852f7dd#install-portable'
+          b backend 'github:logos-co/logos-bitcoin-wallet-backend/96cb1038088bb27f3be98d1b82a5c4f93878e683#install-portable'
           b core 'github:logos-co/logos-bitcoin-wallet-core-module/00d72a2211072f1cac29aab30b6b393ae9269a8e#install-portable'
           b chain 'github:logos-co/logos-bitcoin-wallet-core-module/00d72a2211072f1cac29aab30b6b393ae9269a8e#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/fb8dcd60354c3a13be1a0b1376b42a7535b7818e#install-portable'

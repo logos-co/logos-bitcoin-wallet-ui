@@ -5,11 +5,12 @@ project_name: logos-bitcoin-wallet-ui
 # handle for the keys app. HOME is the run's own.
 
 intro: |
-  The app against the modules it ships with: bitcoin_wallet_backend 13566b6,
+  The app against the modules it ships with: bitcoin_wallet_backend 96cb103,
   bitcoin_wallet_core_module 00d72a2, bitcoin_node_module fb8dcd6, signer_manager_module 80bc40c
   and keystore_module 1f3d62f. The node module's own sources for signet, a server of your own
   added and given History through the app, a TLS server of your own whose self-signed certificate
-  the node module's probe reads and the app pins and unpins, and an open that reaches the signer
+  the node module's probe reads and the app pins and unpins, a Kyoto peer of your own that replaces
+  the node module's curated list and is dropped again, and an open that reaches the signer
   manager and comes back as the core's handle for the keys app, then is withdrawn. No keys app is
   installed and the signer manager has no custodian here, so nothing can approve the open, and
   sends are not reached.
@@ -22,7 +23,7 @@ sections:
           set -eu
           nix build 'github:logos-co/logos-basecamp#app-standalone' --no-write-lock-file -o result-basecamp
           nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
-          nix build 'github:logos-co/logos-bitcoin-wallet-backend/13566b66578f3382f3e4d8d9ddae4eaaa852f7dd#install' -o result-real-backend
+          nix build 'github:logos-co/logos-bitcoin-wallet-backend/96cb1038088bb27f3be98d1b82a5c4f93878e683#install' -o result-real-backend
           nix build 'github:logos-co/logos-bitcoin-wallet-core-module/00d72a2211072f1cac29aab30b6b393ae9269a8e#install' -o result-real-core
           nix build 'github:logos-co/logos-bitcoin-node-module/fb8dcd60354c3a13be1a0b1376b42a7535b7818e#install' -o result-real-node
           nix build 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install' -o result-real-manager
@@ -204,6 +205,51 @@ sections:
               property: "visible"
               value: false
               timeout: 10000
+            - name: "Under Kyoto, the node module's curated list for signet: provisional and test-signed"
+              action: expect_property
+              find_value: "curatedLine"
+              property: "text"
+              value: "The curated list: 11 peers, provisional, signed with a test key, not a release"
+              timeout: 20000
+            - name: "A peer of your own"
+              action: set_text
+              find_by: "objectName"
+              find_value: "ownPeerField"
+              value: "192.168.1.20:38333"
+            - name: "Add it: the backend relays it to the node module, and it replaces the curated list"
+              action: call_method
+              find_value: "addOwnPeerButton"
+              method: "clicked"
+              args: []
+            - name: "The node module lists it"
+              action: expect_property
+              find_value: "ownPeer_192.168.1.20:38333"
+              property: "visible"
+              value: true
+              timeout: 20000
+            - name: "On your network, Kyoto dials it directly"
+              action: expect_property
+              find_value: "ownPeersRoute"
+              property: "text"
+              value: "Kyoto reaches them directly, on your network."
+              timeout: 5000
+              screenshot: "real-own-peers.png"
+            - name: "Use the curated list again"
+              action: call_method
+              find_value: "useCuratedButton"
+              method: "clicked"
+              args: []
+            - name: "Back to the curated list"
+              action: expect_property
+              find_value: "useCuratedButton"
+              property: "visible"
+              value: false
+              timeout: 20000
+            - name: "Nothing was refused on the way"
+              action: expect_property
+              find_value: "ownPeersNote"
+              property: "visible"
+              value: false
             - name: "Close the sheet"
               action: call_method
               find_value: "bitcoinWalletRoot"
