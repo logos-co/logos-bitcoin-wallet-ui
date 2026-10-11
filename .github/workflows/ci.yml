@@ -1,0 +1,172 @@
+name: CI
+
+# What this repo can assert without a host or a wallet: the build, the rule that no secret
+# crosses the view's interface, and the view linted, constructed and driven through its states.
+# `nix build` proves nothing about QML: a bad import or a mistyped Theme token takes the view down
+# at runtime and says so only through qWarning.
+#
+# The design system is not a flake input (the host links it), but its source decides whether
+# `import Logos.Controls` resolves, so it is checked out at the revision the builder pins.
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: nix build
+    # ATTIC_TOKEN_PUBLIC only exists in the public-cache environment.
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix and set up the shared cache
+        uses: logos-co/setup-nix-cache-action@v1
+        with:
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+
+      - name: Build plugin and package
+        run: nix build -L .#lgx
+
+  no-secrets:
+    name: no secret crosses the view's interface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The .rep declares no PROP and no SLOT named like a secret
+        # Wallets open in the keys app and sends are approved in the signer app, so nothing secret
+        # has a reason to cross here, in either direction: not as a PROP (cached in the replica and
+        # broadcast to every connected one), and not as a SLOT argument or return value either.
+        # A case-insensitive substring match, so `newPassword` and `recoveryPhrase` are caught
+        # where a \b-anchored pattern is not.
+        shell: bash
+        run: |
+          set -euo pipefail
+          pat='^[[:space:]]*(PROP|SLOT)[[:space:]]*\(.*(password|passphrase|phrase|mnemonic|seed|privkey|private_?key|spendkey|xprv|tprv|wif|secret|database_?key)'
+          rep=src/bitcoin_wallet_ui.rep
+          test -f "$rep"
+
+          # Positive controls first: a grep over a moved file passes by finding nothing.
+          printf '%s\n' '    PROP(QString recoveryPhrase="" READONLY)' \
+                        '    SLOT(void openWallet(QString name, QString newPassword))' \
+                        '    SLOT(QString revealSeed())' \
+                        '    SLOT(QString exportXprv(QString account))' > /tmp/bad.rep
+          [ "$(grep -cEi "$pat" /tmp/bad.rep)" = 4 ] \
+            || { echo "::error::the tripwire no longer detects a secret PROP or SLOT"; exit 1; }
+          # ...and what this surface is allowed to declare stays allowed.
+          printf '%s\n' '    SLOT(QString descriptors())' \
+                        '    SLOT(QString abandonSend(QString txid))' \
+                        '    PROP(QString sendStatusJson="{}" READONLY)' > /tmp/ok.rep
+          if grep -qEi "$pat" /tmp/ok.rep; then
+            echo "::error::the tripwire now refuses a permitted PROP or SLOT"; exit 1
+          fi
+          # A tripwire that matched nothing at all would pass a renamed file: the surface is there.
+          [ "$(grep -cE '^[[:space:]]*(PROP|SLOT)[[:space:]]*\(' "$rep")" -gt 20 ] \
+            || { echo "::error::$rep declares almost nothing; is this the view's interface?"; exit 1; }
+
+          if grep -nEi "$pat" "$rep"; then
+            echo "::error::a PROP or SLOT above is named like a secret. This app takes none: the keys"
+            echo "::error::app and the signer app hold them."
+            exit 1
+          fi
+          echo "NO_SECRET_PROP_OR_SLOT"
+
+      - name: The view has no password field
+        shell: bash
+        run: |
+          set -euo pipefail
+          pat='echoMode|TextInput\.Password|passwordMaskDelay'
+          printf '%s\n' 'LogosTextField { echoMode: TextInput.Password }' > /tmp/bad.qml
+          grep -qE "$pat" /tmp/bad.qml || { echo "::error::the tripwire no longer finds a password field"; exit 1; }
+          if grep -nE "$pat" qml/*.qml; then
+            echo "::error::a password field above: wallets open in the keys app, and sends are approved in the signer app."
+            exit 1
+          fi
+          echo "NO_PASSWORD_FIELD"
+
+  qml:
+    name: qmllint, construct, states
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: logos-bitcoin-wallet-ui
+
+      - name: Find the design-system revision the builder pins
+        id: ds
+        working-directory: logos-bitcoin-wallet-ui
+        shell: bash
+        run: |
+          set -euo pipefail
+          rev=$(jq -r '.nodes as $n | ($n[.root].inputs["logos-module-builder"]) as $b
+                       | $n[$n[$b].inputs["logos-design-system"]].locked.rev' flake.lock)
+          [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no design-system pin in flake.lock ($rev)"; exit 1; }
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: logos-co/logos-design-system
+          ref: ${{ steps.ds.outputs.rev }}
+          path: logos-design-system
+
+      - name: Install Nix and set up the shared cache
+        uses: logos-co/setup-nix-cache-action@v1
+        with:
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+
+      - name: Gate A — static (imports, type and property names)
+        working-directory: logos-bitcoin-wallet-ui
+        # `-W 0` fails on the first warning. `--unqualified` is off: `logos` is injected by the host.
+        run: |
+          # shellcheck disable=SC2016  # the $(...) below is for the inner bash -c
+          nix shell nixpkgs#qt6.qtdeclarative -c bash -c '
+            QTQML=$(dirname $(dirname $(readlink -f $(command -v qmllint))))/lib/qt-6/qml
+            qmllint -I "$QTQML" -I ../logos-design-system/src/qml \
+                    -W 0 --unqualified disable qml/*.qml'
+
+      - name: Gate B — construct the view, then drive it through its states
+        working-directory: logos-bitcoin-wallet-ui
+        run: |
+          # shellcheck disable=SC2016  # the $(...) below is for the inner bash -c
+          nix shell nixpkgs#qt6.qtdeclarative nixpkgs#qt6.qtsvg -c bash -c '
+            d=$(dirname $(dirname $(readlink -f $(command -v qml))))
+            # Basic: under a platform style the design system'"'"'s contentItem overrides are
+            # rejected. QT_LOGGING_TO_CONSOLE: without it a runner sends every message to journald.
+            run() { QT_LOGGING_TO_CONSOLE=1 QT_QUICK_CONTROLS_STYLE=Basic QT_QPA_PLATFORM=offscreen \
+                      timeout "$2" qml -I "$d/lib/qt-6/qml" -I ../logos-design-system/src/qml "$1" > "$3" 2>&1; }
+            run ci/construct.qml 60 /tmp/construct.log; status=$?
+            cat /tmp/construct.log
+            # 124 IS THE PASS: the view is an Item, so a healthy load runs until timeout kills it.
+            [ $status -eq 124 ] || { echo "::error::qml exited $status (expected 124 = loaded and running)"; exit 1; }
+            grep -q "VIEW-READY" /tmp/construct.log || { echo "::error::the view did not construct"; exit 1; }
+            # "Unable to assign [undefined]" is how a mistyped Theme token shows; qmllint misses it.
+            if grep -qE "does not support customization|Cannot assign|Unable to assign|was not found|TypeError" /tmp/construct.log; then
+              echo "::error::QML component errors above"; exit 1
+            fi
+            # `logos` is absent here, so its ReferenceError is the one expected; any other is a typo.
+            if grep "ReferenceError" /tmp/construct.log | grep -v "logos is not defined"; then
+              echo "::error::unexpected ReferenceError above"; exit 1
+            fi
+            # The sync labels, every send outcome and the activity rows, against a fake backend.
+            run ci/states.qml 120 /tmp/states.log; status=$?
+            cat /tmp/states.log
+            grep -q "STATES-OK" /tmp/states.log || { echo "::error::state test failed (exit $status)"; exit 1; }
+            if grep -qE "Cannot assign|Unable to assign|TypeError|ReferenceError" /tmp/states.log; then
+              echo "::error::QML errors while driving the states"; exit 1
+            fi'

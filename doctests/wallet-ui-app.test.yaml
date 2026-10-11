@@ -1,0 +1,798 @@
+name: bitcoin_wallet_ui — open a wallet through the keys app, send through the signer app, settle every outcome, in Basecamp
+project_name: logos-bitcoin-wallet-ui
+
+# Every build is a flake URL: each step runs in a throwaway directory. The app builds from its
+# checkout (E2E_REPO, set by run.sh). The host is Basecamp in standalone mode: `--module` opens this
+# app and `--modules-dir` holds the backend it depends on.
+#
+# The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
+# (its trait, copied from logos-bitcoin-wallet-backend 9e512ff) with a script behind it, and no
+# wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
+# Basecamp answers both intents `unavailable`; the stand-in plays the person instead. It never
+# approves the first open of a run, approves the next one after 4 s, and picks a send's fate by its
+# amount: 0.0002 BTC is rejected, 0.0003 BTC expires unacknowledged, 0.0004 BTC goes out with an
+# unknown outcome, 0.0005 BTC leaves change too small to spend, and the first payment sent makes
+# the history server report a confirmation on another chain.
+#
+# Waits poll a property (`expect_property` with `timeout`): a text match also finds hidden items,
+# such as a closed sheet's buttons. Rows below the fold are clicked with `call_method`.
+#
+# Offscreen with Qt Quick's software renderer: no window, no GPU, and screenshots still work.
+
+intro: |
+  The whole app in one headless run, in Basecamp: a wallet is opened through the keys app's intent
+  (and the first attempt withdrawn), the sources are set before it opens and locked while it is
+  open, a fresh BIP21 address is handed out, and sends go through the signer app's intent to each
+  of their outcomes: nobody acknowledging within 60 s and asking again, a cancel, a rejection, an
+  unknown outcome that is forgotten, and a payment that goes out and is then sped up. The sync line
+  never claims "Synchronized" once no source agrees with the wallet's chain.
+
+sections:
+  - title: "Build Basecamp, the app, and the stand-in backend"
+    steps:
+      - title: "Build Basecamp's standalone host, the app, and the backend it depends on"
+        run: |
+          set -eu
+          nix build 'github:logos-co/logos-basecamp#app-standalone' --no-write-lock-file -o result-basecamp
+          nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
+          nix build "git+file://${E2E_REPO:?run this spec through doctests/run.sh}?dir=doctests/fixture-backend#install" -o result-backend
+          nix build "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install" -o result-wallet
+          mkdir -p tree/modules
+          cp -rL result-backend/modules/* tree/modules/
+          chmod -R u+w tree
+          ls tree/modules result-wallet/plugins
+        expect_contains: ["bitcoin_wallet_backend", "bitcoin_wallet_ui"]
+
+  - title: "Drive the wallet"
+    steps:
+      - title: "Open, receive, send to every outcome, speed up, close"
+        ui_test:
+          # LOGOS_NO_SCHEME_REGISTER: a test run leaves the machine's logos:// handler alone.
+          launch: "env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_FORCE_STDERR_LOGGING=1 QML_INSPECTOR_PORT=3768 LOGOS_NO_SCHEME_REGISTER=1 ./result-basecamp/bin/LogosBasecamp --module ./result-wallet --modules-dir ./tree/modules --user-dir ./userdir"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "With nothing open the app offers to open a wallet"
+              action: expect_property
+              find_value: "statusLine"
+              property: "text"
+              value: "No wallet open"
+              timeout: 60000
+            - name: "Choose signet"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectNetwork"
+              args: ["signet"]
+            - name: "The app is on signet"
+              action: expect_property
+              find_value: "networkChip"
+              property: "text"
+              value: "signet"
+              timeout: 15000
+              screenshot: "wallet-open-page.png"
+
+            - name: "Open Sources and privacy before any wallet is open"
+              action: click_object
+              find_value: "networkSettingsButton"
+            - name: "The sheet opens"
+              action: expect_property
+              find_value: "networkSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "The sources are read"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "sourcesRead"
+              value: true
+              timeout: 15000
+            - name: "With Kyoto off, both servers in use are one operator's, and the app says so"
+              action: expect_property
+              find_value: "oneOperatorNotice"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "Type a server of your own"
+              action: set_text
+              find_by: "objectName"
+              find_value: "addSourceAddress"
+              value: "192.168.1.20:50001"
+            - name: "Name it"
+              action: set_text
+              find_by: "objectName"
+              find_value: "addSourceName"
+              value: "Home node"
+            - name: "Add it"
+              action: click_object
+              find_value: "addSourceButton"
+            - name: "It is listed, on your network"
+              action: expect_property
+              find_value: "lanBadge_192.168.1.20"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "A second operator now decides the chain too"
+              action: expect_property
+              find_value: "oneOperatorNotice"
+              property: "visible"
+              value: false
+              timeout: 10000
+            - name: "Turn on History for the Electrum server: the app asks first"
+              action: call_method
+              find_value: "historySwitch_electrum.example"
+              method: "clicked"
+              args: []
+            - name: "It says the server will learn every address"
+              action: expect_property
+              find_value: "historyConfirm_electrum.example"
+              property: "visible"
+              value: true
+              timeout: 5000
+              screenshot: "wallet-history-confirm.png"
+            - name: "Turn it on"
+              action: call_method
+              find_value: "confirmHistory_electrum.example"
+              method: "clicked"
+              args: []
+            - name: "History is on"
+              action: expect_property
+              find_value: "historySwitch_electrum.example"
+              property: "checked"
+              value: true
+              timeout: 10000
+            - name: "Switch its Tor off: the app asks first, in its row"
+              action: call_method
+              find_value: "torSwitch_electrum.example"
+              method: "clicked"
+              args: []
+            - name: "It says what the server would see"
+              action: expect_property
+              find_value: "torOffConfirm_electrum.example"
+              property: "visible"
+              value: true
+              timeout: 5000
+              screenshot: "wallet-tor-off-confirm.png"
+            - name: "Reach it without Tor"
+              action: call_method
+              find_value: "skipTor_electrum.example"
+              method: "clicked"
+              args: []
+            - name: "The row is marked"
+              action: expect_property
+              find_value: "withoutTorBadge_electrum.example"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "...and a notice lists it"
+              action: expect_property
+              find_value: "withoutTorNotice"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "Switch Tor back on, which needs no asking"
+              action: call_method
+              find_value: "torSwitch_electrum.example"
+              method: "clicked"
+              args: []
+            - name: "Nothing is reached without Tor"
+              action: expect_property
+              find_value: "withoutTorNotice"
+              property: "visible"
+              value: false
+              timeout: 10000
+            - name: "Remove your own server again"
+              action: call_method
+              find_value: "removeSource_192.168.1.20"
+              method: "clicked"
+              args: []
+            - name: "One operator again"
+              action: expect_property
+              find_value: "oneOperatorNotice"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "Close the sheet"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "closeSheets"
+              args: []
+            - name: "The sheet is closed"
+              action: expect_property
+              find_value: "networkSheet"
+              property: "visible"
+              value: false
+              timeout: 10000
+
+            - name: "Open a wallet"
+              action: click_object
+              find_value: "openWalletButton"
+            - name: "The app waits for the keys app, under the open's handle"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "openHandle"
+              value: "sma_fixture1"
+              timeout: 10000
+            - name: "...and says so"
+              action: expect_property
+              find_value: "keysWaitTitle"
+              property: "text"
+              value: "Waiting for the keys app"
+              timeout: 5000
+            - name: "No keys app is installed: Basecamp answers the intent unavailable, and the app says what to do"
+              action: expect_property
+              find_value: "keysNote"
+              property: "text"
+              value: "The keys app is not installed here. Install it, open it, and approve the request under Requests from apps."
+              timeout: 15000
+              screenshot: "wallet-waiting-keys.png"
+            - name: "Cancel"
+              action: click_object
+              find_value: "cancelOpenButton"
+            - name: "The open is withdrawn"
+              action: expect_property
+              find_value: "openForm"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "...and no wallet is open"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "no_wallet"
+              timeout: 5000
+            - name: "Open again; this time the person approves in the keys app"
+              action: click_object
+              find_value: "openWalletButton"
+            - name: "The wallet opens"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "walletOpen"
+              value: true
+              timeout: 30000
+            - name: "...on signet"
+              action: expect_property
+              find_value: "statusLine"
+              property: "text"
+              value: "Open: Native segwit · signet"
+              timeout: 10000
+            - name: "It syncs to the chain's tip, with sources agreeing and a fresh tip"
+              action: expect_property
+              find_value: "syncLine"
+              property: "text"
+              value: "Synchronized · block 290,123, tip 4 min old"
+              timeout: 30000
+            - name: "The confirmed balance"
+              action: expect_property
+              find_value: "confirmedCard"
+              property: "value"
+              value: "1.25 BTC"
+              timeout: 15000
+            - name: "Payments waiting for the wallet's chain"
+              action: expect_property
+              find_value: "waitingRowAmount"
+              property: "text"
+              value: "0.0005 BTC"
+              timeout: 10000
+            - name: "A pending payment, with the source that reported it"
+              action: expect_property
+              find_value: "pendingRowAmount"
+              property: "text"
+              value: "0.0003 BTC"
+              timeout: 10000
+            - name: "Coins too small to spend at today's fee rate"
+              action: expect_property
+              find_value: "tooSmallRowAmount"
+              property: "text"
+              value: "2 coins, 0.0000054 BTC"
+              timeout: 10000
+              screenshot: "wallet-home.png"
+
+            - name: "Go to Receive"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [2]
+            - name: "A fresh address, with its BIP21 QR drawn as rectangles"
+              action: expect_property
+              find_value: "receiveQr"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "...the wallet's first"
+              action: expect_property
+              find_value: "receiveAddress"
+              property: "text"
+              value: "tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r"
+              timeout: 10000
+            - name: "Ask for another"
+              action: click_object
+              find_value: "newAddressButton"
+            - name: "A new one"
+              action: expect_property
+              find_value: "receiveAddress"
+              property: "text"
+              value: "tb1qmyt0kg3tn9edlzmqd365whe98wq4jln56mwgjs"
+              timeout: 10000
+            - name: "Ask for an amount"
+              action: set_text
+              find_by: "objectName"
+              find_value: "receiveAmountField"
+              value: "0.0015"
+            - name: "The payment request carries it"
+              action: expect_property
+              find_value: "receiveUri"
+              property: "text"
+              value: "bitcoin:tb1qmyt0kg3tn9edlzmqd365whe98wq4jln56mwgjs?amount=0.0015"
+              timeout: 10000
+              screenshot: "wallet-receive.png"
+
+            - name: "Go to Send"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [1]
+            - name: "Pay a signet address"
+              action: set_text
+              find_by: "objectName"
+              find_value: "sendRecipientField"
+              value: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"
+            - name: "0.0003 BTC, which nobody acknowledges in time"
+              action: set_text
+              find_by: "objectName"
+              find_value: "sendAmountField"
+              value: "0.0003"
+            - name: "The address checks out as typed"
+              action: expect_property
+              find_value: "recipientBadge"
+              property: "text"
+              value: "native segwit"
+              timeout: 10000
+            - name: "Review is enabled"
+              action: expect_property
+              find_value: "reviewButton"
+              property: "enabled"
+              value: true
+              timeout: 10000
+            - name: "Review"
+              action: click_object
+              find_value: "reviewButton"
+            - name: "The review opens"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "It shows the amount"
+              action: expect_property
+              find_value: "draftAmount"
+              property: "text"
+              value: "0.0003 BTC (30,000 sats)"
+              timeout: 5000
+              screenshot: "wallet-review.png"
+            - name: "Approve in Signer"
+              action: click_object
+              find_value: "approveInSignerButton"
+            - name: "The wallet built it and asks the signer app"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "Approve it in the signer app"
+              timeout: 15000
+            - name: "No signer app is installed: the app says how to approve it"
+              action: expect_property
+              find_value: "signerNote"
+              property: "text"
+              value: "The signer app is not installed here. Open it within 60 s to approve or reject this send, or cancel it."
+              timeout: 15000
+              screenshot: "wallet-send-signer.png"
+            - name: "Nobody acknowledged it in time"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "Nobody approved it within 60 s"
+              timeout: 30000
+            - name: "...and the app offers to ask again"
+              action: expect_property
+              find_value: "askAgainButton"
+              property: "visible"
+              value: true
+              timeout: 5000
+              screenshot: "wallet-send-expired.png"
+            - name: "Ask again"
+              action: click_object
+              find_value: "askAgainButton"
+            - name: "A new request waits for the signer app"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "Approve it in the signer app"
+              timeout: 15000
+            - name: "Cancel it"
+              action: click_object
+              find_value: "cancelSendButton"
+            - name: "It is cancelled"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "Cancelled"
+              timeout: 15000
+            - name: "Done"
+              action: click_object
+              find_value: "doneSendButton"
+            - name: "The review is closed"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "visible"
+              value: false
+              timeout: 10000
+
+            - name: "0.0002 BTC, which the person rejects"
+              action: set_text
+              find_by: "objectName"
+              find_value: "sendAmountField"
+              value: "0.0002"
+            - name: "Review is enabled"
+              action: expect_property
+              find_value: "reviewButton"
+              property: "enabled"
+              value: true
+              timeout: 10000
+            - name: "Review"
+              action: click_object
+              find_value: "reviewButton"
+            - name: "The review opens"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "Approve in Signer"
+              action: click_object
+              find_value: "approveInSignerButton"
+            - name: "Rejected in the signer app"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "Rejected in the signer app"
+              timeout: 20000
+            - name: "Done"
+              action: click_object
+              find_value: "doneSendButton"
+            - name: "The review is closed"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "visible"
+              value: false
+              timeout: 10000
+
+            - name: "0.0004 BTC, which goes out with nobody able to say whether it arrived"
+              action: set_text
+              find_by: "objectName"
+              find_value: "sendAmountField"
+              value: "0.0004"
+            - name: "Review is enabled"
+              action: expect_property
+              find_value: "reviewButton"
+              property: "enabled"
+              value: true
+              timeout: 10000
+            - name: "Review"
+              action: click_object
+              find_value: "reviewButton"
+            - name: "The review opens"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "Approve in Signer"
+              action: click_object
+              find_value: "approveInSignerButton"
+            - name: "The outcome is unknown"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "The outcome is unknown: it may have left"
+              timeout: 20000
+            - name: "A banner says so above the tabs"
+              action: expect_property
+              find_value: "sendUnknownBanner"
+              property: "visible"
+              value: true
+              timeout: 5000
+            - name: "...and the app offers to forget it"
+              action: expect_property
+              find_value: "forgetPaymentButton"
+              property: "visible"
+              value: true
+              timeout: 5000
+              screenshot: "wallet-send-unknown.png"
+            - name: "Forget this payment"
+              action: click_object
+              find_value: "forgetPaymentButton"
+            - name: "It asks first"
+              action: expect_property
+              find_value: "forgetSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+              screenshot: "wallet-forget-confirm.png"
+            - name: "Forget it"
+              action: click_object
+              find_value: "confirmForgetButton"
+            - name: "It is forgotten"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "Forgotten"
+              timeout: 15000
+            - name: "...with the backend's note on what that means"
+              action: expect_property
+              find_value: "forgetNote"
+              property: "text"
+              value: "Abandoned: its coins are free to spend again. If the original transaction still confirms, a later send from those coins will fail; if a later send confirms first, it replaces the original."
+              timeout: 5000
+            - name: "...and the banner is gone"
+              action: expect_property
+              find_value: "sendUnknownBanner"
+              property: "visible"
+              value: false
+              timeout: 5000
+            - name: "Done"
+              action: click_object
+              find_value: "doneSendButton"
+            - name: "The review is closed"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "visible"
+              value: false
+              timeout: 10000
+
+            - name: "0.0005 BTC, which leaves change too small to spend"
+              action: set_text
+              find_by: "objectName"
+              find_value: "sendAmountField"
+              value: "0.0005"
+            - name: "Review is enabled"
+              action: expect_property
+              find_value: "reviewButton"
+              property: "enabled"
+              value: true
+              timeout: 10000
+            - name: "Review"
+              action: click_object
+              find_value: "reviewButton"
+            - name: "The review opens"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "Approve in Signer"
+              action: click_object
+              find_value: "approveInSignerButton"
+            - name: "The summary warns about the change"
+              action: expect_property
+              find_value: "changeTooSmallNotice"
+              property: "visible"
+              value: true
+              timeout: 15000
+              screenshot: "wallet-send-small-change.png"
+            - name: "The person approves it, and it is sent"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "Sent"
+              timeout: 20000
+              screenshot: "wallet-sent.png"
+            - name: "Done"
+              action: click_object
+              find_value: "doneSendButton"
+            - name: "The review is closed"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "visible"
+              value: false
+              timeout: 10000
+
+            - name: "Home"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [0]
+            - name: "The history server reported a confirmation on another chain: an alert"
+              action: expect_property
+              find_value: "alertBanner"
+              property: "visible"
+              value: true
+              timeout: 20000
+            - name: "With no source agreeing, the app does not say Synchronized"
+              action: expect_property
+              find_value: "syncLine"
+              property: "text"
+              value: "No source agrees · block 290,123, tip 4 min old"
+              timeout: 10000
+              screenshot: "wallet-alert.png"
+            - name: "Settings"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [4]
+            - name: "The server is marked suspect"
+              action: expect_property
+              find_value: "suspectBadge_electrum.example"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "With a wallet open, the source settings show but do not change"
+              action: expect_property
+              find_value: "networkLockedNotice"
+              property: "visible"
+              value: true
+              timeout: 5000
+            - name: "...no Use switch"
+              action: expect_property
+              find_value: "useSwitch_electrum.example"
+              property: "visible"
+              value: false
+            - name: "...and no server can be added"
+              action: expect_property
+              find_value: "addSourcePane"
+              property: "visible"
+              value: false
+            - name: "A suspect mark can still be cleared"
+              action: call_method
+              find_value: "clearSuspect_electrum.example"
+              method: "clicked"
+              args: []
+            - name: "It is cleared"
+              action: expect_property
+              find_value: "suspectBadge_electrum.example"
+              property: "visible"
+              value: false
+              timeout: 15000
+            - name: "Home"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [0]
+            - name: "The source agrees again, and the app says Synchronized"
+              action: expect_property
+              find_value: "syncLine"
+              property: "text"
+              value: "Synchronized · block 290,123, tip 4 min old"
+              timeout: 15000
+            - name: "Dismiss the alert"
+              action: click_object
+              find_value: "dismissAlertsButton"
+            - name: "The banner is gone"
+              action: expect_property
+              find_value: "alertBanner"
+              property: "visible"
+              value: false
+              timeout: 10000
+
+            - name: "Activity"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [3]
+            - name: "The payment reads as what it was for"
+              action: expect_property
+              find_value: "historyIntent_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
+              property: "text"
+              value: "−0.0005 BTC · fee 846 sats"
+              timeout: 30000
+            - name: "A transfer to the wallet's own address"
+              action: expect_property
+              find_value: "historyIntent_b17c000000000003b17c000000000003b17c000000000003b17c000000000003"
+              property: "text"
+              value: "0.01 BTC to yourself · fee 141 sats"
+              timeout: 5000
+            - name: "Coins combined"
+              action: expect_property
+              find_value: "historyIntent_b17c000000000004b17c000000000004b17c000000000004b17c000000000004"
+              property: "text"
+              value: "3 coins combined · fee 312 sats"
+              timeout: 5000
+            - name: "A pending payment, with the source that reported it"
+              action: expect_property
+              find_value: "historyState_b17c000000000001b17c000000000001b17c000000000001b17c000000000001"
+              property: "text"
+              value: "pending · reported by electrum.example"
+              timeout: 5000
+            - name: "Open the payment's details"
+              action: call_method
+              find_value: "details_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
+              method: "clicked"
+              args: []
+            - name: "They list the address paid"
+              action: expect_property
+              find_value: "historyPaid_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
+              property: "text"
+              value: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"
+              timeout: 5000
+            - name: "...and the transaction ID"
+              action: expect_property
+              find_value: "historyTxid_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
+              property: "visible"
+              value: true
+              timeout: 5000
+              screenshot: "wallet-activity-details.png"
+            - name: "Speed up the unconfirmed payment"
+              action: call_method
+              find_value: "speedUp_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
+              method: "clicked"
+              args: []
+            - name: "The speed-up sheet opens at today's fast rate"
+              action: expect_property
+              find_value: "speedUpRateField"
+              property: "text"
+              value: "12"
+              timeout: 10000
+            - name: "Approve in Signer"
+              action: click_object
+              find_value: "confirmSpeedUpButton"
+            - name: "The replacement is approved and sent"
+              action: expect_property
+              find_value: "sendHeadline"
+              property: "text"
+              value: "Fee raised"
+              timeout: 25000
+            - name: "Done"
+              action: click_object
+              find_value: "doneSendButton"
+            - name: "Activity shows the new fee"
+              action: expect_property
+              find_value: "historyIntent_feeb00000000069cfeeb00000000069cfeeb00000000069cfeeb00000000069c"
+              property: "text"
+              value: "Fee raised to 1,692 sats"
+              timeout: 30000
+            - name: "...and the payment it replaced"
+              action: expect_property
+              find_value: "historyState_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
+              property: "text"
+              value: "replaced"
+              timeout: 10000
+              screenshot: "wallet-activity.png"
+
+            - name: "Settings"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [4]
+            - name: "Show the descriptors"
+              action: click_object
+              find_value: "showDescriptorsButton"
+            - name: "It warns first"
+              action: expect_property
+              find_value: "descriptorsSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "Show them"
+              action: click_object
+              find_value: "confirmDescriptorsButton"
+            - name: "The public descriptors show, under the warning"
+              action: expect_property
+              find_value: "descriptorPanel"
+              property: "visible"
+              value: true
+              timeout: 10000
+              screenshot: "wallet-descriptors.png"
+            - name: "Close the wallet"
+              action: click_object
+              find_value: "closeWalletButton"
+            - name: "No wallet is open"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "no_wallet"
+              timeout: 20000
+            - name: "It is listed to open again"
+              action: expect_property
+              find_value: "reopen_g_fixture2"
+              property: "visible"
+              value: true
+              timeout: 15000
+              screenshot: "wallet-closed.png"

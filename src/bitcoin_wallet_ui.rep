@@ -1,0 +1,85 @@
+// No secret crosses this surface in either direction: wallets open in the keys app and sends are
+// approved in the signer app. ci.yml refuses a PROP or a SLOT named like a secret.
+// Every PROP is a JSON string; EMPTY means "not read yet", shown as an em-dash.
+class BitcoinWalletUi
+{
+    PROP(QString lastError="" READONLY)
+    // An open, a close or a cancelled open is in flight; pendingJobKind names the newest.
+    PROP(bool busy=false READONLY)
+    PROP(QString pendingJobKind="" READONLY)
+    // { jobId, kind, state, error } of the last settled job.
+    PROP(QString lastJobJson="" READONLY)
+    // wallet_status() without ok: { state, network, group, family, authority, walletTip,
+    // syncPercent, synced, openHandle?, label, openSend, ... }, or { state: "unavailable", error }.
+    PROP(QString statusJson="" READONLY)
+    // { networks, active }
+    PROP(QString networksJson="" READONLY)
+    // list_wallets().wallets: [{ group, family, network, label, birthday, lastOpened }]
+    PROP(QString walletsJson="[]" READONLY)
+    // balances() without ok: the last read that was not busy.
+    PROP(QString balancesJson="" READONLY)
+    // history(page): { page, pageSize, total, rows }
+    PROP(QString historyJson="" READONLY)
+    PROP(int historyPage=0 READONLY)
+    // { address, index, uri, amount } and the URI's QR module matrix { size, bits }.
+    PROP(QString receiveJson="" READONLY)
+    PROP(QString receiveQrJson="" READONLY)
+    // fee_rates(): { fast, normal, slow, minimum, sources } in sat/vB.
+    PROP(QString feeRatesJson="" READONLY)
+    // sources(), source_health() and exposure(), each without ok.
+    PROP(QString sourcesJson="" READONLY)
+    PROP(QString healthJson="" READONLY)
+    PROP(QString exposureJson="" READONLY)
+    // source_alert payloads, newest first, at most 10.
+    PROP(QString alertsJson="[]" READONLY)
+    // The send on screen ("" when none), its send_status(), and why a request was refused.
+    PROP(QString sendRequestId="" READONLY)
+    PROP(QString sendStatusJson="{}" READONLY)
+    PROP(QString sendError="" READONLY)
+
+    // refresh() keeps lastError; clearAndRefresh() is the user-initiated one.
+    SLOT(void refresh())
+    SLOT(void clearAndRefresh())
+
+    // ---- wallets: opened, created and restored in the keys app ----
+    SLOT(void setActiveNetwork(QString network))
+    // { family } to pick, create or restore one, or { group } to reopen one; { label } optional.
+    SLOT(void openWallet(QString paramsJson))
+    // Also withdraws an open still waiting in the keys app.
+    SLOT(void closeWallet())
+
+    // ---- sends: requested here, approved in the signer app ----
+    // { recipients: [{ address, amountSat | amountBtc }], feeRate | target, sendMax? }
+    SLOT(void requestSend(QString requestJson))
+    SLOT(void requestFeeBump(QString txid, double feeRate))
+    SLOT(void cancelSend())
+    // Local only: the backend keeps its record.
+    SLOT(void dismissSend())
+    // The send on screen, whose outcome is unknown.
+    SLOT(void rebroadcast())
+    // Gives up a send whose outcome is unknown, freeing its coins: { ok, note } or { ok: false, error }.
+    SLOT(QString abandonSend(QString txid))
+
+    // ---- receiving and activity ----
+    SLOT(void newAddress())
+    // Puts an amount in the BIP21 URI and its QR; empty for none.
+    SLOT(void setReceiveAmount(QString amountBtc))
+    // address_valid(): { ok, valid, address, type, amountSat?, reason? }
+    SLOT(QString addressValid(QString text))
+    SLOT(void refreshHistory())
+    SLOT(void showHistoryPage(int page))
+    SLOT(void dismissAlerts())
+
+    // ---- sources: each returns "" or the refusal; locked while a wallet is open ----
+    // { use?, history?, tor? }
+    SLOT(QString setSource(QString sourceId, QString changesJson))
+    // kind is electrum or esplora; the node module normalizes the address.
+    SLOT(QString addSource(QString address, QString kind, QString name))
+    SLOT(QString removeSource(QString sourceId))
+    SLOT(QString setProxy(QString proxy))
+    // Not locked: the wallet marks sources suspect while it syncs.
+    SLOT(QString clearSuspect(QString sourceId))
+    SLOT(void refreshSources())
+    // The open wallet's public descriptors, returned for display only.
+    SLOT(QString descriptors())
+}

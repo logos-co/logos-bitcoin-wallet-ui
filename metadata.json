@@ -1,0 +1,44 @@
+{
+  "name": "bitcoin_wallet_ui",
+  "display_name": "Bitcoin Wallet",
+  "version": "0.1.0",
+  "type": "ui_qml",
+  "interface": "universal",
+  "category": "wallet",
+  "description": "The Bitcoin wallet: the confirmed balance and what is still on its way, sends approved in the signer app, a fresh receive address with a BIP21 QR, activity that says what each transaction was for, and the sources the wallet reads the chain from. Wallets are opened, created and restored in the keys app: this app takes no password and holds no key material.",
+  "author": "Logos Core Team",
+  "main": "bitcoin_wallet_ui_plugin",
+  "icon": "src/icons/bitcoin_wallet.png",
+  "view": "qml/BitcoinWalletView.qml",
+  "dependencies": [
+    "bitcoin_wallet_backend"
+  ],
+  "uses": [
+    {
+      "intent": "keystore.accounts.open",
+      "cardinality": "single"
+    },
+    {
+      "intent": "evm.signing.approve",
+      "cardinality": "single"
+    }
+  ],
+  "codegen": {
+    "rep": "src/bitcoin_wallet_ui.rep"
+  },
+  "nix": {
+    "external_libraries": [],
+    "packages": {
+      "build": [],
+      "runtime": [
+        "qt6.qtdeclarative"
+      ]
+    },
+    "cmake": {
+      "find_packages": [],
+      "extra_sources": [],
+      "extra_include_dirs": [],
+      "extra_link_libraries": []
+    }
+  }
+}
