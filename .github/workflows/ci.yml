@@ -1,7 +1,7 @@
 name: CI
 
-# The build, no secret on the view's interface, and the view linted, constructed and driven through
-# its states.
+# The build and the Windows cross build, no secret on the view's interface, and the view linted,
+# constructed and driven through its states.
 
 on:
   pull_request:
@@ -35,6 +35,15 @@ jobs:
 
       - name: Build plugin and package
         run: nix build -L .#lgx
+
+  windows:
+    # The cross build on Linux, the PE and import-closure gates and the hand-off live in
+    # logos-co/logos-windows-ci. No smoke: an app plugin has no entry point of its own; the
+    # Windows e2e (doctests/basecamp-e2e*.test.yaml) needs a chain host on the same LAN.
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
+    secrets: inherit
+    with:
+      targets: default
 
   no-secrets:
     name: no secret crosses the view's interface
