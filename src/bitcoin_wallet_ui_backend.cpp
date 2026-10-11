@@ -23,6 +23,8 @@ constexpr int kSendPollMs = 700;
 constexpr int kStaleReadMs = 15000;
 constexpr int kSourcesPollMs = 15000;
 constexpr int kHealthPollMs = 30000;
+// The wallet's own view of its sources fills in after it opens: read it every tick until then.
+constexpr int kFreshHealthMs = 30000;
 constexpr int kFeePollMs = 30000;
 constexpr int kFeeRetryMs = 6000;
 constexpr int kExposurePollMs = 30000;
@@ -161,7 +163,8 @@ void BitcoinWalletUiBackend::poll() {
     // Until the backend has filled the network's defaults, the list is read again on every tick.
     const bool configured = parse(sourcesJson()).value("configured").toBool(true);
     if (due(m_sourcesAge, configured ? kSourcesPollMs : kReadPollMs)) loadSources();
-    if (due(m_healthAge, kHealthPollMs)) loadHealth();
+    const bool fresh = walletReady() && m_readySince.isValid() && m_readySince.elapsed() < kFreshHealthMs;
+    if (due(m_healthAge, fresh ? kReadPollMs : kHealthPollMs)) loadHealth();
     // A rebroadcast, or the history after a restart, can still turn an unknown outcome into sent.
     const QJsonObject send = parse(sendStatusJson());
     if (!m_sendPoll.isActive() && send.value("state").toString() == "unknown" && !send.value("abandoned").toBool()) pollSend();
@@ -215,6 +218,8 @@ void BitcoinWalletUiBackend::applyStatus(const QString &reply) {
 }
 
 void BitcoinWalletUiBackend::walletBecameReady() {
+    m_readySince.restart();
+    loadHealth();
     loadBalances();
     readHistory(false);
     loadFeeRates();
@@ -238,6 +243,7 @@ void BitcoinWalletUiBackend::clearWalletReads() {
     m_exposureAge.invalidate();
     setAlertsJson(QStringLiteral("[]"));
     setBirthdayJson({});
+    m_readySince.invalidate();
 }
 
 void BitcoinWalletUiBackend::loadRegistry() {

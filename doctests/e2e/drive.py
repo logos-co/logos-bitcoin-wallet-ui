@@ -22,11 +22,22 @@ BASECAMP = os.path.join(BUILD, "basecamp", "bin", "LogosBasecamp")
 CHAIN_DIR = os.path.join(E2E, "chain")
 # Off the regtest defaults, so another test chain on this machine is left alone.
 CHAIN_ENV = {"CHAIN_DIR": CHAIN_DIR, "RPC_PORT": "28543", "P2P_PORT": "28544", "FORK_RPC_PORT": "28553",
-             "FORK_P2P_PORT": "28554", "ELECTRUM_PORTS": "61701,61711"}
+             "FORK_P2P_PORT": "28554", "PEER_RPC_PORT": "28563", "PEER_P2P_PORT": "28564",
+             "PRUNED_RPC_PORT": "28573", "PRUNED_P2P_PORT": "28574", "ELECTRUM_PORTS": "61701,61711"}
 ELECTRUM_PORTS = [61701, 61711]
+# The chain's three nodes serve compact block filters: Kyoto's peers.
+FILTER_PEERS = ["127.0.0.1:28544", "127.0.0.1:28554", "127.0.0.1:28564"]
+# What decides the chain, as the core's regtest.json says and the sync line names it.
+AUTHORITIES = {
+    "electrum": ({"electrum": ["tcp://127.0.0.1:%d" % p for p in ELECTRUM_PORTS], "pollSecs": 1}, "Servers' headers"),
+    "kyoto": ({"electrum": ["tcp://127.0.0.1:%d" % ELECTRUM_PORTS[0]], "kyoto": FILTER_PEERS, "kyotoRequired": 2,
+               "checkOnly": True, "pollSecs": 1}, "Kyoto · "),
+    "local": ({"local": True, "pollSecs": 1}, "Your node"),
+}
 APP, KEYS, SIGNER = "bitcoin_wallet_ui", "evm_keystore_ui", "evm_signer_ui"
 MODULE_BUILDS = ["backend", "core", "node", "keystore", "manager"]
 PLUGIN_BUILDS = ["wallet", "keys", "signer"]
+APPS = ["bitcoin_wallet_ui", "evm_keystore_ui", "evm_signer_ui"]
 MISSING = object()
 
 
@@ -343,7 +354,21 @@ def copytree(src, dst):
     subprocess.run(["chmod", "-R", "u+w", dst], check=True)
 
 
-def layout(user):
+def authority():
+    return state().get("authority", "electrum")
+
+
+# The local node's run adds bitcoind_module and its app to the same Basecamp.
+def builds():
+    local = authority() == "local"
+    return MODULE_BUILDS + (["bitcoind"] if local else []), PLUGIN_BUILDS + (["bitcoindui"] if local else [])
+
+
+def layout(user, mode=None):
+    if mode:
+        if mode not in AUTHORITIES:
+            raise Fail("authority is one of %s" % ", ".join(AUTHORITIES))
+        save(authority=mode)
     ud = userdir(user)
     if os.path.exists(os.path.join(E2E, user)):
         subprocess.run(["chmod", "-R", "u+w", os.path.join(E2E, user)], check=False)
@@ -351,15 +376,15 @@ def layout(user):
     os.makedirs(os.path.join(ud, "modules"))
     os.makedirs(os.path.join(ud, "plugins"))
     os.makedirs(home(user))
-    for b in MODULE_BUILDS:
+    module_builds, plugin_builds = builds()
+    for b in module_builds:
         for m in sorted(os.listdir(os.path.join(BUILD, b, "modules"))):
             copytree(os.path.join(BUILD, b, "modules", m), os.path.join(ud, "modules", m))
-    for b in PLUGIN_BUILDS:
+    for b in plugin_builds:
         for m in sorted(os.listdir(os.path.join(BUILD, b, "plugins"))):
             copytree(os.path.join(BUILD, b, "plugins", m), os.path.join(ud, "plugins", m))
     # regtest.json turns regtest on for the backend and the node module, and gives the core its servers.
-    cfg = {"bitcoin_wallet_backend": {}, "bitcoin_node_module": {},
-           "bitcoin_wallet_core_module": {"electrum": ["tcp://127.0.0.1:%d" % p for p in ELECTRUM_PORTS], "pollSecs": 1}}
+    cfg = {"bitcoin_wallet_backend": {}, "bitcoin_node_module": {}, "bitcoin_wallet_core_module": AUTHORITIES[authority()][0]}
     for module, body in cfg.items():
         d = os.path.join(ud, "module_data", module, "e2e")
         os.makedirs(d)
@@ -371,7 +396,8 @@ def layout(user):
             if variant.endswith("-dev"):
                 raise Fail("%s is the dev variant %s; Basecamp loads portable ones" % (m, variant))
             log("%s/%s %s" % (kind, m, variant))
-    passed("laid out %s: five modules and three apps, portable, with regtest.json for the wallet's modules" % user)
+    passed("laid out %s for %s: %d modules and %d apps, portable, with regtest.json for the wallet's modules"
+           % (user, authority(), len(os.listdir(os.path.join(ud, "modules"))), len(os.listdir(os.path.join(ud, "plugins")))))
 
 
 def descendants(pid):
@@ -406,9 +432,10 @@ def launch(user):
         f.write("%d %s" % (p.pid, user))
     ins = Inspector()
     ins.connect(timeout=180)
-    for m in (APP, KEYS, SIGNER):
+    apps = [APP, KEYS, SIGNER] + (["bitcoind_ui"] if authority() == "local" else [])
+    for m in apps:
         ins.wait("sidebar.app." + m, "visible", True, 120)
-    names = {m: ins.get("sidebar.app." + m, "text") for m in (APP, KEYS, SIGNER)}
+    names = {m: ins.get("sidebar.app." + m, "text") for m in apps}
     passed("Basecamp is up for %s (pid %d) with the apps %s" % (user, p.pid, ", ".join(map(str, names.values()))))
 
 
@@ -467,8 +494,8 @@ def amount_text(sat):
 
 def wait_synced(ins, timeout=120):
     h = height()
-    want = "Local chain · block {:,}".format(h)
-    ins.wait("syncLine", "text", want, timeout, "the app reads the chain at block %d" % h)
+    want = "Local chain · block {:,} · {}".format(h, AUTHORITIES[authority()][1])
+    line = ins.wait("syncLine", "text", lambda t: (t or "").startswith(want), timeout, "the app reads the chain at block %d (%s)" % (h, want))
     return h
 
 
@@ -578,11 +605,15 @@ def wait_send(ins, outcome_headline, timeout=120):
 # The badge and both servers as the open wallet sees them: nothing suspect, both answering.
 def sources_ok(ins, when):
     wallet_tab(ins, 4)
-    lines = [ins.wait("walletSourceState_electrum-%d" % i, "text", lambda t: t.startswith("ok"), 30) for i in (0, 1)]
-    badge = ins.wait("healthBadge", "text", "Sources OK", 30)
+    servers = {"electrum": 2, "kyoto": 1, "local": 0}[authority()]
+    lines = ["electrum-%d %s" % (i, ins.wait("walletSourceState_electrum-%d" % i, "text", lambda t: t.startswith("ok"), 30))
+             for i in range(servers)]
+    for i in range(servers):
+        expect(ins.get("suspectBadge_electrum-%d" % i, "visible") is not True, "electrum-%d is not suspect %s" % (i, when))
+    badge = ins.wait("healthBadge", "text", "Sources OK", 30) if servers else str(ins.get("healthBadge", "text"))
     ins.shot("sources-" + when.replace(" ", "-"))
     wallet_tab(ins, 3)
-    passed("%s: %s; electrum-0 %s; electrum-1 %s" % (when, badge, lines[0], lines[1]))
+    passed("%s: %s%s" % (when, badge, "".join("; " + l for l in lines)))
 
 
 def payee(label):
@@ -600,7 +631,8 @@ def phase_prepare_chain():
     subprocess.run(["rm", "-rf", CHAIN_DIR], check=True)
     out = chain("prepare")
     log(out)
-    expect(height() >= 101, "a fresh regtest chain at block %d, two electrs on %s, and the fork node" % (height(), ELECTRUM_PORTS))
+    expect(height() >= 101, "a fresh regtest chain at block %d: three nodes serving block filters (main, fork, follower) "
+                            "and two electrs on %s" % (height(), ELECTRUM_PORTS))
 
 
 def phase_secrets():
@@ -660,9 +692,14 @@ def phase_receive():
     addr = ins.wait("receiveAddress", "text", lambda t: t.startswith("bcrt1q"), 30)
     txid = chain("fund", addr, "1.0")
     wallet_tab(ins, 0)
-    ins.wait("pendingRow", "visible", True, 60, "an unconfirmed payment shows as pending")
-    expect(ins.get("pendingRowAmount", "text") == "1 BTC", "pending: 1 BTC, not in the confirmed balance")
-    ins.shot("receive-pending")
+    if authority() == "kyoto":
+        # Kyoto's peers serve blocks and filters, no mempool: the payment shows once it is in a block.
+        time.sleep(3)
+        expect(ins.get("pendingRow", "visible") is not True, "Kyoto has no mempool view: nothing pending before the block")
+    else:
+        ins.wait("pendingRow", "visible", True, 60, "an unconfirmed payment shows as pending")
+        expect(ins.get("pendingRowAmount", "text") == "1 BTC", "pending: 1 BTC, not in the confirmed balance")
+        ins.shot("receive-pending")
     mine(1)
     ins.wait("confirmedCard", "value", "1 BTC", 60, "mined: 1 BTC confirmed")
     ins.wait("pendingRow", "visible", False, 30)
@@ -684,6 +721,8 @@ def phase_receive():
     ins.wait("confirmedCard", "value", amount_text(total) + " BTC", 90, "100 blocks later it counts")
     ins.wait("immatureRow", "visible", False, 30)
     wait_synced(ins)
+    if ins.get("alertBanner", "visible") is True:
+        log("NOTE after 100 blocks at once, alertBanner: %s — %s" % (ins.get("alertBanner", "title"), ins.get("alertBanner", "message")))
     save(receive_txid=txid, coinbase_txid=coinbase, balance_sat=total)
     log("PHASE receive OK")
 
@@ -724,6 +763,79 @@ def phase_send_expire():
     passed("Details list the address paid (%s) and the txid" % paid.strip())
     save(send1_txid=txid, send1_to=to)
     log("PHASE send-expire OK")
+
+
+def phase_send():
+    ins = Inspector()
+    show_app(ins, APP)
+    wait_synced(ins)
+    to = payee("payee-1")
+    fill_send(ins, to, "0.1", 2)
+    approve_in_app(ins)
+    chooser(ins, SIGNER)
+    lines = signer_shows(ins, ["Send 0.10000000 BTC to " + to])
+    log("signer: " + " | ".join(l.strip() for l in lines))
+    signer_approve(ins, secret("password"))
+    back_to_wallet(ins, SIGNER)
+    wait_send(ins, "Sent", 120)
+    txid = re.search(r"[0-9a-f]{64}", ins.wait("sendTxid", "text", lambda t: bool(re.search(r"[0-9a-f]{64}", t or "")), 30)).group(0)
+    passed("the app says: " + str(ins.get("sendVia", "text")))
+    ins.press("doneSendButton")
+    end = time.time() + 40
+    while txid not in rpc("getrawmempool"):
+        if time.time() > end:
+            raise Fail("the send never reached the chain's main node: %s" % txid)
+        time.sleep(0.5)
+    passed("the send reached the main node's mempool: %s" % txid)
+    mine(1)
+    wallet_tab(ins, 3)
+    wait_row(ins, "historyState", txid, "1 confirmation", 90)
+    passed("Activity shows the send confirmed: %s" % row_text(ins, "historyIntent", txid))
+    save(send1_txid=txid, send1_to=to)
+    log("PHASE send OK")
+
+
+# A combo box as a person uses it: opened by a click, its item clicked; a signal by hand otherwise.
+def select_combo(ins, name, value, index):
+    oid, _ = ins.wait_obj(name, lambda p: p.get("visible") is True and p.get("enabled") is not False, 30, name)
+    ins.rpc("click", objectId=oid)
+    end = time.time() + 8
+    while time.time() < end:
+        # The open popup's entry: its text, drawn inside the item delegate that takes the click.
+        for m in ins.rpc("findByProperty", property="text", value=value).get("matches", []):
+            try:
+                p = ins.props(m["id"])
+            except InspectorError:
+                continue
+            if p.get("visible") is True and m["id"] != oid:
+                ins.rpc("click", objectId=m["id"])
+                return "clicked"
+        time.sleep(0.3)
+    ins.rpc("evaluate", objectId=oid, expression="activated(%d)" % index)
+    return "activated"
+
+
+def phase_node_start():
+    ins = Inspector()
+    show_app(ins, "bitcoind_ui")
+    ins.wait("bitcoindRoot", "ready", True, 120, "the node app's backend connects")
+    ins.wait("stateBadge", "text", "stopped", 60)
+    how = select_combo(ins, "networkCombo", "regtest", 3)
+    ins.wait("bitcoindRoot", "net", "regtest", 20, "the node app switches to regtest")
+    passed("the node app is on regtest (%s)" % how)
+    ins.wait("settingsForm", "visible", True, 30, "regtest's settings are read")
+    # The chain's main node as a peer of its own: the local node follows that chain.
+    ins.set_text("addNodesField", FILTER_PEERS[0])
+    ins.press("saveButton")
+    ins.wait("addNodesField", "text", FILTER_PEERS[0], 20)
+    ins.press("startButton")
+    ins.wait("stateBadge", "text", "running", 180, "the local node runs")
+    h = height()
+    ins.wait("bitcoindRoot", "blocks", lambda b: b is not None and float(b) >= h, 180, "the local node syncs to block %d" % h)
+    ins.wait("bitcoindRoot", "synced", True, 60, "the node app calls it synced")
+    ins.shot("node-running")
+    passed("bitcoind_module runs regtest from the node app, at block %d with %s" % (h, ins.get("peersText", "text")))
+    log("PHASE node-start OK")
 
 
 def phase_speed_up():
@@ -796,29 +908,43 @@ def phase_reorg():
     txid = chain("fund", addr, "0.3")
     h = mine(1)
     wallet_tab(ins, 3)
-    wait_row(ins, "historyState", txid, "1 confirmation", 60)
+    wait_row(ins, "historyState", txid, "1 confirmation", 90)
     old_tip = rpc("getbestblockhash")
     balance = confirmed_value(ins)
     sources_ok(ins, "before the reorg")
+    # Only what the reorg raises counts: an earlier alert is noted and dismissed first.
+    for banner in ("alertBanner", "authoritySuspectBanner"):
+        if ins.get(banner, "visible") is True:
+            log("NOTE before the reorg, %s: %s — %s" % (banner, ins.get(banner, "title"), ins.get(banner, "message")))
+            ins.press("dismissAlertsButton" if banner == "alertBanner" else "dismissAuthorityAlertButton")
+            ins.wait(banner, "visible", False, 10)
     out = chain("reorg", "1")
     log(out)
-    expect(rpc("getblockhash", [h]) != old_tip and height() == h + 1, "the node took a fork that replaced block %d" % h)
-    expect(txid in rpc("getblock", [rpc("getblockhash", [h])])["tx"], "the replacing block holds the same payment")
-    seen, end = [], time.time() + 45
-    alert = False
+    new_block = rpc("getblockhash", [h])
+    expect(new_block != old_tip and height() == h + 1, "the node took a fork that replaced block %d" % h)
+    expect(txid in rpc("getblock", [new_block])["tx"], "the replacing block holds the same payment")
+    tip_line = "Local chain · block {:,}".format(h + 1)
+    seen, end, alert = [], time.time() + 60, False
     while time.time() < end:
         st = row_text(ins, "historyState", txid, timeout=5)
         line = ins.get("syncLine", "text")
-        if not seen or seen[-1] != (st, line):
-            seen.append((st, line))
-        alert = alert or ins.get("alertBanner", "visible") is True
-        if st == "2 confirmations" and line == "Local chain · block {:,}".format(h + 1) and time.time() > end - 30:
+        moved = ins.get("historyReanchored_" + txid, "visible") is True
+        if not seen or seen[-1] != (st, line, moved):
+            seen.append((st, line, moved))
+        alert = alert or ins.get("alertBanner", "visible") is True or ins.get("authoritySuspectBanner", "visible") is True
+        if st == "2 confirmations" and str(line).startswith(tip_line) and moved and time.time() > end - 40:
             break
         time.sleep(0.5)
-    log("re-anchoring as the app showed it: " + " -> ".join("%s / %s" % s for s in seen))
-    expect(seen[-1] == ("2 confirmations", "Local chain · block {:,}".format(h + 1)),
-           "the payment re-anchored in the new block: 2 confirmations at block %d" % (h + 1))
-    expect(not alert, "no source alert during the reorg")
+    log("re-anchoring as the app showed it: " + " -> ".join("%s / %s%s" % (a, b, " / re-anchored" if c else "") for a, b, c in seen))
+    expect(seen[-1][0] == "2 confirmations" and str(seen[-1][1]).startswith(tip_line),
+           "the payment confirms again in the new block: 2 confirmations at block %d" % (h + 1))
+    note = ins.wait("historyReanchored_" + txid, "text", "re-anchored at height {:,}".format(h), 30, "Activity says it moved")
+    passed("Activity: " + note)
+    ins.press("details_" + txid)
+    block = ins.wait("historyBlock_" + txid, "text", lambda t: new_block in (t or ""), 20, "the details name the new block")
+    passed("details: " + block)
+    ins.shot("reorg-reanchored")
+    expect(not alert, "no alert during the reorg: neither a source's nor Kyoto's")
     expect(confirmed_value(ins) == balance, "the balance is unchanged: %s" % balance)
     sources_ok(ins, "after the reorg")
     save(reorg_txid=txid, reorg_height=h)
@@ -962,6 +1088,7 @@ def phase_cleanup():
 
 PHASES = {
     "prepare-chain": phase_prepare_chain, "secrets": phase_secrets, "open-create": phase_open_create,
+    "node-start": phase_node_start, "send": phase_send,
     "receive": phase_receive, "send-expire": phase_send_expire, "speed-up": phase_speed_up,
     "reject": phase_reject, "reorg": phase_reorg, "close": phase_close, "restore": phase_restore,
     "unknown-rebroadcast": phase_unknown_rebroadcast, "unknown-forget": phase_unknown_forget,
@@ -975,7 +1102,7 @@ def main(argv):
     elif len(argv) == 1 and argv[0] in PHASES:
         fn, args = PHASES[argv[0]], []
     else:
-        sys.exit("usage: drive.py layout|launch <user> | " + " | ".join(PHASES))
+        sys.exit("usage: drive.py layout <user> [electrum|kyoto|local] | launch <user> | " + " | ".join(PHASES))
     log("== %s %s" % (time.strftime("%H:%M:%S"), " ".join(argv)))
     try:
         fn(*args)

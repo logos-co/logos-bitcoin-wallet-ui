@@ -97,6 +97,8 @@ QT_QPA_PLATFORM=offscreen qml -I <qt qml> -I <logos-design-system>/src/qml ci/co
 QT_QPA_PLATFORM=offscreen qml -I <qt qml> -I <logos-design-system>/src/qml ci/states.qml      # STATES-OK
 doctests/run.sh                                                                # all doctests
 SPECS=basecamp-e2e OUT=/a/big/disk doctests/run.sh                             # the full-Basecamp e2e
+SPECS=basecamp-e2e-kyoto OUT=/a/big/disk2 doctests/run.sh                      # ...with Kyoto deciding the chain
+SPECS=basecamp-e2e-node OUT=/a/big/disk3 doctests/run.sh                       # ...with the local node
 ```
 
 `ci/states.qml` drives the pure sync, send and activity functions through every state a live
@@ -121,6 +123,9 @@ then asked again, approvals, a fee bump, a rejection, a reorg, a restore from th
 user dir, and two unknown outcomes, one rebroadcast and one forgotten. `doctests/e2e/drive.py`
 drives the apps over Basecamp's QML inspector and the chain over the script, one phase per step,
 since the phrase, addresses and txids can't be written into a static test. It generates its own
-test passwords, and each Basecamp run gets its own HOME and user dir.
+test passwords, and each Basecamp run gets its own HOME and user dir. `basecamp-e2e-kyoto` and
+`basecamp-e2e-node` run open, receive, send, confirm and a reorg with Kyoto (the chain's three
+filter-serving nodes as its peers, quorum 2) and with the local node (bitcoind_module and its app,
+started on regtest from the node app) as the chain authority.
 
 `src/qrcodegen.*` is Project Nayuki's QR Code generator (MIT License; notice in the files).

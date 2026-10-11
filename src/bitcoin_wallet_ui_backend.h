@@ -112,7 +112,7 @@ private:
     QTimer m_sendPoll;
     Read m_statusRead, m_walletsRead, m_balanceRead, m_historyRead, m_feeRead;
     Read m_sourcesRead, m_healthRead, m_exposureRead, m_sendRead;
-    QElapsedTimer m_feeAge, m_sourcesAge, m_healthAge, m_exposureAge, m_historyAge;
+    QElapsedTimer m_feeAge, m_sourcesAge, m_healthAge, m_exposureAge, m_historyAge, m_readySince;
     QList<Job> m_jobs;
     // The person withdrew an open still waiting in the keys app: its failure is no error.
     bool m_openCancelled = false;

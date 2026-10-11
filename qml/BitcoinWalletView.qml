@@ -69,8 +69,9 @@ Item {
     readonly property var sourceList: Array.isArray(sourcesInfo.sources) ? sourcesInfo.sources : []
     readonly property var health: ready ? j(backend.healthJson, "{}") : ({})
     // With a wallet open, its own view of its sources decides the badge: the node module may list others.
-    readonly property var walletSources: walletOpen && health.wallet && Array.isArray(health.wallet.sources) ? health.wallet.sources : []
-    readonly property string overall: walletSources.length > 0 ? root.walletOverall(walletSources) : (health.overall || "")
+    readonly property bool walletView: walletOpen && !!health.wallet
+    readonly property var walletSources: walletView && Array.isArray(health.wallet.sources) ? health.wallet.sources : []
+    readonly property string overall: walletView ? root.walletOverall(walletSources, status) : (health.overall || "")
     // Servers the open wallet uses that the list lacks, such as a test chain's own.
     readonly property var walletOnlySources: walletSources.filter(function (w) {
         return !root.sourceList.some(function (s) { return s.id === w.id })
@@ -590,7 +591,17 @@ Item {
     }
     // The node module's rules over the open wallet's view: two operators' tips more than 2 blocks
     // apart disagree; none answering is offline; one failing or suspect is degraded. Unasked is no news.
-    function walletOverall(list) {
+    function walletOverall(list, st) {
+        var servers = root.serversOverall(list)
+        // Kyoto or your node decides the chain: it counts as a source of its own.
+        var kind = st && st.authority ? st.authority.kind : ""
+        if (kind !== "kyoto" && kind !== "local_node") return servers
+        var s = root.syncState(st)
+        var own = s === "synced" || s === "local" ? "ok" : (s === "isolated" ? "offline" : "")
+        if (list.length === 0) return own
+        return own === "offline" && servers === "ok" ? "degraded" : servers
+    }
+    function serversOverall(list) {
         var ok = list.filter(function (s) { return s.state === "ok" })
         var tips = ok.filter(function (s) { return root.isNum(s.tip) })
         for (var i = 0; i < tips.length; i++)
@@ -763,6 +774,8 @@ Item {
         var w = root.summary && Array.isArray(root.summary.warnings) ? root.summary.warnings : []
         return w.filter(function (x) { return (x.kind === kind) === same })
     }
+    // A broadcast route, as a person would name it.
+    function viaName(v) { return v === "local" ? "your node" : (v === "kyoto" ? "Kyoto's peers" : (v || "")) }
     function warningText(w) {
         if (w.kind === "change_too_small")
             return "Its " + root.satsText(w.amountSat) + " would cost about " + root.satsText(w.costToSpendSat)
@@ -2151,8 +2164,8 @@ Item {
                                         onCopied: root.notify("Transaction ID copied", "") }
                     // An unknown send's `via` is the last source tried, which may or may not have taken it.
                     LogosText { objectName: "sendVia"; visible: !!root.send.via; textFormat: Text.PlainText; color: Theme.palette.textTertiary; font.pixelSize: 11
-                                text: root.sendState === "unknown" ? "Last tried: " + (root.send.via || "") + ", which may or may not have taken it"
-                                      : "Broadcast through " + (root.send.via || "") + (root.send.broadcast === "seen" ? ", and seen by the network" : "") }
+                                text: root.sendState === "unknown" ? "Last tried: " + root.viaName(root.send.via) + ", which may or may not have taken it"
+                                      : "Broadcast through " + root.viaName(root.send.via) + (root.send.broadcast === "seen" ? ", and seen by the network" : "") }
                 }
                 LogosText { objectName: "forgetNote"; visible: text !== "" && root.sendOutcome(root.send) === "forgotten"
                             Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText

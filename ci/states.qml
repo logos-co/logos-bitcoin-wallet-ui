@@ -259,6 +259,13 @@ Item {
         expect("overall disagree", v.walletOverall([{ state: "ok", operator: "A", tip: 100 }, { state: "ok", operator: "b", tip: 104 }]), "disagreement")
         expect("overall one operator", v.walletOverall([{ state: "ok", operator: "A", tip: 100 }, { state: "ok", operator: "a", tip: 104 }]), "ok")
         expect("overall not asked", v.walletOverall([{ state: "unknown" }]), "")
+        var nodeAt = function (peers) { return { state: "ready", network: "regtest", walletTip: 150,
+                                                 authority: { kind: "local_node", height: 150, tipAgeSecs: 30, peers: peers } } }
+        expect("your node alone", v.walletOverall([], nodeAt(1)), "ok")
+        expect("your node unreachable", v.walletOverall([], nodeAt(0)), "offline")
+        expect("kyoto isolated, a server fine", v.walletOverall([{ state: "ok" }],
+               { state: "ready", network: "regtest", walletTip: 150, authority: { kind: "kyoto", height: 150, peers: 0 } }), "degraded")
+        expect("servers decide", v.walletOverall([], { state: "ready", authority: { kind: "electrum_headers", height: 1, peers: 1 } }), "")
         expect("source line", v.walletSourceLine({ state: "ok", roles: ["chain", "history"], history: true }), "ok · chain, history · history server")
         expect("suspect line", v.walletSourceLine({ state: "suspect", suspect: true, suspectReason: "served invalid headers", error: "x" }), "suspect: served invalid headers")
         expect("failing line", v.walletSourceLine({ state: "failing", roles: ["chain"], error: "connection refused" }), "failing · chain · connection refused")
@@ -276,6 +283,9 @@ Item {
                                           notBefore: "2026-10-11T01:43:03Z", notAfter: "2126-09-17T01:43:03Z", trusted: false }),
                "Subject CN=electrum.test, issued by CN=electrum.test\nValid 2026-10-11 to 2126-09-17\nSHA-256 " + Array(33).join("0F:").slice(0, -1))
         expect("plain text", v.notEncrypted({ id: "x", encrypted: false }), true)
+        expect("via your node", v.viaName("local"), "your node")
+        expect("via kyoto", v.viaName("kyoto"), "Kyoto's peers")
+        expect("via a server", v.viaName("electrum-0"), "electrum-0")
         expect("tls", v.isTls({ url: "ssl://h:50002" }) && v.isTls({ url: "https://h/api" }) && !v.isTls({ url: "tcp://h:50001" }), true)
     }
 

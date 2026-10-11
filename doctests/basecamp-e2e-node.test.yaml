@@ -1,0 +1,94 @@
+name: bitcoin_wallet_ui — end to end in Basecamp, with the local node as the chain authority, on regtest
+project_name: logos-bitcoin-wallet-ui-e2e-node
+
+intro: |
+  The full-Basecamp e2e (see basecamp-e2e) with the local node deciding the chain:
+  bitcoind_module (logos-bitcoind-module 1b7ee77), Bitcoin Core in-process, and its app bitcoind_ui
+  (9ca43fa) in the same Basecamp. The node app starts a regtest node that follows the chain's main
+  node; the wallet core reads it over Logos IPC, scans by its block filters, and broadcasts through
+  its sendrawtransaction. Open, receive, send and confirm, then a reorg the node follows.
+
+sections:
+  - title: "Build"
+    steps:
+      - title: "Basecamp's inspector bundle, the modules and apps (portable variants), and the chain script"
+        run: |
+          set -eu
+          mkdir -p e2e/build
+          b() { nix build "$2" --no-write-lock-file -o "e2e/build/$1"; }
+          b basecamp 'github:logos-co/logos-basecamp/0b5cd2ee6c6dd83c6a5022fbb30e1778e6a61da9#bin-bundle-dir-inspector'
+          b keystore 'github:logos-co/logos-evm-keystore-module/1f3d62f306f0e4dc7e5d96d478f9770ab3713ce6#install-portable'
+          b manager 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install-portable'
+          b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
+          b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
+          b backend 'github:logos-co/logos-bitcoin-wallet-backend/13566b66578f3382f3e4d8d9ddae4eaaa852f7dd#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/00d72a2211072f1cac29aab30b6b393ae9269a8e#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/00d72a2211072f1cac29aab30b6b393ae9269a8e#regtest-chain'
+          b node 'github:logos-co/logos-bitcoin-node-module/fb8dcd60354c3a13be1a0b1376b42a7535b7818e#install-portable'
+          b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
+          b bitcoind 'github:logos-co/logos-bitcoind-module/1b7ee77707524885ee94d2f3113127ce5a6f4057#install-portable'
+          b bitcoindui 'github:logos-co/logos-bitcoind-ui/9ca43fae3e0495bd84b9bceba04c9a2d5f20dc74#install-portable'
+          ls e2e/build
+        expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "chain", "node", "wallet", "bitcoind", "bitcoindui"]
+
+  - title: "A regtest chain and the test's passwords"
+    steps:
+      - title: "Three bitcoind serving block filters and two electrs, from the wallet core's chain script, off the default ports"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" prepare-chain
+        expect_contains: ["PASS a fresh regtest chain"]
+      - title: "Two test passwords, generated and kept in the scratch dir"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" secrets
+        expect_contains: ["PASS two test passwords generated"]
+
+  - title: "Basecamp, with its own HOME and user dir"
+    steps:
+      - title: "Lay out user A, with the wallet core's regtest.json for this authority"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" layout userA local
+        expect_contains: ["PASS laid out userA for local"]
+      - title: "Launch Basecamp headless"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" launch userA
+        expect_contains: ["PASS Basecamp is up for userA"]
+
+  - title: "The local node, started from its app"
+    text: |
+      bitcoind_module and its app, bitcoind_ui, are installed beside the wallet. In the node app the
+      person picks regtest, gives the chain's main node as a peer of its own, and starts the node,
+      which then follows that chain. The wallet core's `regtest.json` makes the node its authority.
+    steps:
+      - title: "Regtest in the node app, the main node as its peer, Start; it syncs"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" node-start
+        expect_contains: ["PASS the node app is on regtest", "PASS bitcoind_module runs regtest from the node app", "PHASE node-start OK"]
+
+  - title: "Open: a new wallet, created in the keys app"
+    steps:
+      - title: "Open, create and approve; the wallet syncs, and the sync line names its authority"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" open-create
+        expect_contains: ["PASS created and opened in the keys app", "PHASE open-create OK"]
+
+  - title: "Receive"
+    steps:
+      - title: "1 BTC to the receive address confirms once mined; a block mined to the wallet is immature for 100 blocks"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" receive
+        expect_contains: ["PASS Activity lists +1 BTC, 1 confirmation", "PASS immature:", "PHASE receive OK"]
+
+  - title: "Send"
+    steps:
+      - title: "Approve in the signer app; it reaches the chain's main node and confirms"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" send
+        expect_contains: ["PASS the send reached the main node's mempool", "PASS Activity shows the send confirmed", "PHASE send OK"]
+
+  - title: "Reorg"
+    text: |
+      A payment confirmed in the tip block, then the fork node replaces that block with a longer
+      branch. The local node follows the main node through the reorg: the core's scan rewinds,
+      Activity says the payment was re-anchored, and nothing raises an alert.
+    steps:
+      - title: "Re-anchored, in Activity and its details, with no alert"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" reorg
+        expect_contains: ["PASS the payment confirms again in the new block", "PASS Activity: re-anchored at height", "PASS details: Moved to a new block", "PASS no alert during the reorg", "PHASE reorg OK"]
+
+  - title: "Stop"
+    steps:
+      - title: "Stop Basecamp and the chain by PID"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" cleanup
+        expect_contains: ["chain stopped"]
