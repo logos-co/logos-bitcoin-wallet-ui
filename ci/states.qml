@@ -760,9 +760,90 @@ Item {
             expect("own peers locked while open", shownAny("ownPeersLocked"), true)
             expect("no adding while open", shownAny("addOwnPeerButton"), false)
             expect("no picking a network while open", v.canPickNetwork, false)
+            // Kyoto below its quorum, a conflict, a chain from block 150, and payments below it.
+            var st = JSON.parse(scene.syncedMainnet)
+            st.network = "regtest"
+            st.activeNetwork = "regtest"
+            st.authority = { kind: "kyoto", height: 400, tipAgeSecs: 60, peers: 1, base: 150 }
+            st.kyoto = { running: true, phase: "synced", quorum: 1, onePeerDecides: true, rescans: 0, window: [25, 25],
+                         lastConflict: { at: 1791590400, peers: ["127.0.0.1:28554"] } }
+            fake.statusJson = JSON.stringify(st)
+            fake.balancesJson = JSON.stringify({ busy: false, confirmed: "100000000", waiting: "0", unchecked: "250000", pending: "0",
+                                                 sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" } })
+            fake.historyJson = JSON.stringify({ page: 0, pageSize: 25, total: 2, rows: [
+                { txid: "aa".repeat(32), intent: "receive", amountSat: "250000", feeSat: null, counterparties: [], height: 120,
+                  blockHash: "11".repeat(32), confirmations: 281, time: 1791500000, state: "unchecked", reportedBy: null, confirmedVia: "bb".repeat(32) },
+                { txid: "cc".repeat(32), intent: "receive", amountSat: "100000000", feeSat: null, counterparties: [], height: null,
+                  blockHash: null, confirmations: 3, time: 1791500000, state: "confirmed", confirmedVia: "dd".repeat(32) }] })
+            fake.alertsJson = JSON.stringify([{ source: "esplora-0", kind: "unchecked_anchor", detail: "1 transaction reported below block 150", at: 1791590400 }])
+        },
+        function (v) {
+            expect("one peer decides: the one-operator notice", shownAny("oneOperatorNotice"), true)
+            expect("...titled so", prop("oneOperatorNotice", "title"), "One peer decides this wallet's chain")
+            expect("a conflict, quietly", prop("kyotoConflictLine", "text"), "Peers that disagreed were set aside at " + v.whenOf(1791590400))
+            expect("the chain's start in the wallet details", prop("walletChainBase", "text"), "block 150")
+            v.selectTab(0)
+        },
+        function (v) {
+            expect("unchecked apart from the balance", prop("uncheckedRow", "amount"), v.btcOf("250000") + " BTC")
+            expect("...and shown", shown("uncheckedRow"), true)
+            expect("the confirmed balance leaves it out", prop("confirmedCard", "value"), v.btcOf("100000000") + " BTC")
+            expect("the unchecked banner", shown("uncheckedBanner"), true)
+            expect("...not the shared one", shown("alertBanner"), false)
+            expect("it says where the chain starts", String(prop("uncheckedBanner", "message")).indexOf("starts, block 150. Nothing could check them") > 0, true)
+            find(view.item, "uncheckedBirthdayButton", 0).clicked()
+        },
+        function (v) {
+            expect("an earlier birthday, from the banner", prop("birthdaySheet", "visible"), true)
+            v.closeSheets()
+            v.selectTab(3)
+            v.openTx = "aa".repeat(32)
+        },
+        function (v) {
+            expect("reported, not checked", prop("historyState_" + "aa".repeat(32), "text"), "Reported by esplora-0, not checked")
+            expect("never confirmed-coloured", prop("historyState_" + "aa".repeat(32), "color") === v.rowStateColor({ state: "confirmed" }), false)
+            expect("its spend is confirmed", prop("historyVia_" + "aa".repeat(32), "text"), "bb".repeat(32) + ", confirmed; this one's own block is not checked")
+            scene.keptAlerts = fake.alertsJson
+            fake.alertsJson = "[]"
+        },
+        function (v) {
+            expect("no alert to name the source", prop("historyState_" + "aa".repeat(32), "text"), "Reported by a server, not checked")
+            fake.alertsJson = scene.keptAlerts
+            v.openTx = "cc".repeat(32)
+        },
+        function (v) {
+            expect("confirmed through its spend", prop("historyVia_" + "cc".repeat(32), "text"), "dd".repeat(32) + ", a later transaction that spends it")
+            var st = JSON.parse(fake.statusJson)
+            st.rescanFrom = 0
+            st.syncPercent = 40
+            st.kyoto.rescans = 1
+            fake.statusJson = JSON.stringify(st)
+            v.selectTab(0)
+        },
+        function (v) {
+            expect("a wider rescan", prop("rescanLine", "text"), "Rescanning with a wider address range (pass 1) · 40%")
+            var st = JSON.parse(fake.statusJson)
+            st.authority.kind = "local_node"
+            st.node = { blocks: 400, headers: 400, synced: true, rescans: 2, window: [60, 25] }
+            fake.statusJson = JSON.stringify(st)
+        },
+        function (v) {
+            expect("the node's count under the node", prop("rescanLine", "text"), "Rescanning with a wider address range (pass 2) · 40%")
+            expect("no one-peer notice off Kyoto", v.onePeerDecides, false)
+            var st = JSON.parse(fake.statusJson)
+            st.node.rescans = 0
+            fake.statusJson = JSON.stringify(st)
+            fake.balancesJson = JSON.stringify({ busy: false, confirmed: "100250000", waiting: "0", unchecked: "0", pending: "0",
+                                                 sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" } })
+        },
+        function (v) {
+            expect("a plain rescan", prop("rescanLine", "text"), "Rescanning from block 0 · 40%")
+            expect("checked now: no unchecked line", shown("uncheckedRow"), false)
+            expect("...and the banner goes", shown("uncheckedBanner"), false)
         }
     ]
     property int step: 0
+    property string keptAlerts: ""
     Timer {
         id: driver
         interval: 30

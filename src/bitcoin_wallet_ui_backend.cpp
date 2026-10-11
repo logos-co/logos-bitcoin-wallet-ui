@@ -323,7 +323,8 @@ void BitcoinWalletUiBackend::readHistory(bool quiet) {
                     m_historyUnsettled = false;
                     for (const QJsonValue &row : o.value("rows").toArray()) {
                         const QString s = row.toObject().value("state").toString();
-                        if (s == "pending" || s == "waiting" || s == "sent") { m_historyUnsettled = true; break; }
+                        // An unchecked row confirms once an earlier birthday's rescan checks it.
+                        if (s == "pending" || s == "waiting" || s == "sent" || s == "unchecked") { m_historyUnsettled = true; break; }
                     }
                     m_historyAge.restart();
                     m_historyTip = tip;

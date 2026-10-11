@@ -62,6 +62,8 @@ Item {
     // Home lists these from the newest page only: it holds every unsettled row.
     readonly property var homeRows: historyPage === 0 ? historyRows : []
     readonly property var pendingRows: homeRows.filter(function (r) { return r.state === "pending" })
+    // Reported by a server below the chain's start, where nothing could check them.
+    readonly property var uncheckedRows: homeRows.filter(function (r) { return r.state === "unchecked" })
     readonly property var unconfirmedSends: homeRows.filter(function (r) { return root.canSpeedUp(r) })
     readonly property var receive: ready && backend.receiveJson !== "" ? j(backend.receiveJson, "{}") : ({})
     readonly property var feeRates: ready && backend.feeRatesJson !== "" ? j(backend.feeRatesJson, "{}") : ({})
@@ -85,9 +87,18 @@ Item {
     readonly property var exposure: ready ? j(backend.exposureJson, "{}") : ({})
     readonly property var exposureServers: Array.isArray(exposure.servers) ? exposure.servers : []
     readonly property var alerts: ready ? j(backend.alertsJson, "[]") : []
-    // Kyoto naming a chain the checks refuse has a banner of its own; the rest share one.
+    // Kyoto naming a chain the checks refuse, and payments below the chain's start, have banners of their own.
     readonly property var authorityAlerts: alerts.filter(function (a) { return a.kind === "authority_suspect" })
-    readonly property var sourceAlerts: alerts.filter(function (a) { return a.kind !== "authority_suspect" })
+    readonly property var uncheckedAlerts: alerts.filter(function (a) { return a.kind === "unchecked_anchor" })
+    // Unchecked rows carry no reportedBy (the core keeps the held anchor's source to itself): one
+    // alerting source names them.
+    readonly property string uncheckedSource: {
+        var seen = root.uncheckedAlerts.map(function (a) { return a.source || "" })
+                                       .filter(function (x, i, all) { return x !== "" && all.indexOf(x) === i })
+        return seen.length === 1 ? seen[0] : ""
+    }
+    function reporterOf(r) { return r.reportedBy || (r.state === "unchecked" ? root.uncheckedSource : "") }
+    readonly property var sourceAlerts: alerts.filter(function (a) { return a.kind !== "authority_suspect" && a.kind !== "unchecked_anchor" })
     readonly property var withoutTor: Array.isArray(sourcesInfo.withoutTor) ? sourcesInfo.withoutTor : []
     readonly property var exposes: Array.isArray(sourcesInfo.exposes) ? sourcesInfo.exposes : []
     readonly property var chainSources: root.chainSourcesOf(sourceList)
@@ -115,6 +126,20 @@ Item {
     }
     readonly property var lastReorg: walletOpen && status.lastReorg && typeof status.lastReorg === "object" ? status.lastReorg : null
     function reanchored(txid) { return !!root.lastReorg && Array.isArray(root.lastReorg.moved) && root.lastReorg.moved.indexOf(txid) >= 0 }
+    // Kyoto's and the node's figures; the chain's start (its checkpoint); one peer deciding it.
+    readonly property var kyotoStatus: walletOpen && status.kyoto && typeof status.kyoto === "object" ? status.kyoto : ({})
+    readonly property var nodeStatus: walletOpen && status.node && typeof status.node === "object" ? status.node : ({})
+    readonly property var chainBase: walletOpen && status.authority && isNum(status.authority.base) ? Number(status.authority.base) : null
+    readonly property bool onePeerDecides: kyotoStatus.onePeerDecides === true && (status.authority || {}).kind === "kyoto"
+    readonly property var kyotoConflict: kyotoStatus.lastConflict && typeof kyotoStatus.lastConflict === "object" ? kyotoStatus.lastConflict : null
+    // Once a read says nothing is unchecked, the alert's payments have been checked.
+    readonly property bool uncheckedResolved: balancesRead && isNum(balances.unchecked) && Number(balances.unchecked) === 0
+    // A scan from the birthday started over, wider, by the authority's count.
+    function rescanPass(st) {
+        var k = st && st.authority ? st.authority.kind : ""
+        var r = k === "local_node" || k === "local" ? (st.node || {}).rescans : (k === "kyoto" ? (st.kyoto || {}).rescans : 0)
+        return root.isNum(r) ? Number(r) : 0
+    }
     readonly property var prunedGap: walletOpen && status.node && status.node.prunedGap && typeof status.node.prunedGap === "object"
                                      ? status.node.prunedGap : null
     readonly property var probe: ready && backend.probeJson !== "" ? j(backend.probeJson, "{}") : ({})
@@ -524,6 +549,7 @@ Item {
             return n >= 6 ? "confirmed" : (n === 1 ? "1 confirmation" : n + " confirmations")
         }
         if (r.state === "waiting") return "waiting for the wallet's chain"
+        if (r.state === "unchecked") return "Reported by " + (root.reporterOf(r) || "a server") + ", not checked"
         if (r.state === "pending") return "pending" + (r.reportedBy ? " · reported by " + r.reportedBy : "")
         if (r.state === "sent") return "sent · not confirmed"
         if (r.state === "replaced") return "replaced"
@@ -670,6 +696,7 @@ Item {
         if (a.kind === "authority_behind") return "The wallet's chain may be behind"
         if (a.kind === "anchor_mismatch") return "A source reported a payment on another chain"
         if (a.kind === "authority_suspect") return "Kyoto's peers named a chain the wallet refuses"
+        if (a.kind === "unchecked_anchor") return "Payments older than this wallet's chain"
         return "A source needs attention"
     }
     // A settings SLOT's reply: "" or the refusal, shown at `at`; `refused` runs on a refusal.
@@ -1088,6 +1115,10 @@ Item {
                                               onClicked: root.torOffAskedFor = "" }
                             ]
                         }
+                        LogosText { objectName: "kyotoConflictLine"; visible: modelData.kind === "kyoto" && root.kyotoConflict !== null
+                                    Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: root.kyotoConflict ? "Peers that disagreed were set aside at " + root.whenOf(root.kyotoConflict.at) : "" }
                         ColumnLayout {
                             objectName: "ownPeersPane"
                             visible: modelData.kind === "kyoto"
@@ -1210,9 +1241,15 @@ Item {
             LogosNotice {
                 objectName: "oneOperatorNotice"
                 Layout.fillWidth: true
-                shown: root.sourcesConfigured && root.serversDecideChain && root.chainOperators.length === 1
-                message: shown ? "Kyoto is off, so the Electrum servers in use decide the chain, and they are all "
-                                 + root.chainOperators[0] + "'s: nothing checks them. Switch on Kyoto, or a server from another operator." : ""
+                // Kyoto below its quorum (testnet4) is the same risk: one peer alone decides.
+                shown: root.onePeerDecides || (root.sourcesConfigured && root.serversDecideChain && root.chainOperators.length === 1)
+                title: root.onePeerDecides ? "One peer decides this wallet's chain" : ""
+                message: !shown ? ""
+                         : root.onePeerDecides
+                           ? "Kyoto could dial only one peer, so it takes that peer's headers and filters with nothing to check "
+                             + "them against. Add peers of your own, or turn on a server from another operator."
+                           : "Kyoto is off, so the Electrum servers in use decide the chain, and they are all "
+                             + root.chainOperators[0] + "'s: nothing checks them. Switch on Kyoto, or a server from another operator."
             }
             LogosNotice {
                 objectName: "withoutTorNotice"
@@ -1324,6 +1361,23 @@ Item {
             actions: [
                 LogosButton { objectName: "authorityAlertSourcesButton"; text: "Sources"; onClicked: root.selectTab(4) },
                 LogosButton { objectName: "dismissAuthorityAlertButton"; text: "Dismiss"; onClicked: backend.dismissAlerts() }
+            ]
+        }
+        LogosNotice {
+            objectName: "uncheckedBanner"
+            Layout.fillWidth: true
+            severity: LogosNotice.Warning
+            shown: root.walletOpen && root.uncheckedAlerts.length > 0 && !root.uncheckedResolved
+            title: "Payments older than this wallet's chain"
+            message: shown ? "A server reported payments older than where this wallet's chain starts"
+                             + (root.chainBase !== null ? ", block " + root.group(root.chainBase) : "")
+                             + ". Nothing could check them, so they are not counted as confirmed. "
+                             + "Setting an earlier birthday lets Kyoto check them."
+                             + (root.uncheckedAlerts[0].detail ? "\n" + (root.uncheckedAlerts[0].source || "") + ": " + root.uncheckedAlerts[0].detail : "") : ""
+            actions: [
+                LogosButton { objectName: "uncheckedBirthdayButton"; text: "Set an earlier birthday"
+                              enabled: root.ready && !root.busy; onClicked: birthdaySheet.open() },
+                LogosButton { objectName: "dismissUncheckedButton"; text: "Dismiss"; onClicked: backend.dismissAlerts() }
             ]
         }
         LogosNotice {
@@ -1531,6 +1585,19 @@ Item {
                               + "They count once it does."
                     }
                     BalanceRow {
+                        objectName: "uncheckedRow"
+                        visible: root.balancesRead && Number(root.balances.unchecked || 0) > 0
+                        title: "Reported, not checked"
+                        amount: root.btcOf(root.balances.unchecked) + " BTC"
+                        note: "A server reports these payments in blocks older than where this wallet's chain starts"
+                              + (root.chainBase !== null ? " (block " + root.group(root.chainBase) + ")" : "")
+                              + ", so nothing here could check them. They are not in the confirmed balance; an earlier "
+                              + "birthday lets Kyoto check them."
+                              + root.uncheckedRows.map(function (r) {
+                                    return "\n+" + root.btcOf(r.amountSat) + " BTC" + (root.reporterOf(r) ? ", reported by " + root.reporterOf(r) : "")
+                                }).join("")
+                    }
+                    BalanceRow {
                         objectName: "pendingRow"
                         visible: root.balancesRead && Number(root.balances.pending || 0) > 0
                         title: "Pending"
@@ -1620,8 +1687,11 @@ Item {
                             LogosText { objectName: "rescanLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                                         font.pixelSize: 12; color: Theme.palette.textSecondary
                                         // A server's full scan has no height to count: no share then.
-                                        text: "Rescanning from block " + root.group(root.status.rescanFrom)
-                                              + (root.isNum(root.status.syncPercent) ? " · " + root.status.syncPercent + "%" : "…") }
+                                        text: (root.rescanPass(root.status) > 0
+                                               ? "Rescanning with a wider address range (pass " + root.rescanPass(root.status) + ")"
+                                               : "Rescanning from block " + root.group(root.status.rescanFrom))
+                                              + (root.isNum(root.status.syncPercent) ? " · " + root.status.syncPercent + "%"
+                                                                                     : (root.rescanPass(root.status) > 0 ? "" : "…")) }
                             LogosProgressBar { objectName: "rescanProgress"; Layout.fillWidth: true
                                                indeterminate: !root.isNum(root.status.syncPercent)
                                                value: root.isNum(root.status.syncPercent) ? Number(root.status.syncPercent) / 100 : 0 }
@@ -1921,6 +1991,13 @@ Item {
                                 LogosText { objectName: "historyBlock_" + modelData.txid; visible: !!modelData.blockHash
                                             textFormat: Text.PlainText; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true
                                             text: root.blockLine(modelData) }
+                                LogosText { visible: !!modelData.confirmedVia; color: Theme.palette.textTertiary; font.pixelSize: 11
+                                            text: modelData.state === "unchecked" ? "Spent by" : "Confirmed through" }
+                                LogosText { objectName: "historyVia_" + modelData.txid; visible: !!modelData.confirmedVia
+                                            textFormat: Text.PlainText; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true
+                                            text: !modelData.confirmedVia ? ""
+                                                  : modelData.state === "unchecked" ? modelData.confirmedVia + ", confirmed; this one's own block is not checked"
+                                                  : modelData.confirmedVia + ", a later transaction that spends it" }
                                 LogosText { visible: !!modelData.reportedBy; text: "Reported by"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
                                 LogosText { visible: !!modelData.reportedBy; textFormat: Text.PlainText; font.pixelSize: 11
                                             text: modelData.reportedBy || "" }
@@ -1958,6 +2035,9 @@ Item {
                         LogosText { text: "Scans from"; color: Theme.palette.textSecondary }
                         LogosText { textFormat: Text.PlainText
                                     text: root.isNum(root.status.birthday) ? "block " + root.group(root.status.birthday) : "—" }
+                        LogosText { text: "Chain starts at"; color: Theme.palette.textSecondary }
+                        LogosText { objectName: "walletChainBase"; textFormat: Text.PlainText
+                                    text: root.chainBase !== null ? "block " + root.group(root.chainBase) : "—" }
                     }
                     LogosNotice {
                         objectName: "needsBirthdayNotice"

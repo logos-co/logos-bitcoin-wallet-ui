@@ -5,8 +5,8 @@ project_name: logos-bitcoin-wallet-ui
 # handle for the keys app. HOME is the run's own.
 
 intro: |
-  The app against the modules it ships with: bitcoin_wallet_backend 96cb103,
-  bitcoin_wallet_core_module 00d72a2, bitcoin_node_module fb8dcd6, signer_manager_module 80bc40c
+  The app against the modules it ships with: bitcoin_wallet_backend b38ffc6,
+  bitcoin_wallet_core_module 825a459, bitcoin_node_module 4b02811, signer_manager_module 80bc40c
   and keystore_module 1f3d62f. The node module's own sources for signet, a server of your own
   added and given History through the app, a TLS server of your own whose self-signed certificate
   the node module's probe reads and the app pins and unpins, a Kyoto peer of your own that replaces
@@ -23,9 +23,9 @@ sections:
           set -eu
           nix build 'github:logos-co/logos-basecamp#app-standalone' --no-write-lock-file -o result-basecamp
           nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
-          nix build 'github:logos-co/logos-bitcoin-wallet-backend/96cb1038088bb27f3be98d1b82a5c4f93878e683#install' -o result-real-backend
-          nix build 'github:logos-co/logos-bitcoin-wallet-core-module/00d72a2211072f1cac29aab30b6b393ae9269a8e#install' -o result-real-core
-          nix build 'github:logos-co/logos-bitcoin-node-module/fb8dcd60354c3a13be1a0b1376b42a7535b7818e#install' -o result-real-node
+          nix build 'github:logos-co/logos-bitcoin-wallet-backend/b38ffc607d4e27bb9b53b01b50c77b90b37f4f41#install' -o result-real-backend
+          nix build 'github:logos-co/logos-bitcoin-wallet-core-module/825a459aa2bbd4bb1168339ea4ab9ad682ba1cca#install' -o result-real-core
+          nix build 'github:logos-co/logos-bitcoin-node-module/4b02811673d0836a42090330345c2cf1a4bf2eba#install' -o result-real-node
           nix build 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install' -o result-real-manager
           nix build 'github:logos-co/logos-evm-keystore-module/1f3d62f306f0e4dc7e5d96d478f9770ab3713ce6#install' -o result-real-keystore
           nix build "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install" -o result-wallet

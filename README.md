@@ -28,6 +28,14 @@ is approved in the signer app.
     `rescanFrom` holds, Home reads "Rescanning from block H", with a share only under Kyoto.
   - Source alerts show as a banner above the tabs; Kyoto naming a chain the checks refuse
     (`authority_suspect`) has a banner of its own.
+  - Payments a server reported below where the wallet's chain starts (history state `unchecked`,
+    `balances.unchecked`) show apart from the confirmed balance, as "Reported, not checked", and
+    in Activity as "Reported by X, not checked", never as confirmed. The core leaves `reportedBy`
+    empty on them, so X is the source of the `unchecked_anchor` alert when one source raised it.
+    That alert has a banner of its own, whose "Set an earlier birthday" lets Kyoto check them; it
+    goes once a read says nothing is unchecked.
+  - A scan from the birthday started over wider (`kyoto.rescans`, `node.rescans`, by the
+    authority's kind) reads "Rescanning with a wider address range (pass N)".
 - **Send:** an address or a BIP21 URI, checked as you type with `address_valid`; the amount in BTC
   or sats (a URI's amount fills it); fast, normal or slow from `fee_rates`, or a custom sat/vB
   rate; and Send max.
@@ -48,17 +56,22 @@ is approved in the signer app.
 - **Activity:** one row per transaction saying what it was for: "−X · fee F", "X to yourself ·
   fee F", "N coins combined · fee F", "Fee raised to F" and "+X". Each shows its state, and an
   unconfirmed send has Speed up (`request_fee_bump`). Details list the addresses paid, what it
-  replaces or was replaced by, the source that reported a pending payment, its block and the txid.
+  replaces or was replaced by, the source that reported a pending payment, its block, the later
+  transaction that confirms it (`confirmedVia`) and the txid.
   A payment a reorg moved (`lastReorg.moved`) reads "re-anchored at height H", and its details name
   the new block.
-- **Settings:** the wallet, its public descriptors behind a privacy warning, Close wallet, and
-  the sources pane, which also opens from the Open a wallet screen.
+- **Settings:** the wallet (with where its chain starts, `authority.base`), its public descriptors
+  behind a privacy warning, Close wallet, and the sources pane, which also opens from the Open a
+  wallet screen.
   - Each source has Use, History and Tor switches (`set_source`). Turning History on asks first:
     the server will learn every address. Turning Tor off asks first, in that row, and says what
     the source would see.
   - The info button says what a second operator adds, claiming only what the design does.
     Notices name the sources reached without Tor, and say when Kyoto is off and the Electrum
-    servers of one operator alone decide the chain.
+    servers of one operator alone decide the chain, or when Kyoto runs below its quorum on one
+    peer (`kyoto.onePeerDecides`, testnet4): "One peer decides this wallet's chain". A
+    filter-header conflict (`kyoto.lastConflict`) is a quiet line under Kyoto: "Peers that
+    disagreed were set aside at T".
   - Your own servers, added by address; the Tor proxy; the exposure record. A server reached in
     plain text outside Tor is marked "Not encrypted".
   - Under Kyoto, your own peers (`peer_list`, `set_own_peers`, at most 64): the curated list's size,
@@ -88,7 +101,7 @@ is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend 96cb103.
+interface changes; this copy is from logos-bitcoin-wallet-backend b38ffc6.
 
 ## Intents
 
@@ -118,8 +131,9 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   `bitcoin_wallet_backend` with the real backend's contract (its trait is copied verbatim) and
   nothing behind it: every flow, to every send outcome, a birthday refused and set, change added
   to the fee, a reorg, Kyoto as the authority and a chain it names that is refused, a TLS
-  server's certificate pinned, a Kyoto peer of your own, and a network switch queued behind a
-  close with an open waiting for it. A send's fate is picked by its amount; the header of `sim.rs`
+  server's certificate pinned, a Kyoto peer of your own, a network switch queued behind a close
+  with an open waiting for it, a payment reported below the chain's start until an earlier
+  birthday checks it (with a wider pass), and one peer deciding the chain on testnet4. A send's fate is picked by its amount; the header of `sim.rs`
   says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
   manager and keystore: the node module's sources, certificate pin and curated Kyoto list with a
@@ -135,7 +149,12 @@ since the phrase, addresses and txids can't be written into a static test. It ge
 test passwords, and each Basecamp run gets its own HOME and user dir. `basecamp-e2e-kyoto` and
 `basecamp-e2e-node` run open, receive, send, confirm and a reorg with Kyoto (the chain's three
 filter-serving nodes as its peers, quorum 2) and with the local node (bitcoind_module and its app,
-started on regtest from the node app) as the chain authority.
+started on regtest from the node app) as the chain authority. The Kyoto spec then restores twice:
+once with no day in the keys app, so the wallet asks for its birthday and gets it in the wallet
+app; once with Blockstream's electrs as the only server and a `regtest.json` checkpoint above the
+first two payments, which it reports below the chain's start, unchecked, until the banner's
+earlier birthday lets Kyoto check them. That restore opens with open_wallet's own birthday (the app
+takes no block height, and a regtest day names none) and runs on Linux and macOS only.
 
 On Windows the three e2e specs run as their emitted Windows leg (`doctest emit-smoke <spec>
 --platform windows`) under Git Bash, with the Windows builds staged under `e2e/build` and the

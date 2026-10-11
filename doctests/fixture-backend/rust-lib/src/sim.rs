@@ -1,7 +1,10 @@
 //! The scripted wallet behind the fixture: states move on a clock, a send's fate is its amount, and
 //! the first send that goes out turns the history server suspect. A wallet opens without a birthday,
 //! a reorg re-anchors one payment 5 s after the first open is ready, and Kyoto in use is the
-//! authority and names a refused chain 3 s after it is. No network, no key.
+//! authority and names a refused chain 3 s after it is. On signet under Kyoto, Esplora reports a
+//! payment below the chain's start (signet's checkpoint): unchecked until a birthday below it is
+//! set, whose rescan ends with one wider pass. On testnet4 Kyoto is on with one peer, which then
+//! decides the chain. No network, no key.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -37,6 +40,10 @@ const KYOTO_PEERS: u64 = 4;
 const CLOSE_TIME: Duration = Duration::from_secs(3);
 const SWITCH_AFTER_CLOSE: Duration = Duration::from_secs(4);
 const MAX_OWN_PEERS: usize = 64;
+/// Esplora's report below signet's checkpoint, and when its alert fires after the wallet is ready.
+const UNCHECKED_SAT: u64 = 60_000;
+const UNCHECKED_HEIGHT: u64 = 289_950;
+const UNCHECKED_ALERT_AFTER: Duration = Duration::from_secs(1);
 /// The wallet's first payment, a fixed day so a birthday after it is refused the same way every run.
 const FIRST_TX_DAY: &str = "2026-05-31";
 // The core's own refusals.
@@ -174,6 +181,14 @@ pub struct Sim {
     pending_network: Option<String>,
     switch_at: Option<Instant>,
     own_peers: BTreeMap<String, Vec<String>>,
+    /// The checkpoint the wallet's chain starts from, and a payment reported below it, unchecked.
+    chain_base: u64,
+    unchecked: bool,
+    unchecked_alert_at: Option<Instant>,
+    /// Kyoto's wider passes, whether the running rescan is one, and its last filter-header conflict.
+    rescans: u32,
+    window_rescan: bool,
+    conflict_at: Option<u64>,
     last_status: String,
     last_balance: String,
 }
@@ -228,6 +243,29 @@ fn tip(network: &str) -> u64 {
         "regtest" => 150,
         _ => 290_123,
     }
+}
+
+/// The highest checkpoint a wallet's chain may start from, as the core's are.
+fn checkpoint(network: &str) -> u64 {
+    match network {
+        "mainnet" => 935_424,
+        "testnet4" => 120_000,
+        "signet" => 290_000,
+        _ => 0,
+    }
+}
+
+/// Kyoto's quorum: 3 on mainnet, 2 on signet, and testnet4's one curated peer.
+fn quorum(network: &str) -> u64 {
+    match network {
+        "mainnet" => 3,
+        "testnet4" => 1,
+        _ => 2,
+    }
+}
+
+fn unchecked_txid() -> String {
+    format!("{:016x}", 0x0dd0_0000_0000_0000u64 + UNCHECKED_HEIGHT).repeat(4)
 }
 
 /// A block hash for a height: fake, and plain about it.
@@ -413,11 +451,22 @@ impl Sim {
             pending_network: None,
             switch_at: None,
             own_peers: BTreeMap::new(),
+            chain_base: 0,
+            unchecked: false,
+            unchecked_alert_at: None,
+            rescans: 0,
+            window_rescan: false,
+            conflict_at: None,
             last_status: String::new(),
             last_balance: String::new(),
         };
         for n in ["mainnet", "testnet4", "signet", "regtest"] {
-            sim.sources.insert(n.into(), defaults());
+            let mut list = defaults();
+            // The node module's testnet4 list holds one peer, and Kyoto runs on it.
+            if n == "testnet4" {
+                list.iter_mut().filter(|s| s.kind == "kyoto").for_each(|s| s.enabled = true);
+            }
+            sim.sources.insert(n.into(), list);
         }
         sim
     }
@@ -475,7 +524,7 @@ impl Sim {
 
     fn peers(&self) -> u64 {
         if self.kyoto() {
-            return KYOTO_PEERS;
+            return if quorum(&self.net()) == 1 { 1 } else { KYOTO_PEERS };
         }
         self.sources.get(&self.net()).map_or(0, |l| l.iter().filter(|s| s.enabled && s.kind == "electrum" && !s.suspect).count() as u64)
     }
@@ -497,7 +546,7 @@ impl Sim {
         let kyoto = open && self.kyoto();
         let authority = if open {
             json!({"kind": if kyoto { "kyoto" } else { "electrum_headers" }, "height": tip(&self.network),
-                   "hash": "00000000000000000002f1c4fixture", "tipAgeSecs": TIP_AGE_SECS, "peers": self.peers()})
+                   "hash": "00000000000000000002f1c4fixture", "tipAgeSecs": TIP_AGE_SECS, "peers": self.peers(), "base": self.chain_base})
         } else {
             json!({"kind": null, "height": null, "hash": null, "tipAgeSecs": null, "peers": 0})
         };
@@ -510,7 +559,7 @@ impl Sim {
             "birthdaySource": if open { json!(self.birthday_source) } else { Value::Null },
             "rescanFrom": if open { json!(self.rescan_from) } else { Value::Null },
             "lastReorg": if open { self.last_reorg.clone() } else { Value::Null },
-            "kyoto": if kyoto { json!({"running": true, "phase": "synced", "headers": tip(&self.network), "progress": 1.0, "connected": KYOTO_PEERS}) } else { Value::Null },
+            "kyoto": if kyoto { self.kyoto_status() } else { Value::Null },
             "node": null,
             "lastError": null, "synced": self.state == WState::Ready, "busy": false, "authority": authority,
             "activeNetwork": self.active, "label": self.label, "openSend": self.open_send(),
@@ -521,9 +570,10 @@ impl Sim {
             v["syncPercent"] = json!(if t >= h { 100 } else { (t - b) * 100 / (h - b) });
             v["historyServer"] = json!("electrum.example");
         }
-        // A rescan reports a share done only under Kyoto; a server's full scan has no height to count.
+        // A rescan reports a share done only under Kyoto; a server's full scan has no height to count,
+        // and the fixture's wider pass shows none either.
         if let (Some(_), Some(until)) = (self.rescan_from, self.rescan_until) {
-            if kyoto {
+            if kyoto && !self.window_rescan {
                 let left = until.saturating_duration_since(now).as_secs_f64() / RESCAN_TIME.as_secs_f64();
                 v["syncPercent"] = json!(((1.0 - left.min(1.0)) * 100.0).floor() as u64);
             } else if let Some(m) = v.as_object_mut() {
@@ -531,6 +581,13 @@ impl Sim {
             }
         }
         v
+    }
+
+    fn kyoto_status(&self) -> Value {
+        let q = quorum(&self.network);
+        let conflict = self.conflict_at.map(|at| json!({"at": at, "peers": [format!("peer3{}.onion:38333", "a".repeat(46))]}));
+        json!({"running": true, "phase": "synced", "headers": tip(&self.network), "progress": 1.0, "connected": self.peers(),
+               "quorum": q, "onePeerDecides": q == 1, "rescans": self.rescans, "window": [26, 25], "lastConflict": conflict})
     }
 
     fn open_send(&self) -> Option<String> {
@@ -542,9 +599,11 @@ impl Sim {
             return json!({"ok": false, "error": "no wallet is open"});
         }
         let b = |s: u64| json!(s.to_string());
+        let unchecked = if self.unchecked { UNCHECKED_SAT } else { 0 };
         json!({
             "ok": true, "busy": false, "confirmed": b(self.confirmed), "waiting": b(50_000), "pending": b(30_000),
             "sent": b(self.change), "immature": b(0), "tooSmall": {"count": 2, "sat": "540", "btc": btc_of(540)},
+            "unchecked": b(unchecked), "uncheckedBtc": btc_of(unchecked),
             "confirmedBtc": btc_of(self.confirmed), "waitingBtc": btc_of(50_000), "pendingBtc": btc_of(30_000),
             "sentBtc": btc_of(self.change), "immatureBtc": btc_of(0),
         })
@@ -939,6 +998,14 @@ impl Sim {
             row(&txids[4], "send", 200_000, Some(220), "confirmed", Some(t - 40), json!({"counterparties": [them]})),
             row(&txids[5], "receive", 125_000_000, None, "confirmed", Some(t - 100), json!({"time": first})),
         ];
+        let esplora = self.sources.get(&net).is_some_and(|l| l.iter().any(|s| s.enabled && s.kind == "esplora"));
+        self.unchecked = net == "signet" && self.kyoto() && esplora;
+        self.chain_base = if self.unchecked { checkpoint(&net) } else { 0 };
+        if self.unchecked {
+            // No reportedBy, as the core leaves an unchecked row: the alert names the source.
+            let r = row(&unchecked_txid(), "receive", UNCHECKED_SAT, None, "unchecked", Some(UNCHECKED_HEIGHT), json!({}));
+            self.history.insert(2, r);
+        }
     }
 
     pub fn request(&mut self, kind: &str, requester: &str, params: &str, now: Instant, out: &mut Vec<Event>) -> Value {
@@ -1198,7 +1265,8 @@ impl Sim {
     }
 
     fn curated(net: &str) -> Value {
-        let peers: Vec<String> = (0..11).map(|i| format!("peer{i}{}.onion:38333", "a".repeat(46))).collect();
+        let n = if net == "testnet4" { 1 } else { 11 };
+        let peers: Vec<String> = (0..n).map(|i| format!("peer{i}{}.onion:38333", "a".repeat(46))).collect();
         json!({"format": 1, "network": net, "version": "202610110405", "created": "2026-10-11T04:05:49Z", "date": "2026-10-11",
                "note": "PROVISIONAL: from 1 run (2026-10-11), not the plan's 6 of 7 days. Signed with a TEST key: not a release.",
                "refreshUrl": null, "peers": peers, "keyId": "test-d680f3cac9837bf9", "signature": "00"})
@@ -1314,6 +1382,13 @@ impl Sim {
             WState::Syncing if elapsed >= SYNC_TIME => {
                 self.state = WState::Ready;
                 self.since = now;
+                if self.unchecked {
+                    self.unchecked_alert_at = Some(now + UNCHECKED_ALERT_AFTER);
+                }
+                // Kyoto set aside peers that disagreed on a filter header on its way to the tip.
+                if self.kyoto() {
+                    self.conflict_at = Some(now_secs());
+                }
                 if !self.reorged && self.reorg_at.is_none() {
                     self.reorg_at = Some(now + REORG_AFTER);
                 }
@@ -1328,6 +1403,8 @@ impl Sim {
                 self.rescan_until = None;
                 self.authority_alert_at = None;
                 self.last_reorg = Value::Null;
+                (self.unchecked, self.unchecked_alert_at, self.chain_base) = (false, None, 0);
+                (self.rescans, self.window_rescan, self.conflict_at) = (0, false, None);
                 if let Some(j) = self.close_job.take() {
                     self.finish(&j, "done", None, json!({"closed": true}), &mut out);
                 }
@@ -1348,8 +1425,24 @@ impl Sim {
             }
         }
         if self.rescan_until.is_some_and(|t| now >= t) {
-            self.rescan_until = None;
-            self.rescan_from = None;
+            let below = self.birthday_height < self.chain_base;
+            if self.unchecked && below && !self.window_rescan {
+                // The scan from the new birthday ends wider once, as Kyoto's does when the window does not hold.
+                (self.window_rescan, self.rescans, self.rescan_until) = (true, self.rescans + 1, Some(now + RESCAN_TIME));
+            } else {
+                self.rescan_until = None;
+                self.rescan_from = None;
+                self.window_rescan = false;
+                if self.unchecked && below {
+                    self.check_unchecked();
+                }
+            }
+        }
+        if self.unchecked_alert_at.is_some_and(|t| now >= t) && self.open() {
+            self.unchecked_alert_at = None;
+            out.push(Event::SourceAlert(json!({"source": "esplora.example", "kind": "unchecked_anchor",
+                "detail": format!("reported a payment in block {UNCHECKED_HEIGHT}, below the chain's start at {}: nothing could check it", self.chain_base),
+                "at": now_secs(), "network": self.network, "group": self.group})));
         }
         if self.reorg_at.is_some_and(|t| now >= t) && self.state == WState::Ready {
             self.reorg_at = None;
@@ -1383,6 +1476,17 @@ impl Sim {
             out.push(Event::Balance(b));
         }
         out
+    }
+
+    /// A birthday below the chain's start lowered it to genesis: the rescan checked the payment.
+    fn check_unchecked(&mut self) {
+        let t = tip(&self.network);
+        if let Some(r) = self.history.iter_mut().find(|r| r["state"] == "unchecked") {
+            r["state"] = json!("confirmed");
+            r["confirmations"] = json!(t.saturating_sub(UNCHECKED_HEIGHT) + 1);
+        }
+        (self.unchecked, self.chain_base) = (false, 0);
+        self.confirmed += UNCHECKED_SAT;
     }
 
     /// The seeded transfer to yourself, three blocks deep, confirms again in a new block at its height.
@@ -1717,6 +1821,51 @@ mod tests {
         let st = sim.status(tt);
         assert_eq!((st["authority"]["kind"].clone(), st["authority"]["peers"].clone()), (json!("kyoto"), json!(KYOTO_PEERS)));
         assert!(out.iter().any(|e| matches!(e, Event::SourceAlert(v) if v["kind"] == "authority_suspect")));
+    }
+
+    #[test]
+    fn under_kyoto_on_signet_a_payment_below_the_chains_start_is_unchecked_until_an_earlier_birthday() {
+        let (mut sim, t) = opened("signet");
+        let mut ev = vec![];
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        assert_eq!(sim.set_source("kyoto", r#"{"use":true}"#)["ok"], true);
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
+        let (mut out, mut tt) = (vec![], t);
+        for _ in 0..100 {
+            tt += Duration::from_millis(100);
+            out.extend(sim.tick(tt));
+        }
+        let st = sim.status(tt);
+        assert_eq!((st["state"].clone(), st["authority"]["base"].clone(), st["kyoto"]["quorum"].clone(), st["kyoto"]["onePeerDecides"].clone()),
+                   (json!("ready"), json!(290_000), json!(2), json!(false)));
+        assert!(st["kyoto"]["lastConflict"]["at"].is_u64());
+        assert_eq!((sim.balances()["unchecked"].clone(), sim.balances()["uncheckedBtc"].clone()), (json!("60000"), json!("0.00060000")));
+        let row = |sim: &Sim| sim.history(0)["rows"].as_array().unwrap().iter().find(|r| r["txid"] == unchecked_txid().as_str()).cloned().unwrap();
+        assert_eq!((row(&sim)["state"].clone(), row(&sim)["reportedBy"].clone(), row(&sim)["height"].clone()),
+                   (json!("unchecked"), Value::Null, json!(UNCHECKED_HEIGHT)));
+        assert!(out.iter().any(|e| matches!(e, Event::SourceAlert(v) if v["kind"] == "unchecked_anchor")));
+        // A birthday below the chain's start: its rescan, then one wider pass, and the payment is checked.
+        assert_eq!(sim.set_birthday(r#"{"height":0}"#, tt)["ok"], true);
+        let tt = run(&mut sim, tt, 2);
+        assert_eq!(sim.status(tt)["rescanFrom"], 0);
+        let tt = run(&mut sim, tt, 4);
+        let st = sim.status(tt);
+        assert_eq!((st["kyoto"]["rescans"].clone(), st.get("syncPercent").cloned()), (json!(1), None), "a wider pass, with no share to show");
+        let tt = run(&mut sim, tt, 5);
+        let st = sim.status(tt);
+        assert_eq!((st["rescanFrom"].clone(), st["authority"]["base"].clone(), sim.balances()["unchecked"].clone()), (Value::Null, json!(0), json!("0")));
+        assert_eq!(row(&sim)["state"], "confirmed");
+    }
+
+    #[test]
+    fn on_testnet4_kyoto_runs_on_its_one_peer_which_decides_the_chain() {
+        let (sim, t) = opened("testnet4");
+        let st = sim.status(t);
+        assert_eq!((st["authority"]["kind"].clone(), st["authority"]["peers"].clone(), st["kyoto"]["quorum"].clone(), st["kyoto"]["onePeerDecides"].clone()),
+                   (json!("kyoto"), json!(1), json!(1), json!(true)));
+        assert_eq!(sim.peer_list(r#"{"network":"testnet4"}"#)["list"]["peers"].as_array().unwrap().len(), 1);
+        assert_eq!(sim.balances()["unchecked"], "0");
     }
 
     #[test]

@@ -34,8 +34,11 @@ CHAIN_DIR = os.path.join(E2E, "chain")
 # Off the regtest defaults, so another test chain on this machine is left alone.
 CHAIN_ENV = {"CHAIN_DIR": CHAIN_DIR, "RPC_PORT": "28543", "P2P_PORT": "28544", "FORK_RPC_PORT": "28553",
              "FORK_P2P_PORT": "28554", "PEER_RPC_PORT": "28563", "PEER_P2P_PORT": "28564",
-             "PRUNED_RPC_PORT": "28573", "PRUNED_P2P_PORT": "28574", "ELECTRUM_PORTS": "61701,61711"}
+             "PRUNED_RPC_PORT": "28573", "PRUNED_P2P_PORT": "28574", "ELECTRUM_PORTS": "61701,61711",
+             "ESPLORA_PORT": "61721", "ESPLORA": os.path.join(BUILD, "esplora", "bin", "electrs")}
 ELECTRUM_PORTS = [61701, 61711]
+# Blockstream's electrs on the main node, started by `chain.sh esplora` for the unchecked step.
+ESPLORA_URL = "http://%s:%s" % (CHAIN_HOST, CHAIN_ENV["ESPLORA_PORT"])
 # The chain's three nodes serve compact block filters: Kyoto's peers.
 FILTER_PEERS = ["%s:%s" % (CHAIN_HOST, CHAIN_ENV[k]) for k in ("P2P_PORT", "FORK_P2P_PORT", "PEER_P2P_PORT")]
 # What decides the chain, as the core's regtest.json says and the sync line names it.
@@ -44,6 +47,8 @@ AUTHORITIES = {
     "kyoto": ({"electrum": ["tcp://%s:%d" % (CHAIN_HOST, ELECTRUM_PORTS[0])], "kyoto": FILTER_PEERS, "kyotoRequired": 2,
                "checkOnly": True, "pollSecs": 1}, "Kyoto · "),
     "local": ({"local": True, "pollSecs": 1}, "Your node"),
+    # Kyoto with Esplora as the only server, and a checkpoint: written by esplora_regtest().
+    "kyoto-esplora": (None, "Kyoto · "),
 }
 APP, KEYS, SIGNER = "bitcoin_wallet_ui", "evm_keystore_ui", "evm_signer_ui"
 MODULE_BUILDS = ["backend", "core", "node", "keystore", "manager"]
@@ -504,7 +509,8 @@ def layout(user, mode=None):
         for m in sorted(os.listdir(os.path.join(BUILD, b, "plugins"))):
             copytree(os.path.join(BUILD, b, "plugins", m), os.path.join(ud, "plugins", m))
     # regtest.json turns regtest on for the backend and the node module, and gives the core its servers.
-    cfg = {"bitcoin_wallet_backend": {}, "bitcoin_node_module": {}, "bitcoin_wallet_core_module": AUTHORITIES[authority()][0]}
+    core = esplora_regtest() if authority() == "kyoto-esplora" else AUTHORITIES[authority()][0]
+    cfg = {"bitcoin_wallet_backend": {}, "bitcoin_node_module": {}, "bitcoin_wallet_core_module": core}
     for module, body in cfg.items():
         d = os.path.join(ud, "module_data", module, "e2e")
         os.makedirs(d)
@@ -518,6 +524,19 @@ def layout(user, mode=None):
             log("%s/%s %s" % (kind, m, variant))
     passed("laid out %s for %s: %d modules and %d apps, portable, with regtest.json for the wallet's modules"
            % (user, authority(), len(os.listdir(os.path.join(ud, "modules"))), len(os.listdir(os.path.join(ud, "plugins")))))
+
+
+# Esplora alone serves history, and a checkpoint sits just above the first two payments: for a wallet
+# whose birthday is above it, Esplora reports them below the chain's start, where nothing checks them.
+def esplora_regtest():
+    if CHAIN_URL:
+        raise Fail("the chain host runs no Esplora: this step runs on Linux and macOS")
+    base = int(state()["coinbase_height"]) + 1
+    header = rpc("getblockheader", [rpc("getblockhash", [base]), False])
+    log(chain("esplora"))
+    save(unchecked_base=base)
+    return {"esplora": [ESPLORA_URL], "kyoto": FILTER_PEERS, "kyotoRequired": 2, "pollSecs": 1,
+            "checkpoint": {"height": base, "header": header}}
 
 
 def descendants(pid):
@@ -855,7 +874,7 @@ def phase_receive():
         ins.wait("pendingRow", "visible", True, 60, "an unconfirmed payment shows as pending")
         expect(ins.get("pendingRowAmount", "text") == "1 BTC", "pending: 1 BTC, not in the confirmed balance")
         ins.shot("receive-pending")
-    mine(1)
+    receive_height = mine(1)
     ins.wait("confirmedCard", "value", "1 BTC", 60, "mined: 1 BTC confirmed")
     ins.wait("pendingRow", "visible", False, 30)
     wallet_tab(ins, 3)
@@ -865,7 +884,7 @@ def phase_receive():
     wallet_tab(ins, 2)
     ins.press("newAddressButton")
     addr2 = ins.wait("receiveAddress", "text", lambda t: t.startswith("bcrt1q") and t != addr, 30)
-    mine(1, addr2)
+    coinbase_height = mine(1, addr2)
     coinbase = rpc("getblock", [rpc("getbestblockhash")])["tx"][0]
     reward = int(round(rpc("getrawtransaction", [coinbase, True])["vout"][0]["value"] * 1e8))
     wallet_tab(ins, 0)
@@ -878,7 +897,7 @@ def phase_receive():
     wait_synced(ins)
     if ins.get("alertBanner", "visible") is True:
         log("NOTE after 100 blocks at once, alertBanner: %s — %s" % (ins.get("alertBanner", "title"), ins.get("alertBanner", "message")))
-    save(receive_txid=txid, coinbase_txid=coinbase, balance_sat=total)
+    save(receive_txid=txid, coinbase_txid=coinbase, balance_sat=total, receive_height=receive_height, coinbase_height=coinbase_height)
     log("PHASE receive OK")
 
 
@@ -1140,48 +1159,144 @@ def phase_close():
     log("PHASE close OK")
 
 
-def phase_restore():
-    ins = Inspector()
-    show_app(ins, APP)
-    ins.wait(ROOT, "ready", True, 120)
-    ins.wait("statusLine", "text", "No wallet open", 120)
-    ins.call(ROOT, "selectNetwork", "regtest")
-    ins.wait("networkChip", "text", "regtest", 30)
-    ins.press("familySegwit")
-    ins.press("openWalletButton")
+def yesterday():
+    return (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+
+
+# The open's request in the keys app: the written-down phrase restored, a day given or left empty.
+def restore_in_keys(ins, name, birthday=None):
     chooser(ins, KEYS)
     ins.wait("accessSheet", "opened", True, 120)
     ins.press("accessAddWallet")
     ins.wait("bitcoinImportSheet", "opened", True, 20)
     ins.check("btcSourceType")
     ins.set_text("btcPhraseField", secret("phrase"))
-    birthday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
-    ins.set_text("btcBirthdayField", birthday)
+    if birthday:
+        ins.set_text("btcBirthdayField", birthday)
     ins.set_text("btcWalletPasswordField", secret("password-restore"))
-    ins.set_text("btcWalletNameField", "E2E restored")
+    ins.set_text("btcWalletNameField", name)
     ins.press("btcConfirm")
     ins.wait("bitcoinImportSheet", "visible", False, 30)
     ins.wait("accessWallet_0", "checked", True, 20)
     ins.set_text("accessPasswordField", secret("password-restore"))
     ins.press("accessApproveButton")
     ins.wait("accessSheet", "visible", False, 30)
-    passed("restored in the keys app from the written-down phrase, birthday %s" % birthday)
     back_to_wallet(ins, KEYS)
     ins.wait(ROOT, "walletState", lambda v: v in ("syncing", "ready"), 90)
-    wait_synced(ins, 180)
+
+
+# The first user dir's balance and rows, read again in this one.
+def matches_snapshot(ins, what):
     want = state()["snapshot"]
-    ins.wait("confirmedCard", "value", want["confirmed"], 120, "the restored balance matches: %s" % want["confirmed"])
-    passed("the restored balance matches: %s" % want["confirmed"])
-    ins.shot("restored")
+    ins.wait("confirmedCard", "value", want["confirmed"], 180, "%s: the balance matches, %s" % (what, want["confirmed"]))
+    passed("the %s balance matches: %s" % (what, want["confirmed"]))
     got = snapshot(ins)
-    log("restored: " + json.dumps(got))
+    log("%s: %s" % (what, json.dumps(got)))
     # A replaced send never reached a block, so only the first user dir can list it.
-    log("Activity rows: %d in user A, %d restored" % (want["count"], got["count"]))
+    log("Activity rows: %d in user A, %d %s" % (want["count"], got["count"], what))
     for t, row in want["rows"].items():
         g = got["rows"].get(t)
         expect(g is not None and g["state"] == row["state"], "%s… %s in both" % (t[:12], row["state"]))
+    return got
+
+
+def open_for_restore(ins):
+    ins.wait(ROOT, "ready", True, 120)
+    ins.wait("statusLine", "text", "No wallet open", 120)
+    ins.call(ROOT, "selectNetwork", "regtest")
+    ins.wait("networkChip", "text", "regtest", 30)
+    ins.press("familySegwit")
+
+
+def phase_restore():
+    ins = Inspector()
+    show_app(ins, APP)
+    open_for_restore(ins)
+    ins.press("openWalletButton")
+    birthday = yesterday()
+    restore_in_keys(ins, "E2E restored", birthday)
+    passed("restored in the keys app from the written-down phrase, birthday %s" % birthday)
+    wait_synced(ins, 180)
+    got = matches_snapshot(ins, "restored")
+    ins.shot("restored")
     save(restored=got)
     log("PHASE restore OK")
+
+
+# No day in the keys app: the wallet asks for its birthday, and one is set in the wallet app.
+def phase_restore_birthday():
+    ins = Inspector()
+    show_app(ins, APP)
+    open_for_restore(ins)
+    ins.press("openWalletButton")
+    restore_in_keys(ins, "E2E restored, no day")
+    passed("restored in the keys app with no day given")
+    ins.wait("needsBirthdayHomeNotice", "visible", True, 120, "restored without a birthday: Home asks for one")
+    passed("Home asks: %s" % ins.get("needsBirthdayHomeNotice", "title"))
+    ins.shot("needs-birthday")
+    ins.press("setBirthdayButton")
+    ins.wait("birthdaySheet", "opened", True, 20)
+    day = yesterday()
+    ins.set_text("birthdayDateField", day)
+    ins.press("confirmBirthdayButton")
+    ins.wait("birthdaySheet", "visible", False, 60, "the wallet takes the birthday %s" % day)
+    ins.wait("needsBirthdayHomeNotice", "visible", False, 30, "nobody asks for a birthday any more")
+    ins.wait("rescanPane", "visible", False, 300, "the rescan from it ends")
+    passed("birthday %s set in the wallet app, scanned again from it" % day)
+    wait_synced(ins, 180)
+    got = matches_snapshot(ins, "restored")
+    ins.shot("restored-birthday")
+    save(restored_birthday=got)
+    log("PHASE restore-birthday OK")
+
+
+# Esplora reports the first two payments below the chain's start (esplora_regtest): unchecked, apart
+# from the balance, until an earlier birthday, set from the banner, lets Kyoto check them.
+def phase_unchecked():
+    s = state()
+    base = int(s["unchecked_base"])
+    ins = Inspector()
+    show_app(ins, APP)
+    open_for_restore(ins)
+    # The app takes no block height, and a regtest day names none: open_wallet's own birthday, above the checkpoint.
+    root = ins.obj(ROOT)
+    ins.rpc("evaluate", objectId=root[0], expression='openWallet({ family: "bitcoin", birthday: %d })' % (base + 1))
+    restore_in_keys(ins, "E2E unchecked")
+    passed("restored with a birthday at block %d, above the checkpoint at %d" % (base + 1, base))
+    wait_synced(ins, 180)
+    wallet_tab(ins, 4)
+    ins.wait("walletChainBase", "text", "block {:,}".format(base), 30, "the chain's start in Settings")
+    passed("the wallet's chain starts at the checkpoint, block %d" % base)
+    wallet_tab(ins, 0)
+    want = amount_text(int(s["balance_sat"])) + " BTC"
+    ins.wait("uncheckedRowAmount", "text", want, 120, "the unchecked amount on Home")
+    passed("Home: %s reported, not checked, apart from the balance (confirmed %s)" % (want, confirmed_value(ins)))
+    ins.wait("uncheckedBanner", "visible", True, 60, "the unchecked_anchor alert has a banner of its own")
+    passed("the banner: %s — %s" % (ins.get("uncheckedBanner", "title"), ins.get("uncheckedBanner", "message")))
+    ins.shot("unchecked-home")
+    wallet_tab(ins, 3)
+    for key in ("receive_txid", "coinbase_txid"):
+        wait_row(ins, "historyState", s[key], "Reported by esplora-0, not checked", 60)
+        passed("%s… reads Reported by esplora-0, not checked" % s[key][:12])
+    ins.shot("unchecked-activity")
+    wallet_tab(ins, 0)
+    ins.press("uncheckedBirthdayButton")
+    ins.wait("birthdaySheet", "opened", True, 20)
+    ins.check("birthdayUnknown")
+    ins.press("confirmBirthdayButton")
+    ins.wait("birthdaySheet", "visible", False, 60, "an earlier birthday, set from the banner")
+    ins.wait("uncheckedRow", "visible", False, 300, "the chain starts lower, and Kyoto checks them")
+    ins.wait("uncheckedBanner", "visible", False, 30, "the banner goes once nothing is unchecked")
+    passed("an earlier birthday from the banner: nothing unchecked any more")
+    wallet_tab(ins, 4)
+    ins.wait("walletChainBase", "text", "block 0", 60, "the chain's start in Settings")
+    passed("the chain starts at genesis now")
+    wallet_tab(ins, 0)
+    wait_synced(ins, 180)
+    got = matches_snapshot(ins, "checked")
+    ins.shot("unchecked-checked")
+    save(unchecked=got)
+    log("PHASE unchecked OK")
 
 
 def unknown_send(ins, label, amount):
@@ -1256,6 +1371,7 @@ PHASES = {
     "node-start": phase_node_start, "send": phase_send,
     "receive": phase_receive, "send-expire": phase_send_expire, "speed-up": phase_speed_up,
     "reject": phase_reject, "reorg": phase_reorg, "close": phase_close, "restore": phase_restore,
+    "restore-birthday": phase_restore_birthday, "unchecked": phase_unchecked,
     "unknown-rebroadcast": phase_unknown_rebroadcast, "unknown-forget": phase_unknown_forget,
     "stop": stop_basecamp, "cleanup": phase_cleanup,
 }
@@ -1267,7 +1383,7 @@ def main(argv):
     elif len(argv) == 1 and argv[0] in PHASES:
         fn, args = PHASES[argv[0]], []
     else:
-        sys.exit("usage: drive.py layout <user> [electrum|kyoto|local] | launch <user> | " + " | ".join(PHASES))
+        sys.exit("usage: drive.py layout <user> [%s] | launch <user> | %s" % ("|".join(AUTHORITIES), " | ".join(PHASES)))
     log("== %s %s" % (time.strftime("%H:%M:%S"), " ".join(argv)))
     try:
         fn(*args)

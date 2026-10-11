@@ -13,7 +13,7 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 96cb103) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend b38ffc6) with a script behind it, and no
   wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
   Basecamp answers both intents `unavailable`, and the stand-in plays the person: it never approves
   the first open of a run, approves the next after 4 s, and picks a send's fate by its amount:
@@ -24,7 +24,9 @@ intro: |
   transfer to yourself 5 s after the first open is ready, and with Kyoto in use it is the authority
   and names a chain the wallet refuses. A TLS server of your own is probed and pinned, a peer of
   your own replaces Kyoto's curated list, and a switch asked for while the wallet closes waits for
-  the close, while an open asked for meanwhile waits for the switch.
+  the close, while an open asked for meanwhile waits for the switch. Under Kyoto on signet a
+  payment Esplora reports below the chain's start shows unchecked, apart from the balance, until an
+  earlier birthday checks it; on testnet4 one peer decides the chain, and the sources say so.
 
 sections:
   - title: "Build Basecamp, the app, and the stand-in backend"
@@ -1074,6 +1076,120 @@ sections:
               find_value: "alertBanner"
               property: "visible"
               value: false
+            - name: "Esplora reported a payment below where this wallet's chain starts: a banner of its own"
+              action: expect_property
+              find_value: "uncheckedBanner"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "...in plain words: older than the chain, not checked, and an earlier birthday checks it"
+              action: expect_property
+              find_value: "uncheckedBanner"
+              property: "message"
+              value: "A server reported payments older than where this wallet's chain starts, block 290,000. Nothing could check them, so they are not counted as confirmed. Setting an earlier birthday lets Kyoto check them.\nesplora.example: reported a payment in block 289950, below the chain's start at 290000: nothing could check it"
+              screenshot: "wallet-unchecked-banner.png"
+            - name: "Home shows the amount apart, outside the confirmed balance"
+              action: expect_property
+              find_value: "uncheckedRowAmount"
+              property: "text"
+              value: "0.0006 BTC"
+              timeout: 10000
+            - name: "...which leaves it out"
+              action: expect_property
+              find_value: "confirmedCard"
+              property: "value"
+              value: "1.25 BTC"
+            - name: "Activity"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [3]
+            - name: "The row reads as reported, not checked, never confirmed"
+              action: expect_property
+              find_value: "historyState_0dd0000000046c9e0dd0000000046c9e0dd0000000046c9e0dd0000000046c9e"
+              property: "text"
+              value: "Reported by esplora.example, not checked"
+              timeout: 10000
+              screenshot: "wallet-unchecked-row.png"
+            - name: "Settings"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [4]
+            - name: "The wallet's details say where its chain starts"
+              action: expect_property
+              find_value: "walletChainBase"
+              property: "text"
+              value: "block 290,000"
+              timeout: 10000
+            - name: "Kyoto set aside peers that disagreed: a quiet line under it"
+              action: expect_property
+              find_value: "kyotoConflictLine"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "Home"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [0]
+            - name: "Set an earlier birthday, from the banner"
+              action: call_method
+              find_value: "uncheckedBirthdayButton"
+              method: "clicked"
+              args: []
+            - name: "The birthday sheet opens"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "From where its kind of address began"
+              action: set_property
+              find_by: "objectName"
+              find_value: "birthdayUnknown"
+              property: "checked"
+              value: true
+            - name: "Set it"
+              action: call_method
+              find_value: "confirmBirthdayButton"
+              method: "clicked"
+              args: []
+            - name: "The chain starts lower and Kyoto scans again; one pass goes wider"
+              action: expect_property
+              find_value: "rescanLine"
+              property: "text"
+              value: "Rescanning with a wider address range (pass 1)"
+              timeout: 15000
+              screenshot: "wallet-wider-rescan.png"
+            - name: "Checked: nothing is unchecked any more"
+              action: expect_property
+              find_value: "uncheckedRow"
+              property: "visible"
+              value: false
+              timeout: 20000
+            - name: "...and the banner goes with it"
+              action: expect_property
+              find_value: "uncheckedBanner"
+              property: "visible"
+              value: false
+              timeout: 5000
+            - name: "Activity"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [3]
+            - name: "The payment is confirmed now"
+              action: expect_property
+              find_value: "historyState_0dd0000000046c9e0dd0000000046c9e0dd0000000046c9e0dd0000000046c9e"
+              property: "text"
+              value: "confirmed"
+              timeout: 30000
+            - name: "Home"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [0]
             - name: "Dismiss it"
               action: call_method
               find_value: "dismissAuthorityAlertButton"
@@ -1141,6 +1257,18 @@ sections:
               find_value: "bitcoinWalletRoot"
               property: "displayedNetwork"
               value: "testnet4"
+            - name: "On testnet4 Kyoto runs on its one curated peer"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [4]
+            - name: "One peer decides this wallet's chain, and the sources say so"
+              action: expect_property
+              find_value: "oneOperatorNotice"
+              property: "title"
+              value: "One peer decides this wallet's chain"
+              timeout: 15000
+              screenshot: "wallet-one-peer.png"
             - name: "Close it for good"
               action: click_object
               find_value: "closeWalletButton"
