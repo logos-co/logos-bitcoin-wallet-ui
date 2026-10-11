@@ -75,8 +75,14 @@ doctests/run.sh
 `ci/states.qml` drives the pure sync, send and activity functions through every state a live
 wallet will not hold on demand, then renders the view against a fake backend.
 
-The doctest opens the app in Basecamp's standalone mode with `doctests/fixture-backend`: a scripted
-`bitcoin_wallet_backend` with the real backend's contract (its trait is copied verbatim) and
-nothing behind it. A send's fate is picked by its amount; the fixture's header says how.
+Two doctests open the app in Basecamp's standalone mode, offscreen:
+
+- `wallet-ui-app.test.yaml` runs against `doctests/fixture-backend`, a scripted
+  `bitcoin_wallet_backend` with the real backend's contract (its trait is copied verbatim) and
+  nothing behind it: every flow, to every send outcome. A send's fate is picked by its amount;
+  the header of `sim.rs` says how.
+- `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
+  manager and keystore: the node module's sources, and an open up to the keys app's handle,
+  withdrawn. Nothing can approve an open there, so sends are not reached.
 
 `src/qrcodegen.*` is Project Nayuki's QR Code generator (MIT License; notice in the files).

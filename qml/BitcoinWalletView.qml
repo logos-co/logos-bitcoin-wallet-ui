@@ -516,7 +516,7 @@ Item {
         else if (h.state === "unreachable") parts.push("unreachable" + (h.error ? ": " + h.error : ""))
         else if (h.state === "wrong_network") parts.push("on another network")
         else if (h.state === "no_route") parts.push("no route" + (h.error ? ": " + h.error : ""))
-        else if (h.state === "no_peers") parts.push("no peer to dial" + (h.error ? ": " + h.error : ""))
+        else if (h.state === "no_peers") parts.push(h.error ? h.error : "no peer to dial")
         else if (h.state === "not_probed") parts.push(s.kind === "kyoto" && root.isNum(h.peers) ? h.peers + " peers today" : "not probed here")
         else parts.push("not checked yet")
         return parts.join(" · ")
