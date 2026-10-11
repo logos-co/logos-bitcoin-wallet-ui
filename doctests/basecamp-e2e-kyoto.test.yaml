@@ -13,6 +13,7 @@ sections:
   - title: "Build"
     steps:
       - title: "Basecamp's inspector bundle, the modules and apps (portable variants), and the chain script"
+        platform: [linux, macos]
         run: |
           set -eu
           mkdir -p e2e/build
@@ -29,8 +30,16 @@ sections:
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           ls e2e/build
         expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "chain", "node", "wallet"]
+      - title: "On Windows, the same builds cross-built and staged under e2e/build; the chain runs on its host"
+        platform: [windows]
+        run: |
+          set -eu
+          ls e2e/build
+          echo "chain: ${E2E_CHAIN_URL:?E2E_CHAIN_URL names the chainctl of the chain host}"
+        expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "node", "wallet", "chain: http"]
 
   - title: "A regtest chain and the test's passwords"
+    platform: [linux, macos, windows]
     steps:
       - title: "Three bitcoind serving block filters and two electrs, from the wallet core's chain script, off the default ports"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" prepare-chain
@@ -40,6 +49,7 @@ sections:
         expect_contains: ["PASS two test passwords generated"]
 
   - title: "Basecamp, with its own HOME and user dir"
+    platform: [linux, macos, windows]
     steps:
       - title: "Lay out user A, with the wallet core's regtest.json for this authority"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" layout userA kyoto
@@ -49,24 +59,28 @@ sections:
         expect_contains: ["PASS Basecamp is up for userA"]
 
   - title: "Open: a new wallet, created in the keys app"
+    platform: [linux, macos, windows]
     steps:
       - title: "Open, create and approve; the wallet syncs, and the sync line names its authority"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" open-create
         expect_contains: ["PASS created and opened in the keys app", "PHASE open-create OK"]
 
   - title: "Receive"
+    platform: [linux, macos, windows]
     steps:
       - title: "1 BTC to the receive address confirms once mined; a block mined to the wallet is immature for 100 blocks"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" receive
         expect_contains: ["PASS Activity lists +1 BTC, 1 confirmation", "PASS immature:", "PHASE receive OK"]
 
   - title: "Send"
+    platform: [linux, macos, windows]
     steps:
       - title: "Approve in the signer app; it reaches the chain's main node and confirms"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" send
         expect_contains: ["PASS the send reached the main node's mempool", "PASS Activity shows the send confirmed", "PHASE send OK"]
 
   - title: "Reorg"
+    platform: [linux, macos, windows]
     text: |
       A payment confirmed in the tip block, then the fork node, one of Kyoto's peers, replaces that
       block with a longer branch. The peers follow it together: the core reports the move, Activity
@@ -78,6 +92,7 @@ sections:
         expect_contains: ["PASS the payment confirms again in the new block", "PASS Activity: re-anchored at height", "PASS details: Moved to a new block", "PASS no alert during the reorg", "PHASE reorg OK"]
 
   - title: "Stop"
+    platform: [linux, macos, windows]
     steps:
       - title: "Stop Basecamp and the chain by PID"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" cleanup

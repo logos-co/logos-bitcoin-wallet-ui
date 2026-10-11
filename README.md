@@ -128,4 +128,10 @@ test passwords, and each Basecamp run gets its own HOME and user dir. `basecamp-
 filter-serving nodes as its peers, quorum 2) and with the local node (bitcoind_module and its app,
 started on regtest from the node app) as the chain authority.
 
+On Windows the three e2e specs run as their emitted Windows leg (`doctest emit-smoke <spec>
+--platform windows`) under Git Bash, with the Windows builds staged under `e2e/build` and the
+chain on a Linux machine of the LAN behind logos-bitcoin-windows-tests' chainctl: `E2E_CHAIN_URL`
+names it and `E2E_CHAIN_HOST` is the address the wallet dials. That repository's
+`winvm/e2e-run.sh` runs one spec.
+
 `src/qrcodegen.*` is Project Nayuki's QR Code generator (MIT License; notice in the files).

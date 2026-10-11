@@ -1,24 +1,35 @@
 #!/usr/bin/env python3
 # Drives the full-Basecamp e2e: the wallet, keys and signer apps over Basecamp's QML inspector, and
 # the regtest chain through the wallet core's chain script. One phase per run; state in e2e/state.json.
+# On Windows the chain runs on another machine: E2E_CHAIN_URL names its chainctl
+# (logos-bitcoin-windows-tests' chain-host/), E2E_CHAIN_HOST the address the wallet dials.
 import base64
 import datetime
 import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
+import urllib.request
+
+WINDOWS = os.name == "nt"
+# The apps' texts carry "−" and "·": Windows would print them in its ANSI code page, and fail.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 WORK = os.path.abspath(os.environ.get("E2E_WORK", os.getcwd()))
 E2E = os.path.join(WORK, "e2e")
 PORT = int(os.environ.get("E2E_INSPECTOR_PORT", "3791"))
 BUILD = os.path.join(E2E, "build")
 CHAIN = os.path.join(BUILD, "chain", "bin", "regtest-chain")
-BASECAMP = os.path.join(BUILD, "basecamp", "bin", "LogosBasecamp")
+BASECAMP = os.path.join(BUILD, "basecamp", "bin", "LogosBasecamp" + (".exe" if WINDOWS else ""))
+CHAIN_URL = os.environ.get("E2E_CHAIN_URL", "")
+CHAIN_HOST = os.environ.get("E2E_CHAIN_HOST", "127.0.0.1")
 CHAIN_DIR = os.path.join(E2E, "chain")
 # Off the regtest defaults, so another test chain on this machine is left alone.
 CHAIN_ENV = {"CHAIN_DIR": CHAIN_DIR, "RPC_PORT": "28543", "P2P_PORT": "28544", "FORK_RPC_PORT": "28553",
@@ -26,11 +37,11 @@ CHAIN_ENV = {"CHAIN_DIR": CHAIN_DIR, "RPC_PORT": "28543", "P2P_PORT": "28544", "
              "PRUNED_RPC_PORT": "28573", "PRUNED_P2P_PORT": "28574", "ELECTRUM_PORTS": "61701,61711"}
 ELECTRUM_PORTS = [61701, 61711]
 # The chain's three nodes serve compact block filters: Kyoto's peers.
-FILTER_PEERS = ["127.0.0.1:28544", "127.0.0.1:28554", "127.0.0.1:28564"]
+FILTER_PEERS = ["%s:%s" % (CHAIN_HOST, CHAIN_ENV[k]) for k in ("P2P_PORT", "FORK_P2P_PORT", "PEER_P2P_PORT")]
 # What decides the chain, as the core's regtest.json says and the sync line names it.
 AUTHORITIES = {
-    "electrum": ({"electrum": ["tcp://127.0.0.1:%d" % p for p in ELECTRUM_PORTS], "pollSecs": 1}, "Servers' headers"),
-    "kyoto": ({"electrum": ["tcp://127.0.0.1:%d" % ELECTRUM_PORTS[0]], "kyoto": FILTER_PEERS, "kyotoRequired": 2,
+    "electrum": ({"electrum": ["tcp://%s:%d" % (CHAIN_HOST, p) for p in ELECTRUM_PORTS], "pollSecs": 1}, "Servers' headers"),
+    "kyoto": ({"electrum": ["tcp://%s:%d" % (CHAIN_HOST, ELECTRUM_PORTS[0])], "kyoto": FILTER_PEERS, "kyotoRequired": 2,
                "checkOnly": True, "pollSecs": 1}, "Kyoto · "),
     "local": ({"local": True, "pollSecs": 1}, "Your node"),
 }
@@ -54,7 +65,7 @@ def log(msg):
     print(msg, flush=True)
     try:
         os.makedirs(E2E, exist_ok=True)
-        with open(os.path.join(E2E, "drive.log"), "a") as f:
+        with open(os.path.join(E2E, "drive.log"), "a", encoding="utf-8") as f:
             f.write(msg + "\n")
     except OSError:
         pass
@@ -107,11 +118,23 @@ def secret(name):
 
 # ---- the chain ----
 
+def chainctl(path, body=None):
+    req = urllib.request.Request(CHAIN_URL.rstrip("/") + path, data=json.dumps(body or {}).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=900) as r:
+        return json.loads(r.read())
+
+
 def chain(*args, check=True):
-    r = subprocess.run([CHAIN, *args], env={**os.environ, **CHAIN_ENV}, capture_output=True, text=True)
-    if check and r.returncode != 0:
-        raise Fail("chain %s: exit %d: %s%s" % (" ".join(args), r.returncode, r.stdout, r.stderr))
-    return r.stdout.strip()
+    if CHAIN_URL:
+        r = chainctl("/run", {"args": list(args)})
+        code, out, err = r.get("code", -1), r.get("stdout", ""), r.get("stderr", "") or r.get("error", "")
+    else:
+        p = subprocess.run([CHAIN, *args], env={**os.environ, **CHAIN_ENV}, capture_output=True, text=True)
+        code, out, err = p.returncode, p.stdout, p.stderr
+    if check and code != 0:
+        raise Fail("chain %s: exit %d: %s%s" % (" ".join(args), code, out, err))
+    return out.strip()
 
 
 def rpc(method, params=None, wallet=""):
@@ -145,7 +168,63 @@ def listening(port):
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+# Windows has no ps, and its os.kill(pid, 0) TERMINATES the process: processes go through kernel32.
+if WINDOWS:
+    import ctypes
+    from ctypes import wintypes
+
+    _K32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _K32.OpenProcess.restype = wintypes.HANDLE
+    _K32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+
+    class _Entry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+    def _open(pid, access=0x1000):  # PROCESS_QUERY_LIMITED_INFORMATION
+        return _K32.OpenProcess(access, False, pid)
+
+    def _created(pid):
+        h = _open(pid)
+        if not h:
+            return None
+        try:
+            t = [wintypes.FILETIME() for _ in range(4)]
+            if not _K32.GetProcessTimes(h, *[ctypes.byref(x) for x in t]):
+                return None
+            return (t[0].dwHighDateTime << 32) | t[0].dwLowDateTime
+        finally:
+            _K32.CloseHandle(h)
+
+    def _processes():
+        snap = _K32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+        out, e = [], _Entry()
+        e.dwSize = ctypes.sizeof(_Entry)
+        ok = _K32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            out.append((e.th32ProcessID, e.th32ParentProcessID))
+            ok = _K32.Process32NextW(snap, ctypes.byref(e))
+        _K32.CloseHandle(snap)
+        return out
+
+    def _terminate(pid):
+        h = _open(pid, 0x0001)  # PROCESS_TERMINATE
+        if h:
+            _K32.TerminateProcess(h, 1)
+            _K32.CloseHandle(h)
+
+
 def alive(pid):
+    if WINDOWS:
+        h = _open(pid)
+        if not h:
+            return False
+        code = wintypes.DWORD()
+        _K32.GetExitCodeProcess(h, ctypes.byref(code))
+        _K32.CloseHandle(h)
+        return code.value == 259  # STILL_ACTIVE
     try:
         os.kill(pid, 0)
         return True
@@ -153,6 +232,18 @@ def alive(pid):
         return False
     except PermissionError:
         return True
+
+
+# SIGTERM, then SIGKILL after `secs`; Windows has only TerminateProcess.
+def stop_pid(pid, secs):
+    if WINDOWS:
+        _terminate(pid)
+        return wait_gone(pid, secs)
+    os.kill(pid, signal.SIGTERM)
+    if not wait_gone(pid, secs):
+        os.kill(pid, signal.SIGKILL)
+        return wait_gone(pid, 5)
+    return True
 
 
 def wait_gone(pid, secs):
@@ -163,6 +254,11 @@ def wait_gone(pid, secs):
 
 
 def electrs_stop():
+    if CHAIN_URL:
+        r = chainctl("/electrs-stop")
+        if r.get("code") != 0:
+            raise Fail("electrs did not stop: %s" % (r.get("stderr") or r.get("error")))
+        return
     for i in (0, 1):
         f = os.path.join(CHAIN_DIR, "electrs%d.pid" % i)
         if not os.path.exists(f):
@@ -180,6 +276,11 @@ def electrs_stop():
 
 # The flags of chain.sh's start_electrs, which the script only runs together with bitcoind.
 def electrs_start():
+    if CHAIN_URL:
+        r = chainctl("/electrs-start")
+        if r.get("code") != 0:
+            raise Fail("electrs did not come back: %s" % (r.get("stderr") or r.get("error")))
+        return
     electrs, data = wrapper_binary("electrs"), os.path.join(CHAIN_DIR, "bitcoind")
     for i, port in enumerate(ELECTRUM_PORTS):
         logf = open(os.path.join(CHAIN_DIR, "electrs%d.log" % i), "ab")
@@ -349,9 +450,29 @@ def home(user):
     return os.path.join(E2E, user, "home")
 
 
+def writable(path):
+    for root, dirs, files in os.walk(path):
+        for n in dirs + files:
+            p = os.path.join(root, n)
+            os.chmod(p, os.stat(p).st_mode | stat.S_IWRITE)
+
+
 def copytree(src, dst):
+    if WINDOWS:
+        shutil.copytree(src, dst)
+        writable(dst)
+        return
     subprocess.run(["cp", "-RL", src, dst], check=True)
     subprocess.run(["chmod", "-R", "u+w", dst], check=True)
+
+
+def rmtree(path):
+    if WINDOWS:
+        writable(path)
+        shutil.rmtree(path)
+        return
+    subprocess.run(["chmod", "-R", "u+w", path], check=False)
+    subprocess.run(["rm", "-rf", path], check=True)
 
 
 def authority():
@@ -371,8 +492,7 @@ def layout(user, mode=None):
         save(authority=mode)
     ud = userdir(user)
     if os.path.exists(os.path.join(E2E, user)):
-        subprocess.run(["chmod", "-R", "u+w", os.path.join(E2E, user)], check=False)
-        subprocess.run(["rm", "-rf", os.path.join(E2E, user)], check=True)
+        rmtree(os.path.join(E2E, user))
     os.makedirs(os.path.join(ud, "modules"))
     os.makedirs(os.path.join(ud, "plugins"))
     os.makedirs(home(user))
@@ -401,21 +521,37 @@ def layout(user, mode=None):
 
 
 def descendants(pid):
-    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True).stdout
     kids = {}
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) >= 2:
-            kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    if WINDOWS:
+        for child, parent in _processes():
+            kids.setdefault(parent, []).append(child)
+    else:
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                kids.setdefault(int(parts[1]), []).append(int(parts[0]))
     found, todo = [], [pid]
     while todo:
-        for k in kids.get(todo.pop(), []):
+        parent = todo.pop()
+        for k in kids.get(parent, []):
+            # Windows reuses PIDs and keeps a dead parent's: a child is never older than its parent.
+            if WINDOWS and not (_created(k) or 0) >= (_created(parent) or 0) > 0:
+                continue
             found.append(k)
             todo.append(k)
     return found
 
 
 def command_of(pid):
+    if WINDOWS:
+        h = _open(pid)
+        if not h:
+            return ""
+        buf, size = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
+        ok = _K32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size))
+        _K32.CloseHandle(h)
+        return buf.value if ok else ""
     return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
 
 
@@ -426,10 +562,12 @@ def launch(user):
                QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software", QML_INSPECTOR_PORT=str(PORT),
                QT_FORCE_STDERR_LOGGING="1")
     logf = open(os.path.join(E2E, "basecamp-%s.log" % user), "ab")
+    detach = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
     p = subprocess.Popen([BASECAMP, "--user-dir", userdir(user)], env=env, cwd=WORK, stdin=subprocess.DEVNULL,
-                         stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
+                         stdout=logf, stderr=subprocess.STDOUT, **detach)
     with open(os.path.join(E2E, "basecamp.pid"), "w") as f:
-        f.write("%d %s" % (p.pid, user))
+        # On Windows the creation time too: a later run must not stop a process that took the PID.
+        f.write("%d %s %s" % (p.pid, user, _created(p.pid) if WINDOWS else ""))
     ins = Inspector()
     ins.connect(timeout=180)
     apps = [APP, KEYS, SIGNER] + (["bitcoind_ui"] if authority() == "local" else [])
@@ -444,20 +582,28 @@ def stop_basecamp():
     if not os.path.exists(f):
         log("no Basecamp of this run is running")
         return
-    pid = int(open(f).read().split()[0])
-    bundle = os.path.dirname(os.path.realpath(BASECAMP))
-    tree = [k for k in descendants(pid) if bundle in command_of(k) or WORK in command_of(k)]
+    fields = open(f).read().split()
+    pid = int(fields[0])
+    if WINDOWS and len(fields) > 2 and str(_created(pid)) != fields[2]:
+        log("pid %d is no longer this run's Basecamp" % pid)
+        os.remove(f)
+        return
+    bundle = os.path.normcase(os.path.dirname(os.path.realpath(BASECAMP)))
+    work = os.path.normcase(WORK)
+    tree = [k for k in descendants(pid) if bundle in os.path.normcase(command_of(k)) or work in os.path.normcase(command_of(k))]
     if alive(pid):
-        os.kill(pid, signal.SIGTERM)
-        if not wait_gone(pid, 30):
-            os.kill(pid, signal.SIGKILL)
-            wait_gone(pid, 5)
-    for k in tree:
-        if alive(k):
-            os.kill(k, signal.SIGTERM)
-    for k in tree:
-        if not wait_gone(k, 10):
-            os.kill(k, signal.SIGKILL)
+        stop_pid(pid, 30)
+    if WINDOWS:
+        for k in tree:
+            if alive(k):
+                stop_pid(k, 10)
+    else:
+        for k in tree:
+            if alive(k):
+                os.kill(k, signal.SIGTERM)
+        for k in tree:
+            if not wait_gone(k, 10):
+                os.kill(k, signal.SIGKILL)
     os.remove(f)
     end = time.time() + 30
     while listening(PORT) and time.time() < end:
@@ -627,9 +773,18 @@ def history_count(ins):
 # ---- phases ----
 
 def phase_prepare_chain():
-    chain("stop", check=False)
-    subprocess.run(["rm", "-rf", CHAIN_DIR], check=True)
-    out = chain("prepare")
+    if CHAIN_URL:
+        r = chainctl("/fresh")
+        if r.get("code") != 0:
+            raise Fail("chainctl /fresh: %s %s" % (r.get("stdout"), r.get("stderr") or r.get("error")))
+        out = r.get("stdout", "").strip()
+        want = "electrum: " + ",".join("tcp://%s:%d" % (CHAIN_HOST, p) for p in ELECTRUM_PORTS)
+        if chain("electrum") != want:
+            raise Fail("the chain host serves %r, not drive.py's %r: run it with drive.py's ports" % (chain("electrum"), want))
+    else:
+        chain("stop", check=False)
+        subprocess.run(["rm", "-rf", CHAIN_DIR], check=True)
+        out = chain("prepare")
     log(out)
     expect(height() >= 101, "a fresh regtest chain at block %d: three nodes serving block filters (main, fork, follower) "
                             "and two electrs on %s" % (height(), ELECTRUM_PORTS))
@@ -912,6 +1067,16 @@ def phase_reorg():
     old_tip = rpc("getbestblockhash")
     balance = confirmed_value(ins)
     sources_ok(ins, "before the reorg")
+    # While the chain's clock runs ahead of its host's, the fork re-mines the invalidated block byte
+    # for byte and bitcoind refuses it: wait until the node's clock passes the tip.
+    tip_time, t0 = rpc("getblockheader", [old_tip])["time"], time.time()
+    while time.time() < t0 + 90:
+        t = rpc("getblocktemplate", [{"rules": ["segwit"]}])
+        if t["curtime"] > max(t["mintime"], tip_time):
+            break
+        time.sleep(1)
+    if time.time() - t0 > 1:
+        log("NOTE waited %d s for the node's clock to pass the tip's" % (time.time() - t0))
     # Only what the reorg raises counts: an earlier alert is noted and dismissed first.
     for banner in ("alertBanner", "authoritySuspectBanner"):
         if ins.get(banner, "visible") is True:
