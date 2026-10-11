@@ -227,6 +227,16 @@ Item {
         expect("chain operators", v.operatorsOf(v.chainSourcesOf(list)), ["Example"])
         list[0].use = true
         expect("chain kyoto", v.chainSourcesOf(list).map(function (x) { return x.id }), ["kyoto"])
+
+        // The open wallet's own view decides the badge; a source not asked yet does not count.
+        expect("overall ok", v.walletOverall([{ state: "ok" }, { state: "ok" }, { state: "unknown" }]), "ok")
+        expect("overall degraded", v.walletOverall([{ state: "ok" }, { state: "failing" }]), "degraded")
+        expect("overall offline", v.walletOverall([{ state: "failing" }, { state: "down" }]), "offline")
+        expect("overall suspect", v.walletOverall([{ state: "suspect", suspect: true }, { state: "ok" }]), "disagreement")
+        expect("overall not asked", v.walletOverall([{ state: "unknown" }]), "")
+        expect("source line", v.walletSourceLine({ state: "ok", roles: ["chain", "history"], history: true }), "ok · chain, history · history server")
+        expect("suspect line", v.walletSourceLine({ state: "suspect", suspect: true, suspectReason: "served invalid headers", error: "x" }), "suspect: served invalid headers")
+        expect("failing line", v.walletSourceLine({ state: "failing", roles: ["chain"], error: "connection refused" }), "failing · chain · connection refused")
     }
 
     // What renders, against the fake backend; each step runs after the previous one settled.
@@ -288,6 +298,14 @@ Item {
             expect("too small row", prop("tooSmallRowAmount", "text"), "2 coins, 0.0000054 BTC")
             expect("sent row", shown("sentRow"), true)
             expect("home speed up", shown("homeSpeedUp_" + "bb".repeat(32)), true)
+            fake.healthJson = JSON.stringify({ overall: "offline", sources: [], wallet: { sources: [
+                { id: "regtest-0", url: "tcp://127.0.0.1:61701", state: "ok", suspect: false, roles: ["chain", "history"], history: true },
+                { id: "regtest-1", url: "tcp://127.0.0.1:61711", state: "ok", suspect: false, roles: ["chain"] }] } })
+        },
+        function (v) {
+            expect("badge from the open wallet's sources", prop("healthBadge", "text"), "Sources OK")
+            expect("wallet's own servers", v.walletOnlySources.map(function (s) { return s.id }), ["regtest-0", "regtest-1"])
+            fake.healthJson = ""
             var st = JSON.parse(scene.syncedMainnet)
             st.authority.peers = 0
             fake.statusJson = JSON.stringify(st)

@@ -68,7 +68,13 @@ Item {
     readonly property bool sourcesConfigured: sourcesRead && sourcesInfo.configured !== false
     readonly property var sourceList: Array.isArray(sourcesInfo.sources) ? sourcesInfo.sources : []
     readonly property var health: ready ? j(backend.healthJson, "{}") : ({})
-    readonly property string overall: health.overall || ""
+    // With a wallet open, its own view of its sources decides the badge: the node module may list others.
+    readonly property var walletSources: walletOpen && health.wallet && Array.isArray(health.wallet.sources) ? health.wallet.sources : []
+    readonly property string overall: walletSources.length > 0 ? root.walletOverall(walletSources) : (health.overall || "")
+    // Servers the open wallet uses that the list lacks, such as a test chain's own.
+    readonly property var walletOnlySources: walletSources.filter(function (w) {
+        return !root.sourceList.some(function (s) { return s.id === w.id })
+    })
     readonly property var exposure: ready ? j(backend.exposureJson, "{}") : ({})
     readonly property var exposureServers: Array.isArray(exposure.servers) ? exposure.servers : []
     readonly property var alerts: ready ? j(backend.alertsJson, "[]") : []
@@ -143,7 +149,8 @@ Item {
     }
     function keysNoteFor(error) {
         if (error === "unavailable") return "The keys app is not installed here. Install it, open it, and approve the request under Requests from apps."
-        if (error === "cancelled") return "The keys app closed without a decision. Ask again, or cancel."
+        // Basecamp's prompt declined, or the keys app left without deciding: both answer cancelled.
+        if (error === "cancelled") return "The keys app was not opened, or was left without a decision. Ask again, or cancel."
         if (error === "rejected") return "You declined in the keys app."
         if (error === "bad_request") return "The keys app no longer holds this request. Cancel, and open the wallet again."
         if (error === "timeout") return "The keys app did not answer. Ask again, or cancel."
@@ -162,7 +169,7 @@ Item {
     }
     function signerNoteFor(error) {
         if (error === "unavailable") return "The signer app is not installed here. Open it within 60 s to approve or reject this send, or cancel it."
-        if (error === "cancelled") return "The signer app closed without a decision. Open it again, or cancel the send."
+        if (error === "cancelled") return "The signer app was not opened, or was left without a decision. Open it to approve or reject this send, or cancel it."
         if (error === "timeout") return "The signer app did not answer. Open it again, or cancel the send."
         return "Could not reach the signer app (" + error + ")."
     }
@@ -523,6 +530,25 @@ Item {
         else if (h.state === "no_peers") parts.push(h.error ? h.error : "no peer to dial")
         else if (h.state === "not_probed") parts.push(s.kind === "kyoto" && root.isNum(h.peers) ? h.peers + " peers today" : "not probed here")
         else parts.push("not checked yet")
+        return parts.join(" · ")
+    }
+    // A suspect source outweighs the rest; one not asked yet does not count.
+    function walletOverall(list) {
+        var ok = 0, bad = 0, suspect = 0
+        list.forEach(function (s) {
+            if (s.suspect === true) suspect++
+            else if (s.state === "ok") ok++
+            else if (s.state !== "unknown") bad++
+        })
+        if (suspect > 0) return "disagreement"
+        if (ok === 0) return bad > 0 ? "offline" : ""
+        return bad > 0 ? "degraded" : "ok"
+    }
+    function walletSourceLine(w) {
+        var parts = [w.suspect === true ? "suspect" + (w.suspectReason ? ": " + w.suspectReason : "") : (w.state || "unknown")]
+        if (Array.isArray(w.roles) && w.roles.length) parts.push(w.roles.join(", "))
+        if (w.history === true) parts.push("history server")
+        if (w.state !== "ok" && w.suspect !== true && w.error) parts.push(w.error)
         return parts.join(" · ")
     }
     function overallLabel(o) {
@@ -887,6 +913,28 @@ Item {
                                               onClicked: root.torOffAskedFor = "" }
                             ]
                         }
+                    }
+                }
+            }
+            ColumnLayout {
+                objectName: "walletSourcesPane"
+                visible: root.walletOnlySources.length > 0
+                Layout.fillWidth: true
+                spacing: Theme.spacing.tiny
+                LogosText { text: "The open wallet's servers"; font.weight: Theme.typography.weightMedium }
+                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                            text: "Set for this network outside the list above, such as a test chain's own. The open wallet uses these." }
+                Repeater {
+                    model: root.walletOnlySources
+                    RowLayout {
+                        Layout.fillWidth: true
+                        LogosText { textFormat: Text.PlainText; text: modelData.id; font.weight: Theme.typography.weightMedium }
+                        LogosText { Layout.fillWidth: true; Layout.preferredWidth: 1; elide: Text.ElideRight; textFormat: Text.PlainText
+                                    color: Theme.palette.textTertiary; text: modelData.url || "" }
+                        LogosText { objectName: "walletSourceState_" + modelData.id; textFormat: Text.PlainText
+                                    color: modelData.suspect === true ? Theme.palette.error
+                                           : (modelData.state === "ok" ? Theme.palette.success : Theme.palette.warning)
+                                    text: root.walletSourceLine(modelData) }
                     }
                 }
             }

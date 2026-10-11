@@ -1,0 +1,150 @@
+name: bitcoin_wallet_ui — end to end in Basecamp, with the keys app and the signer app, on regtest
+project_name: logos-bitcoin-wallet-ui-e2e
+
+intro: |
+  The wallet app in the full Basecamp bundle, not standalone mode, beside the real keys app
+  (evm_keystore_ui f3fdc18) and signer app (evm_signer_ui 05cf10b), with keystore_module 1f3d62f,
+  signer_manager_module 80bc40c, bitcoin_wallet_backend 8152d59, bitcoin_wallet_core_module 654741d
+  and bitcoin_node_module 5b93267. Opens and sends go through Basecamp's intents, and every send
+  is approved, rejected or left unapproved in the signer app as a person would.
+
+  The chain is regtest from the wallet core's own chain script: bitcoind, two electrs standing in
+  for two operators, and a fork node for the reorg. `doctests/e2e/drive.py` drives the three apps
+  over Basecamp's QML inspector and the chain over the script, one phase per step: the values a
+  person reads off one screen and types into another (the generated phrase, the receive address,
+  the txids) can't be written into a static test. The test generates its own passwords into
+  `e2e/secrets/`; the recovery phrase it is shown goes there too, as the person's paper copy.
+
+  Each Basecamp run has its own HOME and user dir under the output directory. Run it through
+  `doctests/run.sh`, which sets `E2E_REPO` and stops Basecamp and the chain by PID however it ends:
+  `SPECS=basecamp-e2e OUT=/path/on/a/big/disk ./run.sh`.
+
+sections:
+  - title: "Build"
+    steps:
+      - title: "Basecamp's inspector bundle, the modules and apps (portable variants), and the chain script"
+        run: |
+          set -eu
+          mkdir -p e2e/build
+          b() { nix build "$2" --no-write-lock-file -o "e2e/build/$1"; }
+          b basecamp 'github:logos-co/logos-basecamp/0b5cd2ee6c6dd83c6a5022fbb30e1778e6a61da9#bin-bundle-dir-inspector'
+          b keystore 'github:logos-co/logos-evm-keystore-module/1f3d62f306f0e4dc7e5d96d478f9770ab3713ce6#install-portable'
+          b manager 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install-portable'
+          b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
+          b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
+          b backend 'github:logos-co/logos-bitcoin-wallet-backend/8152d5990b6dbba8e75fa046b4c26b8c2c496b79#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/654741d85d3bfb10f209cf0b94a05f6cb0a93dc4#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/654741d85d3bfb10f209cf0b94a05f6cb0a93dc4#regtest-chain'
+          b node 'github:logos-co/logos-bitcoin-node-module/5b9326720c7d41b4ddaee6a4d4b732b64501c8ff#install-portable'
+          b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
+          ls e2e/build
+        expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "chain", "node", "wallet"]
+
+  - title: "A regtest chain and the test's passwords"
+    steps:
+      - title: "bitcoind, two electrs and a fork node, from the wallet core's chain script, off the default ports"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" prepare-chain
+        expect_contains: ["PASS a fresh regtest chain"]
+      - title: "Two test passwords, generated and kept in the scratch dir"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" secrets
+        expect_contains: ["PASS two test passwords generated"]
+
+  - title: "Basecamp, with its own HOME and user dir"
+    text: |
+      The five modules go to the user dir's `modules/`, the three apps to `plugins/`, all portable
+      variants. `regtest.json` in a module's data directory turns regtest on for the backend and
+      the node module, and gives the wallet core the two electrs; the first instance directory
+      found is the one a module uses.
+    steps:
+      - title: "Lay out user A"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" layout userA
+        expect_contains: ["PASS laid out userA"]
+      - title: "Launch Basecamp headless; the three apps are listed"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" launch userA
+        expect_contains: ["PASS Basecamp is up for userA", "Bitcoin Wallet, Keystore, Signer"]
+
+  - title: "Open: a new wallet, created in the keys app"
+    text: |
+      The wallet app asks to open a native segwit wallet on regtest. Basecamp asks whether to use
+      the keys app; there the person adds a wallet from the request, writes down the generated
+      phrase, confirms words 1, 5 and 12, gives it the test password, and opens it for the app.
+      The wallet app never sees a password, and syncs.
+    steps:
+      - title: "Open, create and approve; the wallet syncs to the chain's tip"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" open-create
+        expect_contains: ["PASS created and opened in the keys app", "PHASE open-create OK"]
+
+  - title: "Receive"
+    steps:
+      - title: "1 BTC to the receive address shows pending, then confirmed; a block mined to the wallet is immature for 100 blocks"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" receive
+        expect_contains: ["PASS pending: 1 BTC", "PASS immature:", "PHASE receive OK"]
+
+  - title: "Send"
+    text: |
+      The first send is left unapproved: the person declines Basecamp's offer to open the signer
+      app, nobody shows the request, and after 60 s it expires. Ask again sends the same request;
+      this time the signer app shows the signer manager's lines for the PSBT, and the person types
+      the wallet's password and approves. Mined, it confirms in Activity.
+    steps:
+      - title: "Expire after 60 s, ask again, approve in the signer app, confirm"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" send-expire
+        expect_contains: ["PASS expired after", "PASS the send is in the node's mempool", "PASS Activity shows the send confirmed", "PHASE send-expire OK"]
+      - title: "Speed up an unconfirmed send: the replacement is approved, the original reads replaced"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" speed-up
+        expect_contains: ["PASS the replacement is in the mempool and the original is not", "PHASE speed-up OK"]
+      - title: "Reject one in the signer app: nothing leaves the wallet"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" reject
+        expect_contains: ["PASS nothing reached the node", "PHASE reject OK"]
+
+  - title: "Reorg"
+    text: |
+      A payment confirmed in the tip block, then the fork node replaces that block with a longer
+      branch holding the same payment. Both electrs follow the node, so this is a reorg, not a
+      disagreement: the payment re-anchors in the new block and nothing raises an alert.
+    steps:
+      - title: "Re-anchoring, with no alert and no suspect source"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" reorg
+        expect_contains: ["PASS the payment re-anchored in the new block", "PASS no source alert during the reorg", "PASS after the reorg: Sources OK", "PHASE reorg OK"]
+
+  - title: "Close, then restore in a fresh user dir"
+    text: |
+      The wallet closes and Basecamp stops. A second user dir and HOME start empty: no keystore,
+      no wallet database. The keys app restores the wallet from the written-down phrase with a
+      birthday and a new test password; the balance and the history must match what the first
+      user dir showed.
+    steps:
+      - title: "Note the balance and history, then close the wallet"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" close
+        expect_contains: ["PHASE close OK"]
+      - title: "Stop Basecamp by PID"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" stop
+        expect_contains: ["PASS Basecamp stopped"]
+      - title: "Lay out user B and launch"
+        run: |
+          python3 "$E2E_REPO/doctests/e2e/drive.py" layout userB
+          python3 "$E2E_REPO/doctests/e2e/drive.py" launch userB
+        expect_contains: ["PASS laid out userB", "PASS Basecamp is up for userB"]
+      - title: "Restore from the phrase with a birthday; the balance and history match"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" restore
+        expect_contains: ["PASS restored in the keys app", "PASS the restored balance matches", "PHASE restore OK"]
+
+  - title: "Unknown outcomes"
+    text: |
+      Both electrs stop while the signer app shows a send, and the person approves it: the core
+      signs it and finds nowhere to broadcast, so nobody knows whether it left. Once electrs is
+      back the person rebroadcasts it, and it confirms. The second time the person forgets it
+      instead: its coins are spendable again, and it never reaches the node.
+    steps:
+      - title: "Unknown, then rebroadcast once electrs is back"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" unknown-rebroadcast
+        expect_contains: ["PASS both electrs stopped before the approval", "PASS rebroadcast: in the node's mempool now", "PHASE unknown-rebroadcast OK"]
+      - title: "Unknown again, then forgotten"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" unknown-forget
+        expect_contains: ["PASS forgotten, with the backend's note", "PASS the forgotten payment never left", "PHASE unknown-forget OK"]
+
+  - title: "Stop"
+    steps:
+      - title: "Stop Basecamp and the chain by PID"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" cleanup
+        expect_contains: ["chain stopped"]

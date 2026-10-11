@@ -6,3 +6,4 @@ doctests/fixture-backend/result*
 doctests/fixture-backend/logos-rust-sdk-src
 doctests/fixture-backend/rust-lib/generated/
 target/
+doctests/e2e/__pycache__/

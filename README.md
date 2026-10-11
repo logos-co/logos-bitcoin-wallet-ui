@@ -46,6 +46,9 @@ is approved in the signer app.
     Notices name the sources reached without Tor, and say when Kyoto is off and the Electrum
     servers of one operator alone decide the chain.
   - Your own servers, added by address; the Tor proxy; the exposure record.
+  - With a wallet open, the sources badge reads the wallet's own view of its sources
+    (`source_health`'s `wallet`), and servers it uses that the list lacks, such as a test
+    chain's own, are listed with their state.
   - While a wallet is open, opening or closing, these settings show but do not change. A suspect
     mark can still be cleared.
 
@@ -69,7 +72,8 @@ nix build .#lgx
 qmllint -I <qt qml> -I <logos-design-system>/src/qml -W 0 --unqualified disable qml/*.qml
 QT_QPA_PLATFORM=offscreen qml -I <qt qml> -I <logos-design-system>/src/qml ci/construct.qml   # VIEW-READY
 QT_QPA_PLATFORM=offscreen qml -I <qt qml> -I <logos-design-system>/src/qml ci/states.qml      # STATES-OK
-doctests/run.sh
+doctests/run.sh                                                                # all doctests
+SPECS=basecamp-e2e OUT=/a/big/disk doctests/run.sh                             # the full-Basecamp e2e
 ```
 
 `ci/states.qml` drives the pure sync, send and activity functions through every state a live
@@ -84,5 +88,14 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
   manager and keystore: the node module's sources, and an open up to the keys app's handle,
   withdrawn. Nothing can approve an open there, so sends are not reached.
+
+`basecamp-e2e.test.yaml` runs the app in the full Basecamp bundle beside the real keys app and
+signer app, on a regtest chain from the wallet core's chain script (bitcoind, two electrs and a
+fork node): create and open in the keys app, receive, a send left unapproved until it expires and
+then asked again, approvals, a fee bump, a rejection, a reorg, a restore from the phrase in a fresh
+user dir, and two unknown outcomes, one rebroadcast and one forgotten. `doctests/e2e/drive.py`
+drives the apps over Basecamp's QML inspector and the chain over the script, one phase per step,
+since the phrase, addresses and txids can't be written into a static test. It generates its own
+test passwords, and each Basecamp run gets its own HOME and user dir.
 
 `src/qrcodegen.*` is Project Nayuki's QR Code generator (MIT License; notice in the files).
