@@ -77,9 +77,9 @@ sections:
             - name: "The sources are read"
               action: expect_property
               find_value: "bitcoinWalletRoot"
-              property: "sourcesRead"
+              property: "sourcesConfigured"
               value: true
-              timeout: 15000
+              timeout: 30000
             - name: "With Kyoto off, both servers in use are one operator's, and the app says so"
               action: expect_property
               find_value: "oneOperatorNotice"
@@ -413,6 +413,12 @@ sections:
               property: "text"
               value: "Approve it in the signer app"
               timeout: 15000
+            - name: "...in the review, still open"
+              action: expect_property
+              find_value: "reviewSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
             - name: "Cancel it"
               action: click_object
               find_value: "cancelSendButton"
@@ -730,7 +736,13 @@ sections:
               find_value: "speedUp_5e4d00000000c3505e4d00000000c3505e4d00000000c3505e4d00000000c350"
               method: "clicked"
               args: []
-            - name: "The speed-up sheet opens at today's fast rate"
+            - name: "The speed-up sheet opens"
+              action: expect_property
+              find_value: "speedUpSheet"
+              property: "opened"
+              value: true
+              timeout: 10000
+            - name: "...at today's fast rate"
               action: expect_property
               find_value: "speedUpRateField"
               property: "text"

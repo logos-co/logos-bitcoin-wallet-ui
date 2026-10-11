@@ -166,7 +166,9 @@ void BitcoinWalletUiBackend::poll() {
         if (due(m_exposureAge, kExposurePollMs)) loadExposure();
         syncHistory();
     }
-    if (due(m_sourcesAge, kSourcesPollMs)) loadSources();
+    // Until the backend has filled the network's defaults, the list is read again on every tick.
+    const bool configured = parse(sourcesJson()).value("configured").toBool(true);
+    if (due(m_sourcesAge, configured ? kSourcesPollMs : kReadPollMs)) loadSources();
     if (due(m_healthAge, kHealthPollMs)) loadHealth();
     // A rebroadcast, or the history after a restart, can still turn an unknown outcome into sent.
     const QJsonObject send = parse(sendStatusJson());

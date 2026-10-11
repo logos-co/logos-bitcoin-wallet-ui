@@ -416,6 +416,12 @@ Item {
         },
         function (v) {
             expect("sheet", prop("networkSheet", "visible"), true)
+            // A network the backend has not set up yet is "setting up", never "nothing defines the chain".
+            var keep = fake.sourcesJson
+            fake.sourcesJson = JSON.stringify({ network: "regtest", configured: false, walletOpen: false, sources: [], exposes: [], withoutTor: [] })
+            expect("unconfigured is not empty", prop("sourcesEmpty", "text"), "Setting up the sources for regtest…")
+            expect("unconfigured says nothing of the chain", shown("noChainNotice"), false)
+            fake.sourcesJson = keep
             expect("unlocked", shown("networkLockedNotice"), false)
             expect("one operator, no wallet", shown("oneOperatorNotice"), true)
             find(view.item, "historySwitch_esplora.example", 0).clicked()

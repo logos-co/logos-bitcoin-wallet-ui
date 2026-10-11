@@ -67,12 +67,12 @@ sections:
               property: "opened"
               value: true
               timeout: 10000
-            - name: "The node module's sources for signet are read"
+            - name: "The backend has filled the node module's defaults for signet, and the app read them"
               action: expect_property
               find_value: "bitcoinWalletRoot"
-              property: "sourcesRead"
+              property: "sourcesConfigured"
               value: true
-              timeout: 20000
+              timeout: 60000
             - name: "Kyoto is on by default, so something defines the chain"
               action: expect_property
               find_value: "noChainNotice"

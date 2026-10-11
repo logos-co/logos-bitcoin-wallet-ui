@@ -64,6 +64,8 @@ Item {
     // ---- sources ----
     readonly property bool sourcesRead: ready && backend.sourcesJson !== ""
     readonly property var sourcesInfo: sourcesRead ? j(backend.sourcesJson, "{}") : ({})
+    // The backend fills a network's defaults on its first pass; until then the list is not "none".
+    readonly property bool sourcesConfigured: sourcesRead && sourcesInfo.configured !== false
     readonly property var sourceList: Array.isArray(sourcesInfo.sources) ? sourcesInfo.sources : []
     readonly property var health: ready ? j(backend.healthJson, "{}") : ({})
     readonly property string overall: health.overall || ""
@@ -107,12 +109,15 @@ Item {
         root.sendNote = ""
         root.forgetNote = ""
         if (root.sendId !== "") {
+            sendGoneTimer.stop()
             root.reviewDraft = false
             if (root.walletOpen && !reviewSheet.visible) reviewSheet.open()
         } else if (!root.reviewDraft) {
-            reviewSheet.close()
+            sendGoneTimer.restart()
         }
     }
+    // A new request clears the settled send first; closing at once would make the review flicker.
+    Timer { id: sendGoneTimer; interval: 600; onTriggered: if (root.sendId === "" && !root.reviewDraft) reviewSheet.close() }
     onApprovalHandleChanged: if (root.approvalHandle !== "" && root.ownSend && root.approvalHandle !== root.signerAskedFor) root.askSigner()
     property string lastSendState: ""
     onSendStateChanged: {
@@ -765,8 +770,10 @@ Item {
                 shown: root.networkNote !== "" && root.networkNoteAt === "sources"
                 message: shown ? root.networkNote : ""
             }
-            LogosText { visible: root.sourceList.length === 0; color: Theme.palette.textSecondary
-                        text: root.sourcesRead ? "No sources on this network yet: add a server of your own." : "Reading the sources…" }
+            LogosText { objectName: "sourcesEmpty"; visible: root.sourceList.length === 0; color: Theme.palette.textSecondary
+                        text: !root.sourcesRead ? "Reading the sources…"
+                              : !root.sourcesConfigured ? "Setting up the sources for " + (root.sourcesInfo.network || "this network") + "…"
+                              : "No sources on this network yet: add a server of your own." }
             Repeater {
                 model: root.sourceList
                 LogosFrame {
@@ -888,13 +895,13 @@ Item {
                 objectName: "noChainNotice"
                 Layout.fillWidth: true
                 severity: LogosNotice.Warning
-                shown: root.sourcesRead && root.chainSources.length === 0
+                shown: root.sourcesConfigured && root.chainSources.length === 0
                 message: "Nothing in use defines the chain. Switch on Kyoto, or an Electrum server."
             }
             LogosNotice {
                 objectName: "oneOperatorNotice"
                 Layout.fillWidth: true
-                shown: root.sourcesRead && root.serversDecideChain && root.chainOperators.length === 1
+                shown: root.sourcesConfigured && root.serversDecideChain && root.chainOperators.length === 1
                 message: shown ? "Kyoto is off, so the Electrum servers in use decide the chain, and they are all "
                                  + root.chainOperators[0] + "'s: nothing checks them. Switch on Kyoto, or a server from another operator." : ""
             }
