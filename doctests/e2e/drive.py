@@ -1234,9 +1234,14 @@ def matches_snapshot(ins, what):
     log("%s: %s" % (what, json.dumps(got)))
     # A replaced send never reached a block, so only the first user dir can list it.
     log("Activity rows: %d in user A, %d %s" % (want["count"], got["count"], what))
+    # Activity re-reads its rows on its own clock: a row can lag the balance by a read.
+    wallet_tab(ins, 3)
     for t, row in want["rows"].items():
         g = got["rows"].get(t)
-        expect(g is not None and g["state"] == row["state"], "%s… %s in both" % (t[:12], row["state"]))
+        if g is None or g["state"] != row["state"]:
+            log("%s… reads %r, waiting for %r" % (t[:12], g and g["state"], row["state"]))
+            wait_row(ins, "historyState", t, row["state"], 60)
+        passed("%s… %s in both" % (t[:12], row["state"]))
     return got
 
 
