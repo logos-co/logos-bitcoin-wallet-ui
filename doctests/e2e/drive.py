@@ -37,8 +37,9 @@ CHAIN_ENV = {"CHAIN_DIR": CHAIN_DIR, "RPC_PORT": "28543", "P2P_PORT": "28544", "
              "PRUNED_RPC_PORT": "28573", "PRUNED_P2P_PORT": "28574", "ELECTRUM_PORTS": "61701,61711",
              "ESPLORA_PORT": "61721", "ESPLORA": os.path.join(BUILD, "esplora", "bin", "electrs")}
 ELECTRUM_PORTS = [61701, 61711]
-# Blockstream's electrs on the main node, started by `chain.sh esplora` for the unchecked step.
-ESPLORA_URL = "http://%s:%s" % (CHAIN_HOST, CHAIN_ENV["ESPLORA_PORT"])
+# Blockstream's electrs on the main node (`chain.sh esplora`), behind a front that answers no header.
+ESPLORA_FRONT_PORT = 61724
+ESPLORA_URL = "http://%s:%d" % (CHAIN_HOST, ESPLORA_FRONT_PORT)
 # The chain's three nodes serve compact block filters: Kyoto's peers.
 FILTER_PEERS = ["%s:%s" % (CHAIN_HOST, CHAIN_ENV[k]) for k in ("P2P_PORT", "FORK_P2P_PORT", "PEER_P2P_PORT")]
 # What decides the chain, as the core's regtest.json says and the sync line names it.
@@ -527,16 +528,39 @@ def layout(user, mode=None):
 
 
 # Esplora alone serves history, and a checkpoint sits just above the first two payments: for a wallet
-# whose birthday is above it, Esplora reports them below the chain's start, where nothing checks them.
+# whose birthday is above it, Esplora reports them below the chain's start. Its front answers no
+# header, so the core cannot link them there.
 def esplora_regtest():
     if CHAIN_URL:
         raise Fail("the chain host runs no Esplora: this step runs on Linux and macOS")
     base = int(state()["coinbase_height"]) + 1
     header = rpc("getblockheader", [rpc("getblockhash", [base]), False])
     log(chain("esplora"))
+    front_stop()
+    upstream = "http://127.0.0.1:%s" % CHAIN_ENV["ESPLORA_PORT"]
+    subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "esplora_front.py"),
+                    str(ESPLORA_FRONT_PORT), upstream, FRONT_PID], check=True)
+    end = time.time() + 20
+    while not listening(ESPLORA_FRONT_PORT):
+        if time.time() > end:
+            raise Fail("the Esplora front did not come up")
+        time.sleep(0.2)
+    log("esplora front: %s, answering no block header" % ESPLORA_URL)
     save(unchecked_base=base)
     return {"esplora": [ESPLORA_URL], "kyoto": FILTER_PEERS, "kyotoRequired": 2, "pollSecs": 1,
             "checkpoint": {"height": base, "header": header}}
+
+
+FRONT_PID = os.path.join(CHAIN_DIR, "esplora-front.pid")
+
+
+def front_stop():
+    if not os.path.exists(FRONT_PID):
+        return
+    pid = int(open(FRONT_PID).read().strip())
+    if alive(pid):
+        stop_pid(pid, 5)
+    os.remove(FRONT_PID)
 
 
 def descendants(pid):
@@ -801,6 +825,7 @@ def phase_prepare_chain():
         if chain("electrum") != want:
             raise Fail("the chain host serves %r, not drive.py's %r: run it with drive.py's ports" % (chain("electrum"), want))
     else:
+        front_stop()
         chain("stop", check=False)
         subprocess.run(["rm", "-rf", CHAIN_DIR], check=True)
         out = chain("prepare")
@@ -1378,6 +1403,8 @@ def phase_cleanup():
         stop_basecamp()
     except Exception as e:
         log("stopping Basecamp: %s" % e)
+    if not CHAIN_URL:
+        front_stop()
     chain("stop", check=False)
     log("chain stopped")
 

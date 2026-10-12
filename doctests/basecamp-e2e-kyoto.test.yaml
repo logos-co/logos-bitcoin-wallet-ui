@@ -15,9 +15,11 @@ intro: |
   electrs (`chain.sh esplora`) is the only server, and a `regtest.json` checkpoint sits just above
   the first two payments: a wallet whose birthday is above it is opened with open_wallet's own
   birthday (the app takes no block height, and a regtest day names none), and Esplora reports those
-  payments below the chain's start, shown unchecked, apart from the balance, with a banner of their
-  own. The banner's earlier birthday lets Kyoto check them. That section needs Esplora on the chain's
-  machine, so it runs on Linux and macOS only.
+  payments below the chain's start. The core links such anchors through Esplora's block headers;
+  `doctests/e2e/esplora_front.py`, in front of it, answers no header, as a server that serves none
+  would, so they show unchecked, apart from the balance, with a banner of their own. The banner's
+  earlier birthday lets Kyoto check them. That section needs Esplora on the chain's machine, so it
+  runs on Linux and macOS only.
 
 sections:
   - title: "Build"
@@ -33,11 +35,11 @@ sections:
           b manager 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install-portable'
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
-          b backend 'github:logos-co/logos-bitcoin-wallet-backend/b38ffc607d4e27bb9b53b01b50c77b90b37f4f41#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/825a459aa2bbd4bb1168339ea4ab9ad682ba1cca#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/825a459aa2bbd4bb1168339ea4ab9ad682ba1cca#regtest-chain'
+          b backend 'github:logos-co/logos-bitcoin-wallet-backend/f4bd5fae33d4d9a372564af254e715586c610201#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/11f0ec2395ea1aa587f07d2a67f5cfcea402d7a9#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/11f0ec2395ea1aa587f07d2a67f5cfcea402d7a9#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/4b02811673d0836a42090330345c2cf1a4bf2eba#install-portable'
-          b esplora 'github:logos-co/logos-bitcoin-wallet-core-module/825a459aa2bbd4bb1168339ea4ab9ad682ba1cca#esplora-electrs'
+          b esplora 'github:logos-co/logos-bitcoin-wallet-core-module/11f0ec2395ea1aa587f07d2a67f5cfcea402d7a9#esplora-electrs'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           ls e2e/build
         expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "chain", "node", "esplora", "wallet"]
@@ -130,7 +132,8 @@ sections:
     text: |
       A third user dir, with Esplora as the only server and a checkpoint just above the first two
       payments. Restored with a birthday above it, the wallet's chain starts there; Esplora reports
-      those two payments below it, where nothing can check them. They read "Reported by esplora-0,
+      those two payments below it, and its front answers no header to link them with, so nothing
+      can check them. They read "Reported by esplora-0,
       not checked" in Activity, show apart from the confirmed balance on Home, and the
       unchecked_anchor alert has a banner of its own. Its earlier birthday starts the chain at
       genesis, Kyoto checks them, and the balance and history match the first user dir's.
@@ -142,7 +145,7 @@ sections:
         run: |
           python3 "$E2E_REPO/doctests/e2e/drive.py" layout userC kyoto-esplora
           python3 "$E2E_REPO/doctests/e2e/drive.py" launch userC
-        expect_contains: ["esplora: http", "PASS laid out userC for kyoto-esplora", "PASS Basecamp is up for userC"]
+        expect_contains: ["esplora: http", "esplora front: http", "PASS laid out userC for kyoto-esplora", "PASS Basecamp is up for userC"]
       - title: "Unchecked, apart from the balance, with a banner; an earlier birthday checks them"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" unchecked
         expect_contains: ["PASS the wallet's chain starts at the checkpoint", "reported, not checked, apart from the balance", "PASS the banner:", "reads Reported by esplora-0, not checked", "PASS an earlier birthday from the banner: nothing unchecked any more", "PASS the chain starts at genesis now", "PASS the checked balance matches", "PHASE unchecked OK"]

@@ -13,7 +13,7 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend b38ffc6) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend f4bd5fa) with a script behind it, and no
   wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
   Basecamp answers both intents `unavailable`, and the stand-in plays the person: it never approves
   the first open of a run, approves the next after 4 s, and picks a send's fate by its amount:

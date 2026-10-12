@@ -101,7 +101,7 @@ is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend b38ffc6.
+interface changes; this copy is from logos-bitcoin-wallet-backend f4bd5fa.
 
 ## Intents
 
@@ -155,8 +155,9 @@ its only regtest default, before each open: the chain's sources then come from t
 `regtest.json`. The Kyoto spec then restores twice:
 once with no day in the keys app, so the wallet asks for its birthday and gets it in the wallet
 app; once with Blockstream's electrs as the only server and a `regtest.json` checkpoint above the
-first two payments, which it reports below the chain's start, unchecked, until the banner's
-earlier birthday lets Kyoto check them. That restore opens with open_wallet's own birthday (the app
+first two payments, which it reports below the chain's start. A front that answers no block header
+(`doctests/e2e/esplora_front.py`) keeps the core from linking them there, so they stay unchecked
+until the banner's earlier birthday lets Kyoto check them. That restore opens with open_wallet's own birthday (the app
 takes no block height, and a regtest day names none) and runs on Linux and macOS only.
 
 On Windows the three e2e specs run as their emitted Windows leg (`doctest emit-smoke <spec>
