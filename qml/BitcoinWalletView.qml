@@ -2589,8 +2589,9 @@ Item {
         message: "The wallet scans again from its birthday"
                  + (root.isNum(root.status.birthday) ? ", block " + root.group(root.status.birthday) : "")
                  + ", watching " + gapLimitSheet.wanted + " unused addresses past the last one used. That downloads more."
-                 + (root.status.historyServer ? " Your history server, " + root.status.historyServer
-                                                + ", will be asked about more addresses." : "")
+                 // Kyoto's filters and your node learn no address; a server does.
+                 + (root.status.historyServer && ["kyoto", "local"].indexOf(root.status.historyServer) < 0
+                    ? " Your history server, " + root.status.historyServer + ", will be asked about more addresses." : "")
         leftActions: [ LogosButton { objectName: "keepGapLimitButton"; text: "Cancel"; onClicked: gapLimitSheet.close() } ]
         rightActions: [
             LogosButton { objectName: "confirmGapLimitButton"; text: "Raise and rescan"

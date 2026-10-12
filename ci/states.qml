@@ -927,6 +927,12 @@ Item {
             find(view.item, "gapLimitButton", 0).clicked()
             expect("lowering needs no asking", fake.last("setGapLimit"), ["setGapLimit", JSON.stringify({ gapLimit: 25 })])
             expect("...and no sheet", prop("gapLimitSheet", "visible"), false)
+            var st = JSON.parse(fake.statusJson)
+            st.historyServer = "kyoto"
+            fake.statusJson = JSON.stringify(st)
+        },
+        function (v) {
+            expect("Kyoto's filters learn no address: no server is named", String(prop("gapLimitSheet", "message")).indexOf("history server"), -1)
         }
     ]
     property int step: 0

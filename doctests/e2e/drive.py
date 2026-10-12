@@ -1407,21 +1407,37 @@ def sat_of(text):
     return int(round(float(str(text).split()[0]) * 1e8))
 
 
-# The listed wallet's Open, as a person picks it from "Opened before", then the keys app's approval.
+# The listed wallet's Open, once a person could press it, then the keys app's approval.
 def reopen_listed(ins, password):
-    for m in ins.rpc("findByProperty", property="text", value="Open").get("matches", []):
-        try:
-            p = ins.props(m["id"])
-        except InspectorError:
-            continue
-        if p.get("visible") is True and str(p.get("objectName", "")).startswith("reopen_"):
-            ins.rpc("callMethod", objectId=m["id"], method="clicked", args=[])
+    end = time.time() + 90
+    while True:
+        found = None
+        for m in ins.rpc("findByProperty", property="text", value="Open").get("matches", []):
+            try:
+                p = ins.props(m["id"])
+            except InspectorError:
+                continue
+            if p.get("visible") is True and p.get("enabled") is not False and str(p.get("objectName", "")).startswith("reopen_"):
+                found = m["id"]
+        if found:
+            ins.rpc("callMethod", objectId=found, method="clicked", args=[])
             break
-    else:
-        raise Fail("no wallet listed to open again")
-    chooser(ins, KEYS)
+        if time.time() > end:
+            raise Fail("no wallet listed to open again, or its Open stayed disabled")
+        time.sleep(0.5)
+    # The shell asks which app answers, unless the keys app's request is already up.
+    end = time.time() + 120
+    while ins.get("accessSheet", "opened") is not True:
+        if ins.get("intentProvider_" + KEYS, "visible") is True:
+            chooser(ins, KEYS)
+            break
+        if time.time() > end:
+            raise Fail("neither the shell's offer nor the keys app's request showed")
+        time.sleep(0.4)
     ins.wait("accessSheet", "opened", True, 120)
-    if ins.get("accessWallet_0", "checked") is not True:
+    # A request that names its wallet offers no pick: only the password.
+    pick = ins.obj("accessWallet_0")
+    if pick is not None and pick[1].get("visible") is True and pick[1].get("checked") is not True:
         ins.check("accessWallet_0")
     ins.set_text("accessPasswordField", password)
     ins.press("accessApproveButton")
@@ -1503,6 +1519,7 @@ def phase_gap():
     wallet_tab(ins, 4)
     ins.press("settingsCloseWalletButton")
     ins.wait("statusLine", "text", "No wallet open", 60, "the wallet closes")
+    ins.wait("openWalletButton", "enabled", True, 60, "the close settles")
     reopen_listed(ins, secret("password"))
     wait_synced(ins, 180)
     wallet_tab(ins, 4)
