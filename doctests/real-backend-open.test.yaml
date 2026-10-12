@@ -6,7 +6,7 @@ project_name: logos-bitcoin-wallet-ui
 
 intro: |
   The app against the modules it ships with: bitcoin_wallet_backend f4bd5fa,
-  bitcoin_wallet_core_module 11f0ec2, bitcoin_node_module 4b02811, signer_manager_module 80bc40c
+  bitcoin_wallet_core_module 338b792, bitcoin_node_module 4b02811, signer_manager_module 80bc40c
   and keystore_module 1f3d62f. The node module's own sources for signet, a server of your own
   added and given History through the app, a TLS server of your own whose self-signed certificate
   the node module's probe reads and the app pins and unpins, a Kyoto peer of your own that replaces
@@ -24,7 +24,7 @@ sections:
           nix build 'github:logos-co/logos-basecamp#app-standalone' --no-write-lock-file -o result-basecamp
           nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
           nix build 'github:logos-co/logos-bitcoin-wallet-backend/f4bd5fae33d4d9a372564af254e715586c610201#install' -o result-real-backend
-          nix build 'github:logos-co/logos-bitcoin-wallet-core-module/11f0ec2395ea1aa587f07d2a67f5cfcea402d7a9#install' -o result-real-core
+          nix build 'github:logos-co/logos-bitcoin-wallet-core-module/338b792424df6990fd9eca89332c42f93b1e41b2#install' -o result-real-core
           nix build 'github:logos-co/logos-bitcoin-node-module/4b02811673d0836a42090330345c2cf1a4bf2eba#install' -o result-real-node
           nix build 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install' -o result-real-manager
           nix build 'github:logos-co/logos-evm-keystore-module/1f3d62f306f0e4dc7e5d96d478f9770ab3713ce6#install' -o result-real-keystore

@@ -36,10 +36,10 @@ sections:
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
           b backend 'github:logos-co/logos-bitcoin-wallet-backend/f4bd5fae33d4d9a372564af254e715586c610201#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/11f0ec2395ea1aa587f07d2a67f5cfcea402d7a9#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/11f0ec2395ea1aa587f07d2a67f5cfcea402d7a9#regtest-chain'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/338b792424df6990fd9eca89332c42f93b1e41b2#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/338b792424df6990fd9eca89332c42f93b1e41b2#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/4b02811673d0836a42090330345c2cf1a4bf2eba#install-portable'
-          b esplora 'github:logos-co/logos-bitcoin-wallet-core-module/11f0ec2395ea1aa587f07d2a67f5cfcea402d7a9#esplora-electrs'
+          b esplora 'github:logos-co/logos-bitcoin-wallet-core-module/338b792424df6990fd9eca89332c42f93b1e41b2#esplora-electrs'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           ls e2e/build
         expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "chain", "node", "esplora", "wallet"]
