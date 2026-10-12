@@ -1,5 +1,5 @@
 //! A stand-in for `bitcoin_wallet_backend` in the wallet app's doctest. The trait is the real
-//! backend's (logos-bitcoin-wallet-backend d7887b3), so the contract matches; behind it, sim.rs.
+//! backend's (logos-bitcoin-wallet-backend 411e896), so the contract matches; behind it, sim.rs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -46,11 +46,12 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
 
     /// The core's status, `gapLimit` included, plus `syncPercent`, `activeNetwork`, `label` and `openSend`.
     fn wallet_status(&self) -> String;
-    /// `{ ok, busy, confirmed, waiting, pending, sent, immature, tooSmall, beyondGap: { count, sat } }` in
-    /// satoshis, each with a `…Btc` twin. beyondGap is coins past the gap limit: outside confirmed, waiting
-    /// and pending, still spendable. Empty while busy, never zero.
+    /// `{ ok, busy, confirmed, waiting, pending, sent, immature, tooSmall, beyondGap: { count, sat, confirmedSat } }`
+    /// in satoshis, each with a `…Btc` twin. beyondGap is coins past the gap limit, confirmedSat its confirmed
+    /// part: outside confirmed, waiting, pending and sent, still spendable. Empty while busy, never zero.
     fn balances(&self) -> String;
-    /// The core's history page, newest first; rows gain `amountBtc` and `feeBtc`, and keep `beyondGap`.
+    /// The core's history page, newest first; rows gain `amountBtc` and `feeBtc`, and keep `beyondGap` (false
+    /// unless the wallet's part is only through addresses past the gap limit).
     fn history(&self, page: i64) -> String;
     /// `{ ok, address, index }`: a fresh receive address.
     fn receive_address(&self) -> String;

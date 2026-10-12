@@ -21,6 +21,10 @@ intro: |
   earlier birthday lets Kyoto check them. That section needs Esplora on the chain's machine, so it
   runs on Linux and macOS only.
 
+  Last, user A's wallet again: a payment to receive index 72, found while the gap limit is 100,
+  lies beyond a limit of 20, apart from the balance and labelled in Activity, until a limit of 80
+  takes it in; a reopen keeps 80.
+
 sections:
   - title: "Build"
     steps:
@@ -35,11 +39,11 @@ sections:
           b manager 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install-portable'
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
-          b backend 'github:logos-co/logos-bitcoin-wallet-backend/f4bd5fae33d4d9a372564af254e715586c610201#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/338b792424df6990fd9eca89332c42f93b1e41b2#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/338b792424df6990fd9eca89332c42f93b1e41b2#regtest-chain'
+          b backend 'github:logos-co/logos-bitcoin-wallet-backend/411e8965fbf4befb4f1fa21bbc51191c3ca4e81e#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/2eea866f053cc037eb1f31e3928f3f0940201ec4#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/2eea866f053cc037eb1f31e3928f3f0940201ec4#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/4b02811673d0836a42090330345c2cf1a4bf2eba#install-portable'
-          b esplora 'github:logos-co/logos-bitcoin-wallet-core-module/338b792424df6990fd9eca89332c42f93b1e41b2#esplora-electrs'
+          b esplora 'github:logos-co/logos-bitcoin-wallet-core-module/2eea866f053cc037eb1f31e3928f3f0940201ec4#esplora-electrs'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           ls e2e/build
         expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "chain", "node", "esplora", "wallet"]
@@ -149,6 +153,26 @@ sections:
       - title: "Unchecked, apart from the balance, with a banner; an earlier birthday checks them"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" unchecked
         expect_contains: ["PASS the wallet's chain starts at the checkpoint", "reported, not checked, apart from the balance", "PASS the banner:", "reads Reported by esplora-0, not checked", "PASS an earlier birthday from the banner: nothing unchecked any more", "PASS the chain starts at genesis now", "PASS the checked balance matches", "PHASE unchecked OK"]
+
+  - title: "The gap limit"
+    platform: [linux, macos, windows]
+    text: |
+      User A's wallet again, opened from the list. Its gap limit goes to 100, so the scan watches
+      past receive index 72, and the chain pays the address at 72, derived from the wallet's own
+      public descriptor. At 20 again, that payment lies beyond the gap: Home lists it on its own
+      line, outside the confirmed balance, and Activity labels its row. Raised to 80 in Settings,
+      asked first, the wallet rescans and the coin joins the normal balance; reopened, the wallet
+      keeps 80.
+    steps:
+      - title: "Stop Basecamp by PID"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" stop
+        expect_contains: ["PASS Basecamp stopped"]
+      - title: "Launch user A's Basecamp again"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" launch userA
+        expect_contains: ["PASS Basecamp is up for userA"]
+      - title: "Past the gap: apart and labelled; a raised limit takes it in, and a reopen keeps the limit"
+        run: python3 "$E2E_REPO/doctests/e2e/drive.py" gap
+        expect_contains: ["PASS the wallet's gap limit is 20", "PASS raising to 100 asks first", "PASS receive index 72 paid 0.72 BTC", "PASS Home: Found beyond your 20-address gap limit: 0.72 BTC", "PASS outside the confirmed balance", "PASS Activity:", "PASS raising to 80 asks first", "PASS raised to 80 and rescanned", "PASS reopened, the gap limit is still 80", "PHASE gap OK"]
 
   - title: "Stop"
     platform: [linux, macos, windows]

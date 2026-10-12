@@ -114,7 +114,7 @@ is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend d7887b3.
+interface changes; this copy is from logos-bitcoin-wallet-backend 411e896.
 
 ## Intents
 
@@ -173,7 +173,9 @@ app; once with Blockstream's electrs as the only server and a `regtest.json` che
 first two payments, which it reports below the chain's start. A front that answers no block header
 (`doctests/e2e/esplora_front.py`) keeps the core from linking them there, so they stay unchecked
 until the banner's earlier birthday lets Kyoto check them. That restore opens with open_wallet's own birthday (the app
-takes no block height, and a regtest day names none) and runs on Linux and macOS only.
+takes no block height, and a regtest day names none) and runs on Linux and macOS only. Last, user
+A's wallet pays itself at receive index 72 while its gap limit is 100; at 20 the coin shows apart
+and labelled, a raise to 80 takes it into the balance, and a reopen keeps 80.
 
 On Windows the three e2e specs run as their emitted Windows leg (`doctest emit-smoke <spec>
 --platform windows`) under Git Bash, with the Windows builds staged under `e2e/build` and the

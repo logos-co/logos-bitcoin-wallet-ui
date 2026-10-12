@@ -1403,6 +1403,115 @@ def phase_unknown_forget():
     log("PHASE unknown-forget OK")
 
 
+def sat_of(text):
+    return int(round(float(str(text).split()[0]) * 1e8))
+
+
+# The listed wallet's Open, as a person picks it from "Opened before", then the keys app's approval.
+def reopen_listed(ins, password):
+    for m in ins.rpc("findByProperty", property="text", value="Open").get("matches", []):
+        try:
+            p = ins.props(m["id"])
+        except InspectorError:
+            continue
+        if p.get("visible") is True and str(p.get("objectName", "")).startswith("reopen_"):
+            ins.rpc("callMethod", objectId=m["id"], method="clicked", args=[])
+            break
+    else:
+        raise Fail("no wallet listed to open again")
+    chooser(ins, KEYS)
+    ins.wait("accessSheet", "opened", True, 120)
+    if ins.get("accessWallet_0", "checked") is not True:
+        ins.check("accessWallet_0")
+    ins.set_text("accessPasswordField", password)
+    ins.press("accessApproveButton")
+    ins.wait("accessSheet", "visible", False, 30)
+    back_to_wallet(ins, KEYS)
+    ins.wait(ROOT, "walletState", lambda v: v in ("syncing", "ready"), 90)
+
+
+# Settings' gap limit: a raise asks first, and its rescan runs to the end.
+def set_gap(ins, n):
+    wallet_tab(ins, 4)
+    was = int(ins.wait("walletGapLimit", "text", lambda t: bool(t), 30).split()[0])
+    ins.set_text("gapLimitField", str(n))
+    ins.press("gapLimitButton")
+    if n > was:
+        ins.wait("gapLimitSheet", "opened", True, 20, "raising asks first")
+        passed("raising to %d asks first: %s" % (n, ins.get("gapLimitSheet", "message")))
+        ins.press("confirmGapLimitButton")
+    ins.wait("walletGapLimit", "text", "%d addresses" % n, 60, "the wallet's gap limit is %d" % n)
+    try:
+        ins.wait(ROOT, "rescanning", True, 10)
+    except Fail:
+        pass
+    ins.wait(ROOT, "rescanning", False, 300, "the rescan ends")
+    wait_synced(ins, 180)
+
+
+# A payment to receive index 72, found while a gap limit of 100 watches past it; at 20 it lies
+# beyond the gap, apart from the balance; raised to 80 the rescan takes it in, and a reopen keeps 80.
+def phase_gap():
+    save(authority="kyoto")
+    ins = Inspector()
+    show_app(ins, APP)
+    ins.wait(ROOT, "ready", True, 120)
+    ins.wait("statusLine", "text", "No wallet open", 120)
+    ins.call(ROOT, "selectNetwork", "regtest")
+    ins.wait("networkChip", "text", "regtest", 30)
+    reopen_listed(ins, secret("password"))
+    passed("user A's wallet opened again from the list")
+    wait_synced(ins, 180)
+    wallet_tab(ins, 4)
+    expect(ins.wait("walletGapLimit", "text", lambda t: bool(t), 30) == "20 addresses", "the wallet's gap limit is 20")
+    set_gap(ins, 100)
+    # Index 72 from the wallet's own public descriptor, as anyone holding it could derive.
+    wallet_tab(ins, 4)
+    ins.press("showDescriptorsButton")
+    ins.wait("descriptorsSheet", "opened", True, 20)
+    ins.press("confirmDescriptorsButton")
+    desc = ins.wait("descriptorExternal", "text", lambda t: (t or "").startswith("wpkh("), 30)
+    addr = rpc("deriveaddresses", [rpc("getdescriptorinfo", [desc.split("#")[0]])["descriptor"], [72, 72]])[0]
+    wallet_tab(ins, 0)
+    before = sat_of(confirmed_value(ins))
+    txid = chain("fund", addr, "0.72")
+    mine(1)
+    ins.wait("confirmedCard", "value", amount_text(before + 72000000) + " BTC", 120, "the payment to index 72 confirms")
+    passed("receive index 72 paid 0.72 BTC; with a gap limit of 100 it counts as any: %s" % confirmed_value(ins))
+    set_gap(ins, 20)
+    wallet_tab(ins, 0)
+    ins.wait("beyondGapRow", "visible", True, 60, "past a gap of 20: a line of its own")
+    title, amount = ins.get("beyondGapRow", "title"), ins.get("beyondGapRowAmount", "text")
+    expect(title == "Found beyond your 20-address gap limit" and amount == "0.72 BTC", "Home: %s: %s" % (title, amount))
+    ins.wait("confirmedCard", "value", amount_text(before) + " BTC", 60, "outside the confirmed balance")
+    passed("outside the confirmed balance: %s" % confirmed_value(ins))
+    ins.shot("gap-home")
+    wallet_tab(ins, 3)
+    row_text(ins, "historyBeyondGap", txid, 20)
+    ins.wait("historyBeyondGap_" + txid, "visible", True, 60, "Activity labels its row")
+    passed("Activity: %s… %s" % (txid[:12], ins.get("historyBeyondGap_" + txid, "text")))
+    ins.shot("gap-activity")
+    set_gap(ins, 80)
+    wallet_tab(ins, 0)
+    ins.wait("beyondGapRow", "visible", False, 120, "a gap limit of 80 reaches 72")
+    ins.wait("confirmedCard", "value", amount_text(before + 72000000) + " BTC", 120, "it counts in the confirmed balance")
+    passed("raised to 80 and rescanned: in the confirmed balance, %s" % confirmed_value(ins))
+    wallet_tab(ins, 3)
+    row_text(ins, "historyBeyondGap", txid, 20)
+    ins.wait("historyBeyondGap_" + txid, "visible", False, 60, "Activity's label goes")
+    passed("Activity: no label on %s… any more" % txid[:12])
+    wallet_tab(ins, 4)
+    ins.press("settingsCloseWalletButton")
+    ins.wait("statusLine", "text", "No wallet open", 60, "the wallet closes")
+    reopen_listed(ins, secret("password"))
+    wait_synced(ins, 180)
+    wallet_tab(ins, 4)
+    ins.wait("walletGapLimit", "text", "80 addresses", 60, "reopened, the wallet keeps its gap limit")
+    passed("reopened, the gap limit is still 80")
+    save(gap_txid=txid)
+    log("PHASE gap OK")
+
+
 def phase_cleanup():
     try:
         stop_basecamp()
@@ -1419,7 +1528,7 @@ PHASES = {
     "node-start": phase_node_start, "send": phase_send,
     "receive": phase_receive, "send-expire": phase_send_expire, "speed-up": phase_speed_up,
     "reject": phase_reject, "reorg": phase_reorg, "close": phase_close, "restore": phase_restore,
-    "restore-birthday": phase_restore_birthday, "unchecked": phase_unchecked,
+    "restore-birthday": phase_restore_birthday, "unchecked": phase_unchecked, "gap": phase_gap,
     "unknown-rebroadcast": phase_unknown_rebroadcast, "unknown-forget": phase_unknown_forget,
     "stop": stop_basecamp, "cleanup": phase_cleanup,
 }
