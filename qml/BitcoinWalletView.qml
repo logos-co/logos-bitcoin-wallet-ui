@@ -177,16 +177,23 @@ Item {
     readonly property var prunedGap: walletOpen && status.node && status.node.prunedGap && typeof status.node.prunedGap === "object"
                                      ? status.node.prunedGap : null
     readonly property var probe: ready && backend.probeJson !== "" ? j(backend.probeJson, "{}") : ({})
-    // Kyoto's peers: the curated list, and your own, which replace it.
+    // Kyoto's peers: the install's peer book (the signed list and peers learned), and your own, which replace it.
     readonly property var peerList: ready && backend.peerListJson !== "" ? j(backend.peerListJson, "{}") : ({})
     readonly property var ownPeers: Array.isArray(peerList.ownPeers) ? peerList.ownPeers : []
     readonly property var curated: peerList.list && typeof peerList.list === "object" ? peerList.list : ({})
+    readonly property var peerCounts: peerList.counts && typeof peerList.counts === "object" ? peerList.counts : ({})
     function curatedLine() {
-        var n = Array.isArray(root.curated.peers) ? root.curated.peers.length : 0
-        var parts = ["The curated list: " + n + (n === 1 ? " peer" : " peers")]
+        var c = root.peerCounts
+        var m = root.isNum(c.list) ? Number(c.list) : (Array.isArray(root.curated.peers) ? root.curated.peers.length : 0)
+        var k = root.isNum(c.learned) ? Number(c.learned) : 0
+        return (m + k) + ((m + k) === 1 ? " known peer: " : " known peers: ") + m + " from the signed list, " + k + " learned"
+               + (root.isNum(c.okLast30d) ? " · " + c.okLast30d + " worked in the last 30 days" : "")
+    }
+    function signedListNote() {
+        var parts = []
         if (/^\s*provisional/i.test(String(root.curated.note || ""))) parts.push("provisional")
         if (/^test-/.test(String(root.curated.keyId || ""))) parts.push("signed with a test key, not a release")
-        return parts.join(", ")
+        return parts.length ? "The signed list is " + parts.join(", and ") + "." : ""
     }
     property string ownPeersNote: ""
     function setOwnPeers(list, done) {
@@ -1174,8 +1181,15 @@ Item {
                             LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
                             LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                                         font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
+                            LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                        text: root.signedListNote() }
+                            LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
+                                        color: Theme.palette.textSecondary
+                                        text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "
+                                              + "few of Bitcoin Core's built-in onion nodes for more." }
                             LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                        text: "A peer of your own replaces the curated list: Kyoto then connects to your peers alone, "
+                                        text: "A peer of your own replaces all of these: Kyoto then connects to your peers alone, "
                                               + "directly when they are on your network, otherwise through Tor." }
                             Repeater {
                                 model: root.ownPeers
@@ -1205,7 +1219,7 @@ Item {
                                                                           function () { ownPeerField.text = "" }) }
                             }
                             LogosButton { objectName: "useCuratedButton"; visible: !root.networkLocked && root.ownPeers.length > 0
-                                          text: "Use the curated list again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
+                                          text: "Use the known peers again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
                             LogosText { objectName: "ownPeersLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
                                         font.pixelSize: 12; color: Theme.palette.textSecondary
                                         text: "Kyoto's peers change only while no wallet is open, like the other source settings." }

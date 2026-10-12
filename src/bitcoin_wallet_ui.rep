@@ -29,7 +29,7 @@ class BitcoinWalletUi
     PROP(QString receiveQrJson="" READONLY)
     // fee_rates(): { fast, normal, slow, minimum, sources } in sat/vB.
     PROP(QString feeRatesJson="" READONLY)
-    // peer_list({ network }) without ok: the curated list, ownPeers, usable, route.
+    // peer_list({ network }) without ok: counts, the signed list, ownPeers, usable, route, kyotoTor.
     PROP(QString peerListJson="" READONLY)
     // sources(), source_health() and exposure(), each without ok.
     PROP(QString sourcesJson="" READONLY)
@@ -92,7 +92,7 @@ class BitcoinWalletUi
     SLOT(QString addSource(QString address, QString kind, QString name))
     SLOT(QString removeSource(QString sourceId))
     SLOT(QString setProxy(QString proxy))
-    // Kyoto's own peers, a JSON array of host[:port], at most 64; [] restores the curated list.
+    // Kyoto's own peers, a JSON array of host[:port], at most 64; [] restores the peer book.
     SLOT(QString setOwnPeers(QString peersJson))
     // Not locked: the wallet marks sources suspect while it syncs.
     SLOT(QString clearSuspect(QString sourceId))

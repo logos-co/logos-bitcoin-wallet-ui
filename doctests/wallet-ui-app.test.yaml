@@ -13,7 +13,7 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 411e896) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend 966277c) with a script behind it, and no
   wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
   Basecamp answers both intents `unavailable`, and the stand-in plays the person: it never approves
   the first open of a run, approves the next after 4 s, and picks a send's fate by its amount:
@@ -259,12 +259,17 @@ sections:
               property: "visible"
               value: true
               timeout: 10000
-            - name: "Under Kyoto, the curated list: its size, and that it is provisional and test-signed"
+            - name: "Under Kyoto, the install's peer book: the signed list, peers learned, and how many worked lately"
               action: expect_property
               find_value: "curatedLine"
               property: "text"
-              value: "The curated list: 11 peers, provisional, signed with a test key, not a release"
+              value: "14 known peers: 11 from the signed list, 3 learned · 6 worked in the last 30 days"
               timeout: 15000
+            - name: "...and that the signed list is provisional and test-signed"
+              action: expect_property
+              find_value: "signedListNote"
+              property: "text"
+              value: "The signed list is provisional, and signed with a test key, not a release."
             - name: "A peer of your own"
               action: set_text
               find_by: "objectName"

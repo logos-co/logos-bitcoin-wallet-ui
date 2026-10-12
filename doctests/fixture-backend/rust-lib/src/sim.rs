@@ -1370,7 +1370,12 @@ impl Sim {
         let route = if !own.is_empty() && own.iter().all(|h| is_lan(&host(h))) { "direct" }
                     else if own.iter().all(|h| host(h).ends_with(".onion")) { "onion" } else { "tor" };
         let usable = if own.is_empty() { list["peers"].clone() } else { json!(own) };
-        json!({"ok": true, "network": net, "list": list, "source": "shipped", "ownPeers": own, "usable": usable,
+        // The install's peer book: the signed list, peers learned from it, and Core's onion seeds.
+        let listed = list["peers"].as_array().map_or(0, Vec::len);
+        let learned = if net == "signet" { 3 } else { 0 };
+        let usable_n = if own.is_empty() { listed + learned } else { own.len() };
+        let counts = json!({"list": listed, "learned": learned, "seed": 8, "usable": usable_n, "okLast30d": if net == "signet" { 6 } else { 1 }});
+        json!({"ok": true, "network": net, "list": list, "ownPeers": own, "usable": usable, "counts": counts,
                "route": route, "kyotoTor": true})
     }
 
@@ -1966,7 +1971,8 @@ mod tests {
         let st = sim.status(t);
         assert_eq!((st["authority"]["kind"].clone(), st["authority"]["peers"].clone(), st["kyoto"]["quorum"].clone(), st["kyoto"]["onePeerDecides"].clone()),
                    (json!("kyoto"), json!(1), json!(1), json!(true)));
-        assert_eq!(sim.peer_list(r#"{"network":"testnet4"}"#)["list"]["peers"].as_array().unwrap().len(), 1);
+        let p = sim.peer_list(r#"{"network":"testnet4"}"#);
+        assert_eq!((p["list"]["peers"].as_array().unwrap().len(), p["counts"]["list"].clone(), p.get("source")), (1, json!(1), None));
         assert_eq!(sim.balances()["unchecked"], "0");
     }
 

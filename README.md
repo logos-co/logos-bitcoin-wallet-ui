@@ -87,10 +87,12 @@ is approved in the signer app.
     disagreed were set aside at T".
   - Your own servers, added by address; the Tor proxy; the exposure record. A server reached in
     plain text outside Tor is marked "Not encrypted".
-  - Under Kyoto, your own peers (`peer_list`, `set_own_peers`, at most 64): the curated list's size,
-    and whether it is provisional or signed with a test key. One of your own replaces the curated
-    list, so Kyoto connects to your peers alone, directly on your network, otherwise through Tor;
-    "Use the curated list again" sends `[]`.
+  - Under Kyoto, the install's peer book (`peer_list`'s `counts`): "N known peers: M from the
+    signed list, K learned · L worked in the last 30 days", whether the signed list is provisional
+    or signed with a test key, and how it grows: the wallet learns working peers from the ones it
+    uses, and asks a few of Bitcoin Core's built-in onion nodes for more if too few work. Your own
+    peers (`set_own_peers`, at most 64) replace all of these, so Kyoto connects to them alone,
+    directly on your network, otherwise through Tor; "Use the known peers again" sends `[]`.
   - A server you add is probed (`probe`), and a TLS certificate that no authority this computer
     trusts shows its subject, issuer, validity and SHA-256 fingerprint, with "Trust this
     certificate", which pins it (`set_source` `certSha256`). A pinned server shows its pin, with
@@ -114,7 +116,7 @@ is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend 411e896.
+interface changes; this copy is from logos-bitcoin-wallet-backend 966277c.
 
 ## Intents
 
