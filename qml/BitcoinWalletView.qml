@@ -327,6 +327,11 @@ Item {
         if (c === "busy" && root.opening) return "A wallet is opening: let it open, or cancel it, then switch networks."
         return ""
     }
+    // Scrolls the sources sheet to its "end" or "top", as a person would; a driver entry point, as selectTab is.
+    function scrollSources(where) {
+        const f = networkSheetScroll.contentItem as Flickable
+        if (f) f.contentY = where === "end" ? Math.max(0, f.contentHeight - f.height) : 0
+    }
     function closeSheets() {
         reviewSheet.close(); speedUpSheet.close(); forgetSheet.close(); networkSheet.close(); descriptorsSheet.close(); birthdaySheet.close()
         gapLimitSheet.close()

@@ -126,6 +126,11 @@ sections:
               property: "visible"
               value: false
               timeout: 10000
+            - name: "Scroll the sheet down to the servers, as a person would"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "scrollSources"
+              args: ["end"]
             - name: "Turn on History for the Electrum server: the app asks first"
               action: call_method
               find_value: "historySwitch_electrum.example"
@@ -219,6 +224,16 @@ sections:
               property: "text"
               value: "Subject CN=electrs.lan, issued by CN=electrs.lan\nValid 2026-10-11 to 2126-09-17\nSHA-256 C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42:C4:EC:62:C0:92:EF:FE:42"
               timeout: 20000
+            - name: "Scroll down to its row"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "scrollSources"
+              args: ["end"]
+            - name: "...in its row"
+              action: expect_property
+              find_value: "certDetails_electrs.lan"
+              property: "visible"
+              value: true
               screenshot: "wallet-certificate.png"
             - name: "Trust this certificate"
               action: call_method
@@ -259,6 +274,11 @@ sections:
               property: "visible"
               value: true
               timeout: 10000
+            - name: "Scroll back up to Kyoto's row"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "scrollSources"
+              args: ["top"]
             - name: "Under Kyoto, the install's peer book: the signed list, peers learned, and how many worked lately"
               action: expect_property
               find_value: "curatedLine"
