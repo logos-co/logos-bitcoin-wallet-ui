@@ -48,6 +48,7 @@ Item {
         property string switchJson: ""
         property string openQueuedJson: ""
         property string peerListJson: ""
+        property string gapLimitJson: ""
         property var calls: []
         function note(name, args) { calls = calls.concat([[name].concat(args)]) }
         function last(name) {
@@ -61,6 +62,7 @@ Item {
         function openWallet(p) { note("openWallet", [p]) }
         function closeWallet() { note("closeWallet", []) }
         function setBirthday(p) { note("setBirthday", [p]) }
+        function setGapLimit(p) { note("setGapLimit", [p]) }
         function probeSource(id) { note("probeSource", [id]) }
         function requestSend(r) { note("requestSend", [r]) }
         function requestFeeBump(t, rate) { note("requestFeeBump", [t, rate]) }
@@ -840,6 +842,91 @@ Item {
             expect("a plain rescan", prop("rescanLine", "text"), "Rescanning from block 0 · 40%")
             expect("checked now: no unchecked line", shown("uncheckedRow"), false)
             expect("...and the banner goes", shown("uncheckedBanner"), false)
+            // A coin found past a 20-address gap limit: apart from the balance, yet spendable.
+            var st = JSON.parse(fake.statusJson)
+            delete st.rescanFrom
+            st.gapLimit = 20
+            st.birthday = 101
+            st.historyServer = "esplora-0"
+            fake.statusJson = JSON.stringify(st)
+            fake.balancesJson = JSON.stringify({ busy: false, confirmed: "100250000", waiting: "0", unchecked: "0", pending: "0",
+                                                 sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" }, beyondGap: { count: 1, sat: "70000", confirmedSat: "70000" } })
+            fake.historyJson = JSON.stringify({ page: 0, pageSize: 25, total: 1, rows: [
+                { txid: "ee".repeat(32), intent: "receive", amountSat: "70000", feeSat: null, counterparties: [], height: 140,
+                  blockHash: "22".repeat(32), confirmations: 11, time: 1791500000, state: "confirmed", beyondGap: true }] })
+        },
+        function (v) {
+            expect("beyond the gap: its own line", prop("beyondGapRow", "title"), "Found beyond your 20-address gap limit")
+            expect("...its amount", prop("beyondGapRowAmount", "text"), v.btcOf("70000") + " BTC")
+            expect("...spendable", prop("beyondGapRow", "note"), "1 coin, yours and spendable: Send counts them.")
+            expect("...and what it means", prop("beyondGapRowInfo", "text"), "These coins are yours, and you can spend them. Other wallets "
+                   + "that use a gap limit of 20 won't show them. Raising the gap limit in Settings makes them part of the normal balance.")
+            expect("the balance leaves them out", prop("confirmedCard", "value"), v.btcOf("100250000") + " BTC")
+            expect("...but what Send spends counts them", prop("confirmedCard", "caption"), "Confirmed on the wallet's own chain. Send "
+                   + "spends this and the coins found beyond the gap limit: " + v.btcOf("100320000") + " BTC in all.")
+            expect("Send says so too", prop("sendAvailable", "text"), "Send spends confirmed coins, those found beyond the gap limit included: "
+                   + v.btcOf("100320000") + " BTC.")
+            v.selectTab(3)
+        },
+        function (v) {
+            expect("a quiet label in Activity", prop("historyBeyondGap_" + "ee".repeat(32), "text"), "Beyond the gap limit")
+            expect("...shown", shown("historyBeyondGap_" + "ee".repeat(32)), true)
+            var w = { kind: "beyond_gap_inputs", count: 1, sat: "70000", message: "1 input was found beyond the gap limit" }
+            expect("the review says when it spends them", v.beyondGapInputsLine(v.beyondGapInputs({ warnings: [w] })),
+                   "1 coin it spends, " + v.btcOf("70000") + " BTC, was found beyond the gap limit.")
+            expect("...in the plural too", v.beyondGapInputsLine({ kind: "beyond_gap_inputs", count: 2, sat: "90000" }),
+                   "2 coins it spends, " + v.btcOf("90000") + " BTC, were found beyond the gap limit.")
+            expect("...and only then", [v.beyondGapInputs({ warnings: [{ kind: "change_to_fee" }] }), v.beyondGapInputs(null)], [null, null])
+            // Part of it unconfirmed: what Send counts is the confirmed part.
+            fake.balancesJson = JSON.stringify({ busy: false, confirmed: "100250000", waiting: "0", unchecked: "0", pending: "0",
+                                                 sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" }, beyondGap: { count: 2, sat: "90000", confirmedSat: "70000" } })
+        },
+        function (v) {
+            expect("the confirmed part is spendable", prop("beyondGapRow", "note"), "2 coins, yours: " + v.btcOf("70000")
+                   + " BTC of it is confirmed and spendable, and Send counts that.")
+            expect("...the line shows them all", prop("beyondGapRowAmount", "text"), v.btcOf("90000") + " BTC")
+            expect("...and Send counts the confirmed part", prop("sendAvailable", "text"), "Send spends confirmed coins, those found beyond "
+                   + "the gap limit included: " + v.btcOf("100320000") + " BTC.")
+            v.selectTab(4)
+        },
+        function (v) {
+            expect("the gap limit in the wallet's details", prop("walletGapLimit", "text"), "20 addresses")
+            find(view.item, "gapLimitField", 0).text = "10"
+        },
+        function (v) {
+            expect("below 20 is refused here", prop("gapLimitNote", "text"), "A whole number from 20 to 1,000.")
+            expect("...and cannot be sent", prop("gapLimitButton", "enabled"), false)
+            find(view.item, "gapLimitField", 0).text = "40"
+        },
+        function (v) {
+            expect("raising is offered", prop("gapLimitButton", "enabled"), true)
+            find(view.item, "gapLimitButton", 0).clicked()
+        },
+        function (v) {
+            expect("raising asks first", prop("gapLimitSheet", "visible"), true)
+            expect("...naming the limit", prop("gapLimitSheet", "title"), "Raise the gap limit to 40?")
+            expect("...the rescan, and the history server", prop("gapLimitSheet", "message"), "The wallet scans again from its birthday, block 101, "
+                   + "watching 40 unused addresses past the last one used. That downloads more. Your history server, esplora-0, will be asked about more addresses.")
+            expect("nothing asked yet", fake.count("setGapLimit"), 0)
+            find(view.item, "confirmGapLimitButton", 0).clicked()
+        },
+        function (v) {
+            expect("raised once confirmed", fake.last("setGapLimit"), ["setGapLimit", JSON.stringify({ gapLimit: 40 })])
+            fake.gapLimitJson = JSON.stringify({ state: "failed", code: "busy", error: "busy: a rescan is running" })
+            find(view.item, "gapLimitField", 0).text = ""
+        },
+        function (v) {
+            expect("a busy refusal, in plain words", prop("gapLimitNote", "text"), "The wallet is busy opening, rescanning or sending: try again once it settles.")
+            var st = JSON.parse(fake.statusJson)
+            st.gapLimit = 40
+            fake.statusJson = JSON.stringify(st)
+            fake.gapLimitJson = ""
+            find(view.item, "gapLimitField", 0).text = "25"
+        },
+        function (v) {
+            find(view.item, "gapLimitButton", 0).clicked()
+            expect("lowering needs no asking", fake.last("setGapLimit"), ["setGapLimit", JSON.stringify({ gapLimit: 25 })])
+            expect("...and no sheet", prop("gapLimitSheet", "visible"), false)
         }
     ]
     property int step: 0

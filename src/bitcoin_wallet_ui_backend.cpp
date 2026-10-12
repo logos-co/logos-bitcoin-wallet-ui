@@ -245,6 +245,7 @@ void BitcoinWalletUiBackend::clearWalletReads() {
     m_exposureAge.invalidate();
     setAlertsJson(QStringLiteral("[]"));
     setBirthdayJson({});
+    setGapLimitJson({});
     m_readySince.invalidate();
 }
 
@@ -680,7 +681,16 @@ void BitcoinWalletUiBackend::pollJobs() {
         m_jobs.removeIf([&](const Job &j) { return j.id == job.id; });
         const QString error = st.value("error").toString();
         const bool withdrawn = job.kind == "open" && m_openCancelled && state != "done";
-        if (job.kind == "birthday") {
+        if (job.kind == "gaplimit") {
+            // Said in Settings, beside the limit asked for.
+            QJsonObject g = st.value("result").toObject();
+            g.insert("state", state == "done" ? QStringLiteral("done") : QStringLiteral("failed"));
+            if (state != "done") {
+                g.insert("error", error.isEmpty() ? state : error);
+                g.insert("code", st.value("code").toString());
+            }
+            setGapLimitJson(compact(g));
+        } else if (job.kind == "birthday") {
             // Said in the birthday sheet, beside the date it refused.
             QJsonObject b = st.value("result").toObject();
             b.insert("state", state == "done" ? QStringLiteral("done") : QStringLiteral("failed"));
@@ -743,6 +753,22 @@ void BitcoinWalletUiBackend::retryQueuedOpen() {
     const QString params = m_openQueued;
     m_openQueued.clear();
     openWallet(params);
+}
+
+// Refusals carry code invalid or busy, at once or as the job's failure.
+void BitcoinWalletUiBackend::setGapLimit(QString paramsJson) {
+    if (hasJob("gaplimit")) return;
+    const QJsonObject o = parse(modules().bitcoin_wallet_backend.set_gap_limit(paramsJson));
+    const QString id = o.value("jobId").toString();
+    if (!o.value("ok").toBool() || id.isEmpty()) {
+        setGapLimitJson(compact(QJsonObject{{"state", "failed"}, {"code", o.value("code").toString()}, {"error", errorOf(o)}}));
+        return;
+    }
+    setGapLimitJson(compact(QJsonObject{{"state", "pending"}, {"jobId", id}}));
+    m_jobs.append({id, QStringLiteral("gaplimit")});
+    setPendingJobKind(QStringLiteral("gaplimit"));
+    setBusy(true);
+    m_jobPoll.start(kJobPollMs);
 }
 
 // For a wallet restored without a birthday; a refusal says why, such as a day after its first payment.

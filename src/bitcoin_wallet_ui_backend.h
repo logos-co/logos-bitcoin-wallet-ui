@@ -26,6 +26,7 @@ public:
     void openWallet(QString paramsJson) override;
     void closeWallet() override;
     void setBirthday(QString paramsJson) override;
+    void setGapLimit(QString paramsJson) override;
 
     void requestSend(QString requestJson) override;
     void requestFeeBump(QString txid, double feeRate) override;

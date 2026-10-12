@@ -1,5 +1,5 @@
 //! A stand-in for `bitcoin_wallet_backend` in the wallet app's doctest. The trait is the real
-//! backend's (logos-bitcoin-wallet-backend f4bd5fa), so the contract matches; behind it, sim.rs.
+//! backend's (logos-bitcoin-wallet-backend d7887b3), so the contract matches; behind it, sim.rs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -24,11 +24,12 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     /// CUSTODIAN. While a close settles the switch is queued: `{ ok, active, pending }`, and opens are
     /// refused with code busy until it applies. Refusals carry `code`: busy, wallet_open, send_open.
     fn set_active_network(&self, network: String) -> String;
-    /// `{ ok, active, wallets: [{ group, family, network, label, birthday, firstOpened, lastOpened }] }`:
+    /// `{ ok, active, wallets: [{ group, family, network, label, birthday, gapLimit, firstOpened, lastOpened }] }`:
     /// wallets opened before, newest first. No secrets.
     fn list_wallets(&self) -> String;
-    /// CUSTODIAN. `{ network?, group?, family?, birthday?, label? }` on the active network. `{ ok,
-    /// jobId }`; wallet_status carries `openHandle` while the person decides in the keys app.
+    /// CUSTODIAN. `{ network?, group?, family?, birthday?, label?, gapLimit? }` on the active network; gapLimit
+    /// 20 to 1000, else the core's 20 or the wallet's stored one. `{ ok, jobId }`; wallet_status carries
+    /// `openHandle` while the person decides in the keys app.
     fn open_wallet(&self, params_json: String) -> String;
     /// CUSTODIAN. Withdraws open sends first; refused while one is going out. `{ ok, jobId }`.
     fn close_wallet(&self) -> String;
@@ -39,13 +40,17 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     /// CUSTODIAN. `{ date: "YYYY-MM-DD" }` or `{ height }` for the open wallet; the core scans again from
     /// it. `{ ok, jobId }`; the job's result is `{ birthday: { height, source }, rescanFrom }`.
     fn set_birthday(&self, params_json: String) -> String;
+    /// CUSTODIAN. `{ gapLimit }`, 20 to 1000, for the open wallet; a raise scans again from the birthday.
+    /// `{ ok, jobId }`; the job's result is `{ gapLimit, rescanFrom }`. Refusal codes: invalid, busy, no_wallet.
+    fn set_gap_limit(&self, params_json: String) -> String;
 
-    /// The core's status plus `syncPercent`, `activeNetwork`, `label` and `openSend`.
+    /// The core's status, `gapLimit` included, plus `syncPercent`, `activeNetwork`, `label` and `openSend`.
     fn wallet_status(&self) -> String;
-    /// `{ ok, busy, confirmed, waiting, pending, sent, immature, tooSmall }` in satoshis, each with
-    /// a `…Btc` twin. Empty while busy, never zero.
+    /// `{ ok, busy, confirmed, waiting, pending, sent, immature, tooSmall, beyondGap: { count, sat } }` in
+    /// satoshis, each with a `…Btc` twin. beyondGap is coins past the gap limit: outside confirmed, waiting
+    /// and pending, still spendable. Empty while busy, never zero.
     fn balances(&self) -> String;
-    /// The core's history page, newest first; rows gain `amountBtc` and `feeBtc`.
+    /// The core's history page, newest first; rows gain `amountBtc` and `feeBtc`, and keep `beyondGap`.
     fn history(&self, page: i64) -> String;
     /// `{ ok, address, index }`: a fresh receive address.
     fn receive_address(&self) -> String;
@@ -218,6 +223,10 @@ impl BitcoinWalletBackendModule for BitcoinWalletBackendModuleImpl {
 
     fn set_birthday(&self, params_json: String) -> String {
         self.gated(|s, now, _| s.set_birthday(&params_json, now))
+    }
+
+    fn set_gap_limit(&self, params_json: String) -> String {
+        self.gated(|s, now, _| s.set_gap_limit(&params_json, now))
     }
 
     fn wallet_status(&self) -> String {

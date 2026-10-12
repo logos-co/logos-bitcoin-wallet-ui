@@ -4,7 +4,9 @@
 //! authority and names a refused chain 3 s after it is. On signet under Kyoto, Esplora reports a
 //! payment below the chain's start (signet's checkpoint): unchecked until a birthday below it is
 //! set, whose rescan ends with one wider pass. On testnet4 Kyoto is on with one peer, which then
-//! decides the chain. No network, no key.
+//! decides the chain. A signet wallet holds a coin past a 20-address gap limit: listed apart and
+//! spendable, small sends spend it, and a gap limit of 30 or more takes it into the balance after
+//! its rescan. No network, no key.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -44,6 +46,10 @@ const MAX_OWN_PEERS: usize = 64;
 const UNCHECKED_SAT: u64 = 60_000;
 const UNCHECKED_HEIGHT: u64 = 289_950;
 const UNCHECKED_ALERT_AFTER: Duration = Duration::from_secs(1);
+/// The coin a 20-address gap limit misses on signet, and the limit that reaches it.
+const BEYOND_GAP_SAT: u64 = 70_000;
+const BEYOND_GAP_NEEDS: u64 = 30;
+const GAP_LIMIT_DEFAULT: u64 = 20;
 /// The wallet's first payment, a fixed day so a birthday after it is refused the same way every run.
 const FIRST_TX_DAY: &str = "2026-05-31";
 // The core's own refusals.
@@ -122,6 +128,8 @@ struct Send {
     abandoned: bool,
     small_change: bool,
     to_fee: u64,
+    /// What it spends of the coin past the gap limit.
+    beyond: u64,
     created: u64,
     updated: u64,
 }
@@ -189,6 +197,9 @@ pub struct Sim {
     rescans: u32,
     window_rescan: bool,
     conflict_at: Option<u64>,
+    /// The open wallet's gap limit, and whether its signet coin lies past it.
+    gap_limit: u64,
+    beyond_gap: bool,
     last_status: String,
     last_balance: String,
 }
@@ -262,6 +273,15 @@ fn quorum(network: &str) -> u64 {
         "testnet4" => 1,
         _ => 2,
     }
+}
+
+fn beyond_gap_txid() -> String {
+    format!("{:016x}", 0x0bea_0000_0000_0000u64 + BEYOND_GAP_SAT).repeat(4)
+}
+
+/// `{ gapLimit }` as the core takes it: a whole number from 20 to 1000.
+fn gap_limit_of(v: &Value) -> Option<u64> {
+    v.as_u64().filter(|g| (20..=1000).contains(g))
 }
 
 fn unchecked_txid() -> String {
@@ -457,6 +477,8 @@ impl Sim {
             rescans: 0,
             window_rescan: false,
             conflict_at: None,
+            gap_limit: GAP_LIMIT_DEFAULT,
+            beyond_gap: false,
             last_status: String::new(),
             last_balance: String::new(),
         };
@@ -563,6 +585,7 @@ impl Sim {
             "node": null,
             "lastError": null, "synced": self.state == WState::Ready, "busy": false, "authority": authority,
             "activeNetwork": self.active, "label": self.label, "openSend": self.open_send(),
+            "gapLimit": if open { json!(self.gap_limit) } else { Value::Null },
         });
         if let Some(t) = self.wallet_tip(now) {
             v["walletTip"] = json!(t);
@@ -600,10 +623,13 @@ impl Sim {
         }
         let b = |s: u64| json!(s.to_string());
         let unchecked = if self.unchecked { UNCHECKED_SAT } else { 0 };
+        let beyond = if self.beyond_gap { BEYOND_GAP_SAT } else { 0 };
         json!({
             "ok": true, "busy": false, "confirmed": b(self.confirmed), "waiting": b(50_000), "pending": b(30_000),
             "sent": b(self.change), "immature": b(0), "tooSmall": {"count": 2, "sat": "540", "btc": btc_of(540)},
             "unchecked": b(unchecked), "uncheckedBtc": btc_of(unchecked),
+            "beyondGap": {"count": u64::from(beyond > 0), "sat": beyond.to_string(), "confirmedSat": beyond.to_string()},
+            "beyondGapBtc": btc_of(beyond),
             "confirmedBtc": btc_of(self.confirmed), "waitingBtc": btc_of(50_000), "pendingBtc": btc_of(30_000),
             "sentBtc": btc_of(self.change), "immatureBtc": btc_of(0),
         })
@@ -822,6 +848,10 @@ impl Sim {
             warnings.push(json!({"kind": "change_to_fee", "amountSat": s.to_fee.to_string(), "costToSpendSat": "408",
                                  "message": "The change was worth less than it costs to spend at this fee rate, so it went to the fee."}));
         }
+        if s.beyond > 0 {
+            warnings.push(json!({"kind": "beyond_gap_inputs", "count": 1, "sat": s.beyond.to_string(),
+                                 "message": "1 input was found beyond the wallet's gap limit"}));
+        }
         let change_rows: Vec<Value> = if change > 0 {
             vec![json!({"address": address(&self.network, 'q', 7), "amountSat": change.to_string(), "amountBtc": btc_of(change)})]
         } else {
@@ -906,6 +936,15 @@ impl Sim {
         let Some(family) = family.filter(|f| f == "bitcoin" || f == "bitcoin_taproot") else {
             return json!({"ok": false, "error": "name a group to reopen, or a family to pick, create or restore one"});
         };
+        let kept = group.as_ref().and_then(|g| self.wallets.iter().find(|w| w["group"] == g.as_str())).and_then(|w| w["gapLimit"].as_u64());
+        let gap = match p.get("gapLimit").filter(|v| !v.is_null()) {
+            Some(v) => match gap_limit_of(v) {
+                Some(g) => g,
+                None => return json!({"ok": false, "code": "invalid", "error": "gapLimit is a whole number from 20 to 1000"}),
+            },
+            None => kept.unwrap_or(GAP_LIMIT_DEFAULT),
+        };
+        self.gap_limit = gap;
         self.opens += 1;
         self.state = WState::AwaitingOpen;
         self.since = now;
@@ -998,6 +1037,17 @@ impl Sim {
             row(&txids[4], "send", 200_000, Some(220), "confirmed", Some(t - 40), json!({"counterparties": [them]})),
             row(&txids[5], "receive", 125_000_000, None, "confirmed", Some(t - 100), json!({"time": first})),
         ];
+        if net == "signet" {
+            self.beyond_gap = self.gap_limit < BEYOND_GAP_NEEDS;
+            if !self.beyond_gap {
+                self.confirmed += BEYOND_GAP_SAT;
+            }
+            let r = row(&beyond_gap_txid(), "receive", BEYOND_GAP_SAT, None, "confirmed", Some(t - 60), json!({"beyondGap": self.beyond_gap}));
+            let at = self.history.len() - 1;
+            self.history.insert(at, r);
+        } else {
+            self.beyond_gap = false;
+        }
         let esplora = self.sources.get(&net).is_some_and(|l| l.iter().any(|s| s.enabled && s.kind == "esplora"));
         self.unchecked = net == "signet" && self.kyoto() && esplora;
         self.chain_base = if self.unchecked { checkpoint(&net) } else { 0 };
@@ -1037,7 +1087,7 @@ impl Sim {
                 return json!({"ok": false, "error": format!("recipient 1: {}", check["reason"].as_str().unwrap_or("not a valid address"))});
             }
             let amount = if p["sendMax"] == true {
-                COIN_SAT - fee
+                COIN_SAT + if self.beyond_gap { BEYOND_GAP_SAT } else { 0 } - fee
             } else {
                 match (r["amountSat"].as_str(), r["amountBtc"].as_str(), check["amountSat"].as_str()) {
                     (Some(s), _, _) => match parse_sat(s) {
@@ -1055,7 +1105,8 @@ impl Sim {
             };
             (check["address"].as_str().unwrap_or_default().to_string(), amount, None)
         };
-        if amount + fee > self.confirmed {
+        let spare = if self.beyond_gap { BEYOND_GAP_SAT } else { 0 };
+        if amount + fee > self.confirmed + spare {
             return json!({"ok": false, "error": "insufficient funds: not enough confirmed coins for this and its fee"});
         }
         let fate = match amount {
@@ -1065,7 +1116,11 @@ impl Sim {
             _ => Fate::Approve,
         };
         let small_change = amount == SMALL_CHANGE_SAT;
-        let input = if small_change { amount + fee + 400 } else if p["sendMax"] == true { COIN_SAT } else { COIN_SAT.max(amount + fee) };
+        // Coin selection takes the coin past the gap limit as any other: a small send fits in it.
+        let beyond = if !self.beyond_gap || small_change || kind == "fee_bump" { 0 }
+                     else if p["sendMax"] == true || amount + fee <= BEYOND_GAP_SAT { BEYOND_GAP_SAT } else { 0 };
+        let input = if small_change { amount + fee + 400 } else if p["sendMax"] == true { COIN_SAT + beyond }
+                    else if beyond > 0 { beyond } else { COIN_SAT.max(amount + fee) };
         // With smallChangeToFee the too-small change goes to the fee, and the warning says so.
         let to_fee = if small_change && p["smallChangeToFee"] == true { 400 } else { 0 };
         let fee = fee + to_fee;
@@ -1082,7 +1137,7 @@ impl Sim {
             id: id.clone(), kind: kind.into(), requester: requester.into(), state: "preparing".into(), error: None, code: None,
             fate, stage_at: now, amount, fee, fee_rate: rate, input, recipient, txid, replaces, approval: None, handle: None,
             broadcast: None, via: None, cancelling: false, abandoned: false, small_change: small_change && to_fee == 0, to_fee,
-            created: t, updated: t,
+            beyond, created: t, updated: t,
         });
         out.push(Event::SendStatus(id.clone(), "preparing".into()));
         json!({"ok": true, "requestId": id})
@@ -1171,6 +1226,39 @@ impl Sim {
             }
         }
         json!({"ok": true, "jobId": j})
+    }
+
+    /// `{ gapLimit }`, 20 to 1000: a job that rescans from the birthday. Refusals carry code invalid or busy.
+    pub fn set_gap_limit(&mut self, params: &str, now: Instant) -> Value {
+        if !self.open() {
+            return json!({"ok": false, "error": "no wallet is open"});
+        }
+        let p: Value = serde_json::from_str(params).unwrap_or(Value::Null);
+        let Some(g) = gap_limit_of(&p["gapLimit"]) else {
+            return json!({"ok": false, "code": "invalid", "error": "gapLimit is a whole number from 20 to 1000"});
+        };
+        if self.rescan_from.is_some() || self.jobs.values().any(|j| j.state == "running" && matches!(j.kind.as_str(), "set_gap_limit" | "set_birthday")) {
+            return json!({"ok": false, "code": "busy", "error": "a rescan is running; try again once it ends"});
+        }
+        let j = self.job("set_gap_limit", now, None);
+        if let Some(job) = self.jobs.get_mut(&j) {
+            job.result = json!({"gapLimit": g, "rescanFrom": self.birthday_height});
+        }
+        json!({"ok": true, "jobId": j})
+    }
+
+    /// After a rescan, the coin past the gap limit joins the balance once the limit reaches it.
+    fn settle_gap(&mut self) {
+        let beyond = self.network == "signet" && self.gap_limit < BEYOND_GAP_NEEDS;
+        if beyond == self.beyond_gap || self.network != "signet" {
+            return;
+        }
+        if beyond { self.confirmed -= BEYOND_GAP_SAT } else { self.confirmed += BEYOND_GAP_SAT }
+        self.beyond_gap = beyond;
+        let txid = beyond_gap_txid();
+        if let Some(r) = self.history.iter_mut().find(|r| r["txid"] == txid.as_str()) {
+            r["beyondGap"] = json!(beyond);
+        }
     }
 
     pub fn set_sources(&mut self, list: &str) -> Value {
@@ -1370,7 +1458,8 @@ impl Sim {
                 self.birthday_height = activation(&self.network, &self.family);
                 self.birthday_source = "activation".into();
                 let entry = json!({"group": self.group, "family": self.family, "network": self.network, "label": self.label,
-                                   "birthday": birthday(&self.network), "firstOpened": now_secs(), "lastOpened": now_secs()});
+                                   "birthday": birthday(&self.network), "gapLimit": self.gap_limit,
+                                   "firstOpened": now_secs(), "lastOpened": now_secs()});
                 self.wallets.retain(|w| w["group"] != entry["group"]);
                 self.wallets.insert(0, entry);
                 if let Some(j) = self.open_job.take() {
@@ -1436,6 +1525,7 @@ impl Sim {
                 if self.unchecked && below {
                     self.check_unchecked();
                 }
+                self.settle_gap();
             }
         }
         if self.unchecked_alert_at.is_some_and(|t| now >= t) && self.open() {
@@ -1606,7 +1696,7 @@ impl Sim {
         let due: Vec<String> = self
             .jobs
             .iter()
-            .filter(|(_, j)| j.state == "running" && matches!(j.kind.as_str(), "rebroadcast" | "abandon_send" | "set_birthday") && now.saturating_duration_since(j.at) >= STEP)
+            .filter(|(_, j)| j.state == "running" && matches!(j.kind.as_str(), "rebroadcast" | "abandon_send" | "set_birthday" | "set_gap_limit") && now.saturating_duration_since(j.at) >= STEP)
             .map(|(id, _)| id.clone())
             .collect();
         for id in due {
@@ -1615,6 +1705,18 @@ impl Sim {
                 (j.kind.clone(), j.send.clone().unwrap_or_default())
             };
             let n = send.strip_prefix('s').and_then(|n| n.parse::<u64>().ok()).unwrap_or(0);
+            if kind == "set_gap_limit" {
+                let result = self.jobs[&id].result.clone();
+                self.gap_limit = result["gapLimit"].as_u64().unwrap_or(GAP_LIMIT_DEFAULT);
+                let group = self.group.clone();
+                if let Some(w) = self.wallets.iter_mut().find(|w| w["group"] == group.as_str()) {
+                    w["gapLimit"] = json!(self.gap_limit);
+                }
+                self.rescan_from = Some(self.birthday_height);
+                self.rescan_until = Some(now + RESCAN_TIME);
+                self.finish(&id, "done", None, result, out);
+                continue;
+            }
             if kind == "set_birthday" {
                 let (result, error) = {
                     let j = &self.jobs[&id];
@@ -1866,6 +1968,49 @@ mod tests {
                    (json!("kyoto"), json!(1), json!(1), json!(true)));
         assert_eq!(sim.peer_list(r#"{"network":"testnet4"}"#)["list"]["peers"].as_array().unwrap().len(), 1);
         assert_eq!(sim.balances()["unchecked"], "0");
+    }
+
+    #[test]
+    fn a_coin_past_the_gap_limit_is_apart_and_spendable_until_the_limit_reaches_it() {
+        let (mut sim, t) = opened("signet");
+        let b = sim.balances();
+        assert_eq!((b["beyondGap"]["count"].clone(), b["beyondGap"]["sat"].clone(), b["beyondGap"]["confirmedSat"].clone(), b["beyondGapBtc"].clone(), b["confirmed"].clone()),
+                   (json!(1), json!("70000"), json!("70000"), json!("0.00070000"), json!("125000000")));
+        assert_eq!(sim.status(t)["gapLimit"], 20);
+        let row = |sim: &Sim| sim.history(0)["rows"].as_array().unwrap().iter().find(|r| r["txid"] == beyond_gap_txid().as_str()).cloned().unwrap();
+        assert_eq!((row(&sim)["beyondGap"].clone(), row(&sim)["state"].clone()), (json!(true), json!("confirmed")));
+        // A small send spends it, and its summary says so.
+        let mut ev = vec![];
+        let to = address("signet", 'q', 5);
+        let r = sim.request("send", APP, &json!({"recipients": [{"address": to, "amountSat": "20000"}], "feeRate": 6}).to_string(), t, &mut ev);
+        let id = r["requestId"].as_str().unwrap().to_string();
+        let t = run(&mut sim, t, 2);
+        let w = sim.send_status(&id)["summary"]["warnings"].as_array().unwrap().iter().find(|w| w["kind"] == "beyond_gap_inputs").cloned().unwrap();
+        assert_eq!((w["count"].clone(), w["sat"].clone()), (json!(1), json!("70000")));
+        let t = run(&mut sim, t, 4);
+        // Refused out of range, then raised: busy until its rescan ends, then the coin joins the balance.
+        assert_eq!(sim.set_gap_limit(r#"{"gapLimit":10}"#, t)["code"], "invalid");
+        assert_eq!(sim.set_gap_limit(r#"{"gapLimit":1001}"#, t)["code"], "invalid");
+        let j = sim.set_gap_limit(r#"{"gapLimit":30}"#, t);
+        assert_eq!(j["ok"], true);
+        assert_eq!(sim.set_gap_limit(r#"{"gapLimit":40}"#, t)["code"], "busy");
+        let t = run(&mut sim, t, 2);
+        assert_eq!((sim.status(t)["gapLimit"].clone(), sim.status(t)["rescanFrom"].clone()), (json!(30), json!(0)));
+        assert_eq!(sim.job_status(j["jobId"].as_str().unwrap())["result"], json!({"gapLimit": 30, "rescanFrom": 0}));
+        let t = run(&mut sim, t, 5);
+        let b = sim.balances();
+        assert_eq!((b["beyondGap"]["count"].clone(), b["confirmed"].clone()), (json!(0), json!("125070000")));
+        assert_eq!(row(&sim)["beyondGap"], false);
+        // The wallet keeps its limit: reopened, the coin is in its balance from the start.
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        sim.open_wallet(r#"{"group":"g_fixture2"}"#, t, &mut ev);
+        let t = run(&mut sim, t, 10);
+        assert_eq!((sim.status(t)["gapLimit"].clone(), sim.balances()["confirmed"].clone()), (json!(30), json!("125070000")));
+        // A limit asked for at open: out of range is refused.
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        assert_eq!(sim.open_wallet(r#"{"family":"bitcoin","gapLimit":5}"#, t, &mut ev)["code"], "invalid");
     }
 
     #[test]

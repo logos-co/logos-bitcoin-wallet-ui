@@ -13,7 +13,7 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend f4bd5fa) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend d7887b3) with a script behind it, and no
   wallet core, keystore, chain or network. The keys app and the signer app are not installed, so
   Basecamp answers both intents `unavailable`, and the stand-in plays the person: it never approves
   the first open of a run, approves the next after 4 s, and picks a send's fate by its amount:
@@ -26,7 +26,9 @@ intro: |
   your own replaces Kyoto's curated list, and a switch asked for while the wallet closes waits for
   the close, while an open asked for meanwhile waits for the switch. Under Kyoto on signet a
   payment Esplora reports below the chain's start shows unchecked, apart from the balance, until an
-  earlier birthday checks it; on testnet4 one peer decides the chain, and the sources say so.
+  earlier birthday checks it; on testnet4 one peer decides the chain, and the sources say so. A coin
+  past the 20-address gap limit shows apart and spendable, a small send spends it and its review
+  says so, and a gap limit raised to 30 (asked first) rescans and takes it into the balance.
 
 sections:
   - title: "Build Basecamp, the app, and the stand-in backend"
@@ -475,6 +477,46 @@ sections:
               timeout: 10000
               screenshot: "wallet-home.png"
 
+            - name: "A coin found beyond the 20-address gap limit: a line of its own, apart from the balance"
+              action: expect_property
+              find_value: "beyondGapRow"
+              property: "title"
+              value: "Found beyond your 20-address gap limit"
+              timeout: 10000
+            - name: "...0.0007 BTC"
+              action: expect_property
+              find_value: "beyondGapRowAmount"
+              property: "text"
+              value: "0.0007 BTC"
+            - name: "...spendable"
+              action: expect_property
+              find_value: "beyondGapRow"
+              property: "note"
+              value: "1 coin, yours and spendable: Send counts them."
+            - name: "...and what it means"
+              action: expect_property
+              find_value: "beyondGapRowInfo"
+              property: "text"
+              value: "These coins are yours, and you can spend them. Other wallets that use a gap limit of 20 won't show them. Raising the gap limit in Settings makes them part of the normal balance."
+              screenshot: "wallet-beyond-gap.png"
+            - name: "Activity, for the coin's row"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [3]
+            - name: "Its row carries a quiet label"
+              action: expect_property
+              find_value: "historyBeyondGap_0bea0000000111700bea0000000111700bea0000000111700bea000000011170"
+              property: "text"
+              value: "Beyond the gap limit"
+              timeout: 10000
+            - name: "...shown"
+              action: expect_property
+              find_value: "historyBeyondGap_0bea0000000111700bea0000000111700bea0000000111700bea000000011170"
+              property: "visible"
+              value: true
+              screenshot: "wallet-beyond-gap-row.png"
+
             - name: "Go to Receive"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -649,6 +691,12 @@ sections:
               property: "text"
               value: "Rejected in the signer app"
               timeout: 20000
+            - name: "Its coin was found beyond the gap limit, and the review says so in a line"
+              action: expect_property
+              find_value: "reviewBeyondGap"
+              property: "text"
+              value: "1 coin it spends, 0.0007 BTC, was found beyond the gap limit."
+              timeout: 5000
             - name: "Done"
               action: click_object
               find_value: "doneSendButton"
@@ -1010,6 +1058,67 @@ sections:
               value: true
               timeout: 10000
               screenshot: "wallet-descriptors.png"
+            - name: "The wallet's address gap limit, in its details"
+              action: expect_property
+              find_value: "walletGapLimit"
+              property: "text"
+              value: "20 addresses"
+            - name: "Raise it to 30"
+              action: set_text
+              find_by: "objectName"
+              find_value: "gapLimitField"
+              value: "30"
+            - name: "Change"
+              action: call_method
+              find_value: "gapLimitButton"
+              method: "clicked"
+              args: []
+            - name: "Raising asks first: a rescan from the birthday that downloads more, and the history server asked about more addresses"
+              action: expect_property
+              find_value: "gapLimitSheet"
+              property: "message"
+              value: "The wallet scans again from its birthday, block 0, watching 30 unused addresses past the last one used. That downloads more. Your history server, electrum.example, will be asked about more addresses."
+              timeout: 10000
+              screenshot: "wallet-gap-limit-ask.png"
+            - name: "Raise and rescan"
+              action: call_method
+              find_value: "confirmGapLimitButton"
+              method: "clicked"
+              args: []
+            - name: "It rescans from the birthday, shown as for a birthday"
+              action: expect_property
+              find_value: "rescanLine"
+              property: "text"
+              value: "Rescanning from block 0…"
+              timeout: 10000
+            - name: "The rescan ends"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "rescanning"
+              value: false
+              timeout: 15000
+            - name: "The limit is 30 now"
+              action: expect_property
+              find_value: "walletGapLimit"
+              property: "text"
+              value: "30 addresses"
+              timeout: 10000
+            - name: "Home"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [0]
+            - name: "The coin is in the normal balance: no line of its own"
+              action: expect_property
+              find_value: "beyondGapRow"
+              property: "visible"
+              value: false
+              timeout: 15000
+            - name: "Settings, to close"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [4]
             - name: "Close the wallet"
               action: click_object
               find_value: "closeWalletButton"
@@ -1094,11 +1203,11 @@ sections:
               property: "text"
               value: "0.0006 BTC"
               timeout: 10000
-            - name: "...which leaves it out"
+            - name: "...which leaves it out, and holds the coin the raised gap limit reached"
               action: expect_property
               find_value: "confirmedCard"
               property: "value"
-              value: "1.25 BTC"
+              value: "1.2507 BTC"
             - name: "Activity"
               action: call_method
               find_value: "bitcoinWalletRoot"

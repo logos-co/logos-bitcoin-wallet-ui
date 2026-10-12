@@ -39,6 +39,8 @@ class BitcoinWalletUi
     PROP(QString alertsJson="[]" READONLY)
     // A set_birthday job: { state: pending|done|failed, error?, birthday?, rescanFrom? }.
     PROP(QString birthdayJson="" READONLY)
+    // A set_gap_limit job: { state: pending|done|failed, code?, error?, gapLimit?, rescanFrom? }.
+    PROP(QString gapLimitJson="" READONLY)
     // The last probe: { sourceId, state: probing|done|failed, error?, row?, certificate? }.
     PROP(QString probeJson="" READONLY)
     // The send on screen ("" when none), its send_status(), and why a request was refused.
@@ -58,6 +60,8 @@ class BitcoinWalletUi
     SLOT(void closeWallet())
     // { date: "YYYY-MM-DD" } or { height }, for an open wallet; the core scans again from it.
     SLOT(void setBirthday(QString paramsJson))
+    // { gapLimit }, 20 to 1000: the wallet scans again from its birthday.
+    SLOT(void setGapLimit(QString paramsJson))
 
     // ---- sends: requested here, approved in the signer app ----
     // { recipients: [{ address, amountSat | amountBtc }], feeRate | target, sendMax?, smallChangeToFee? }

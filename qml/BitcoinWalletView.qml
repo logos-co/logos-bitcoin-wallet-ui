@@ -55,6 +55,12 @@ Item {
     readonly property bool balancesRead: ready && backend.balancesJson !== ""
     readonly property var balances: balancesRead ? j(backend.balancesJson, "{}") : ({})
     readonly property var tooSmall: balances.tooSmall || ({})
+    // Coins found past the gap limit: apart from the balance; their confirmed part is spendable.
+    readonly property var beyondGap: balances.beyondGap && typeof balances.beyondGap === "object" ? balances.beyondGap : ({})
+    readonly property bool hasBeyondGap: balancesRead && isNum(beyondGap.sat) && Number(beyondGap.sat) > 0
+    readonly property string beyondGapConfirmed: !hasBeyondGap ? "0" : isNum(beyondGap.confirmedSat) ? String(beyondGap.confirmedSat) : String(beyondGap.sat)
+    readonly property string spendableSat: balancesRead && isNum(balances.confirmed)
+                                           ? String(Number(balances.confirmed) + Number(beyondGapConfirmed)) : ""
     readonly property bool historyRead: ready && backend.historyJson !== ""
     readonly property var historyData: historyRead ? j(backend.historyJson, "{}") : ({})
     readonly property var historyRows: Array.isArray(historyData.rows) ? historyData.rows : []
@@ -117,6 +123,34 @@ Item {
     readonly property var birthdayJob: ready && backend.birthdayJson !== "" ? j(backend.birthdayJson, "{}") : ({})
     readonly property bool needsBirthday: walletOpen && status.needsBirthday === true
     readonly property bool rescanning: walletOpen && isNum(status.rescanFrom)
+    // The address gap limit: 20 unless the wallet says otherwise; a change is a job that rescans.
+    readonly property int gapLimit: walletOpen && isNum(status.gapLimit) ? Number(status.gapLimit) : 20
+    readonly property var gapLimitJob: ready && backend.gapLimitJson !== "" ? j(backend.gapLimitJson, "{}") : ({})
+    property bool gapLimitAsked: false
+    property int gapLimitWanted: 0
+    onGapLimitJobChanged: {
+        if (!root.gapLimitAsked || root.gapLimitJob.state === "pending") return
+        root.gapLimitAsked = false
+        if (root.gapLimitJob.state !== "done") return
+        gapLimitField.text = ""
+        root.notify("Gap limit set to " + (root.gapLimitJob.gapLimit || root.gapLimitWanted),
+                    "It looks for payments again from block " + root.group(root.gapLimitJob.rescanFrom) + ".")
+    }
+    function gapLimitError(g) {
+        if (!g || g.state !== "failed") return ""
+        if (g.code === "invalid") return "The gap limit is a whole number from 20 to 1,000."
+        if (g.code === "busy") return "The wallet is busy opening, rescanning or sending: try again once it settles."
+        return "Not set: " + (g.error || "the wallet refused it")
+    }
+    function gapLimitOk(t) {
+        var v = String(t || "").trim()
+        return /^[0-9]+$/.test(v) && Number(v) >= 20 && Number(v) <= 1000
+    }
+    function setGapLimit(n) {
+        root.gapLimitWanted = n
+        root.gapLimitAsked = true
+        backend.setGapLimit(JSON.stringify({ gapLimit: n }))
+    }
     property bool birthdayAsked: false
     onBirthdayJobChanged: {
         if (!root.birthdayAsked || root.birthdayJob.state !== "done") return
@@ -288,6 +322,7 @@ Item {
     }
     function closeSheets() {
         reviewSheet.close(); speedUpSheet.close(); forgetSheet.close(); networkSheet.close(); descriptorsSheet.close(); birthdaySheet.close()
+        gapLimitSheet.close()
     }
     // Public descriptors, shown on Settings until it is left or the wallet closes.
     property var shownDescriptors: null
@@ -834,7 +869,18 @@ Item {
     // The summary's warnings of a kind, or of every other kind.
     function warningsOf(kind, same) {
         var w = root.summary && Array.isArray(root.summary.warnings) ? root.summary.warnings : []
-        return w.filter(function (x) { return (x.kind === kind) === same })
+        return w.filter(function (x) { return (x.kind === kind) === same && x.kind !== "beyond_gap_inputs" })
+    }
+    // The review's warning that some inputs were found beyond the gap limit, said in one line.
+    function beyondGapInputs(sum) {
+        var w = sum && Array.isArray(sum.warnings) ? sum.warnings.filter(function (x) { return x.kind === "beyond_gap_inputs" }) : []
+        return w.length ? w[0] : null
+    }
+    function beyondGapInputsLine(w) {
+        if (!w) return ""
+        var n = Number(w.count || 0)
+        return (n === 1 ? "1 coin it spends" : n + " coins it spends") + (root.isNum(w.sat) ? ", " + root.btcOf(w.sat) + " BTC," : "")
+               + (n === 1 ? " was" : " were") + " found beyond the gap limit."
     }
     // A broadcast route, as a person would name it.
     function viaName(v) { return v === "local" ? "your node" : (v === "kyoto" ? "Kyoto's peers" : (v || "")) }
@@ -1565,6 +1611,8 @@ Item {
                         label: "Confirmed balance"
                         value: root.balancesRead ? root.btcOf(root.balances.confirmed) + " BTC" : "— BTC"
                         caption: !root.balancesRead ? "Read once the wallet has synced"
+                                 : root.hasBeyondGap ? "Confirmed on the wallet's own chain. Send spends this and the coins found beyond "
+                                                       + "the gap limit: " + root.btcOf(root.spendableSat) + " BTC in all."
                                  : "Confirmed on the wallet's own chain. Send spends only this."
                         valueFontSizeMode: Text.HorizontalFit
                         labelTrailing: [
@@ -1576,6 +1624,19 @@ Item {
                         ]
                     }
 
+                    BalanceRow {
+                        objectName: "beyondGapRow"
+                        visible: root.hasBeyondGap
+                        title: "Found beyond your " + root.gapLimit + "-address gap limit"
+                        amount: root.btcOf(root.beyondGap.sat) + " BTC"
+                        // Spendable once confirmed, as any coin: the confirmed part is what Send counts.
+                        note: (Number(root.beyondGap.count || 0) === 1 ? "1 coin" : (root.beyondGap.count || 0) + " coins")
+                              + (root.beyondGapConfirmed === String(root.beyondGap.sat) ? ", yours and spendable: Send counts them."
+                                 : ", yours: " + root.btcOf(root.beyondGapConfirmed) + " BTC of it is confirmed and spendable, and Send counts that.")
+                        info: "These coins are yours, and you can spend them. Other wallets that use a gap limit of "
+                              + root.gapLimit + " won't show them. Raising the gap limit in Settings makes them part "
+                              + "of the normal balance."
+                    }
                     BalanceRow {
                         objectName: "waitingRow"
                         visible: root.balancesRead && Number(root.balances.waiting || 0) > 0
@@ -1732,7 +1793,9 @@ Item {
                         objectName: "sendAvailable"
                         Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                         color: Theme.palette.textSecondary
-                        text: "Send spends confirmed coins only" + (root.balancesRead ? ": " + root.btcOf(root.balances.confirmed) + " BTC." : ".")
+                        text: root.hasBeyondGap ? "Send spends confirmed coins, those found beyond the gap limit included: "
+                                                  + root.btcOf(root.spendableSat) + " BTC."
+                              : "Send spends confirmed coins only" + (root.balancesRead ? ": " + root.btcOf(root.balances.confirmed) + " BTC." : ".")
                     }
                     LogosText { text: "Recipient"; color: Theme.palette.textSecondary }
                     RowLayout {
@@ -1947,6 +2010,9 @@ Item {
                                 LogosText { objectName: "historyState_" + modelData.txid; textFormat: Text.PlainText
                                             color: root.rowStateColor(modelData); text: root.rowState(modelData) }
                                 // A reorg moved it: confirmed again, in another block at this height.
+                                LogosText { objectName: "historyBeyondGap_" + modelData.txid; visible: modelData.beyondGap === true
+                                            textFormat: Text.PlainText; font.pixelSize: 11; color: Theme.palette.textTertiary
+                                            text: "Beyond the gap limit" }
                                 LogosText { objectName: "historyReanchored_" + modelData.txid; visible: root.reanchored(modelData.txid)
                                             textFormat: Text.PlainText; font.pixelSize: 11; color: Theme.palette.warning
                                             text: "re-anchored at height " + root.group(modelData.height) }
@@ -2038,6 +2104,33 @@ Item {
                         LogosText { text: "Chain starts at"; color: Theme.palette.textSecondary }
                         LogosText { objectName: "walletChainBase"; textFormat: Text.PlainText
                                     text: root.chainBase !== null ? "block " + root.group(root.chainBase) : "—" }
+                        LogosText { text: "Address gap limit"; color: Theme.palette.textSecondary }
+                        LogosText { objectName: "walletGapLimit"; textFormat: Text.PlainText; text: root.gapLimit + " addresses" }
+                    }
+                    ColumnLayout {
+                        objectName: "gapLimitPane"
+                        Layout.fillWidth: true
+                        spacing: Theme.spacing.tiny
+                        LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: "A restore stops looking after this many unused addresses in a row, so coins past it are "
+                                          + "invisible to wallets that use the same limit." }
+                        RowLayout {
+                            LogosTextField { id: gapLimitField; objectName: "gapLimitField"; Layout.preferredWidth: 160
+                                             placeholderText: "20 to 1,000" }
+                            // Raising asks first: the rescan downloads more.
+                            LogosButton { objectName: "gapLimitButton"; text: "Change"
+                                          enabled: root.ready && !root.busy && root.gapLimitOk(gapLimitField.text)
+                                                   && Number(gapLimitField.text.trim()) !== root.gapLimit
+                                          onClicked: {
+                                              var n = Number(gapLimitField.text.trim())
+                                              if (n > root.gapLimit) gapLimitSheet.ask(n)
+                                              else root.setGapLimit(n)
+                                          } }
+                        }
+                        LogosText { objectName: "gapLimitNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning
+                                    text: gapLimitField.text.trim() !== "" && !root.gapLimitOk(gapLimitField.text)
+                                          ? "A whole number from 20 to 1,000." : root.gapLimitError(root.gapLimitJob) }
                     }
                     LogosNotice {
                         objectName: "needsBirthdayNotice"
@@ -2095,6 +2188,7 @@ Item {
         property string title: ""
         property string amount: ""
         property string note: ""
+        property string info: ""
         property alias extra: extraHolder.data
         Layout.fillWidth: true
         contentItem: ColumnLayout {
@@ -2102,6 +2196,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 LogosText { text: row.title; font.weight: Theme.typography.weightMedium }
+                LogosInfoButton { objectName: row.objectName + "Info"; visible: row.info !== ""; title: row.title; text: row.info }
                 Item { Layout.fillWidth: true }
                 LogosText { objectName: row.objectName + "Amount"; textFormat: Text.PlainText; text: row.amount }
             }
@@ -2315,6 +2410,10 @@ Item {
                             ]
                         }
                     }
+                    LogosText { objectName: "reviewBeyondGap"; visible: text !== ""
+                                Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                font.pixelSize: 12; color: Theme.palette.textSecondary
+                                text: root.beyondGapInputsLine(root.beyondGapInputs(root.summary)) }
                     Repeater {
                         model: root.warningsOf("change_too_small", false)
                         LogosNotice {
@@ -2476,6 +2575,26 @@ Item {
         rightActions: [
             LogosButton { objectName: "confirmForgetButton"; text: "Forget it"
                           onClicked: { forgetSheet.close(); root.forget(root.forgetTxid) } }
+        ]
+    }
+
+    LogosWarningDialog {
+        id: gapLimitSheet
+        objectName: "gapLimitSheet"
+        property int wanted: 0
+        function ask(n) { gapLimitSheet.wanted = n; gapLimitSheet.open() }
+        title: "Raise the gap limit to " + gapLimitSheet.wanted + "?"
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 40, 560)
+        message: "The wallet scans again from its birthday"
+                 + (root.isNum(root.status.birthday) ? ", block " + root.group(root.status.birthday) : "")
+                 + ", watching " + gapLimitSheet.wanted + " unused addresses past the last one used. That downloads more."
+                 + (root.status.historyServer ? " Your history server, " + root.status.historyServer
+                                                + ", will be asked about more addresses." : "")
+        leftActions: [ LogosButton { objectName: "keepGapLimitButton"; text: "Cancel"; onClicked: gapLimitSheet.close() } ]
+        rightActions: [
+            LogosButton { objectName: "confirmGapLimitButton"; text: "Raise and rescan"
+                          onClicked: { gapLimitSheet.close(); root.setGapLimit(gapLimitSheet.wanted) } }
         ]
     }
 

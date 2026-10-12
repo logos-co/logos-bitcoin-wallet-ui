@@ -36,9 +36,15 @@ is approved in the signer app.
     goes once a read says nothing is unchecked.
   - A scan from the birthday started over wider (`kyoto.rescans`, `node.rescans`, by the
     authority's kind) reads "Rescanning with a wider address range (pass N)".
+  - Coins found beyond the gap limit (`balances.beyondGap`: `count`, `sat`, `confirmedSat`) show on
+    their own line, "Found beyond your N-address gap limit", outside the confirmed balance, with an
+    info button: they are yours and spendable, wallets with a gap limit of N won't show them, and
+    raising it makes them part of the normal balance. What Send can spend counts their confirmed
+    part.
 - **Send:** an address or a BIP21 URI, checked as you type with `address_valid`; the amount in BTC
   or sats (a URI's amount fills it); fast, normal or slow from `fee_rates`, or a custom sat/vB
-  rate; and Send max.
+  rate; and Send max, which takes coins found beyond the gap limit too. A review whose inputs
+  include such coins (the `beyond_gap_inputs` warning) says so in one line.
   - Review shows what the form says. Approve in Signer calls `request_send`; once `send_status`
     carries an `approvalHandle` the app raises `evm.signing.approve` with `{ handle }`. The review
     then shows the wallet's own summary: recipients, change, fee, what leaves the wallet, and
@@ -59,10 +65,17 @@ is approved in the signer app.
   replaces or was replaced by, the source that reported a pending payment, its block, the later
   transaction that confirms it (`confirmedVia`) and the txid.
   A payment a reorg moved (`lastReorg.moved`) reads "re-anchored at height H", and its details name
-  the new block.
+  the new block. A row found beyond the gap limit (`beyondGap`) carries a quiet "Beyond the gap
+  limit".
 - **Settings:** the wallet (with where its chain starts, `authority.base`), its public descriptors
   behind a privacy warning, Close wallet, and the sources pane, which also opens from the Open a
   wallet screen.
+  - The address gap limit (`wallet_status.gapLimit`, 20 by default): a restore stops after this
+    many unused addresses in a row, and coins past it are invisible to wallets with the same
+    limit. `set_gap_limit` takes 20 to 1000 as a job; raising it asks first, since the wallet
+    rescans from its birthday and downloads more, and an enabled history server is asked about
+    more addresses. The rescan shows on Home as a birthday's does; refusals (`invalid`, `busy`)
+    are said in plain words.
   - Each source has Use, History and Tor switches (`set_source`). Turning History on asks first:
     the server will learn every address. Turning Tor off asks first, in that row, and says what
     the source would see.
@@ -101,7 +114,7 @@ is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend f4bd5fa.
+interface changes; this copy is from logos-bitcoin-wallet-backend d7887b3.
 
 ## Intents
 
@@ -133,7 +146,9 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   to the fee, a reorg, Kyoto as the authority and a chain it names that is refused, a TLS
   server's certificate pinned, a Kyoto peer of your own, a network switch queued behind a close
   with an open waiting for it, a payment reported below the chain's start until an earlier
-  birthday checks it (with a wider pass), and one peer deciding the chain on testnet4. A send's fate is picked by its amount; the header of `sim.rs`
+  birthday checks it (with a wider pass), one peer deciding the chain on testnet4, and a coin
+  past the 20-address gap limit that a small send spends and a gap limit of 30 takes into the
+  balance. A send's fate is picked by its amount; the header of `sim.rs`
   says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
   manager and keystore: the node module's sources, certificate pin and curated Kyoto list with a
