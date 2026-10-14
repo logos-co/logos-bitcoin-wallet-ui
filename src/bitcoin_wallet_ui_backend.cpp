@@ -133,6 +133,9 @@ void BitcoinWalletUiBackend::onContextReady() {
             loadHealth();
         });
     });
+    modules().signer_manager_module.onAccounts_changed([this](int) {
+        QTimer::singleShot(0, this, [this] { loadAccounts(); });
+    });
     m_readPoll.start(kReadPollMs);
     refresh();
     recoverSend();
@@ -140,6 +143,7 @@ void BitcoinWalletUiBackend::onContextReady() {
 
 // Does not clear lastError: it runs right after a failed job, and from events.
 void BitcoinWalletUiBackend::refresh() {
+    loadAccounts();
     loadRegistry();
     loadStatus();
     loadSources();
@@ -153,6 +157,7 @@ void BitcoinWalletUiBackend::refresh() {
 }
 
 void BitcoinWalletUiBackend::poll() {
+    if (due(m_accountsAge, 15000)) loadAccounts();
     loadStatus();
     if (walletReady()) {
         loadBalances();
@@ -247,6 +252,73 @@ void BitcoinWalletUiBackend::clearWalletReads() {
     setBirthdayJson({});
     setGapLimitJson({});
     m_readySince.invalidate();
+}
+
+// signer_manager owns the roster; the wallet's disk registry is only historical metadata.
+void BitcoinWalletUiBackend::loadAccounts() {
+    const quint64 seq = begin(m_accountsRead);
+    if (!seq) return;
+    m_accountsAge.restart();
+    modules().signer_manager_module.accountsAsync([this, seq](QString r) {
+        QTimer::singleShot(0, this, [this, seq, r] {
+            if (!finish(m_accountsRead, seq)) return;
+            const auto o = parse(r);
+            if (!o.value("ok").toBool() || !o.value("accounts").isArray()) {
+                setAccountsError(QStringLiteral("Accounts could not be loaded from signer manager. Refresh to try again."));
+            } else {
+                QJsonArray accounts;
+                for (const auto &v : o.value("accounts").toArray()) {
+                    const auto a = v.toObject();
+                    const auto family = a.value("family").toString();
+                    if (family != QLatin1String("bitcoin") && family != QLatin1String("bitcoin_taproot")) continue;
+                    QJsonObject row;
+                    for (const auto *key : {"id", "family", "chain", "label", "signer", "available"})
+                        if (a.contains(QLatin1String(key))) row.insert(QLatin1String(key), a.value(QLatin1String(key)));
+                    if (!row.value("id").toString().isEmpty()) accounts.append(row);
+                }
+                setAccountsError({});
+                setAccountsJson(compact(accounts));
+            }
+            if (m_accountsRead.again) loadAccounts();
+        });
+    });
+}
+
+void BitcoinWalletUiBackend::selectAccount(QString accountId) {
+    if (!accountsError().isEmpty()) { say(accountsError()); return; }
+    if (busy() || hasJob("open") || hasJob("close") || hasJob("cancel")) {
+        say(QStringLiteral("Wait for the wallet to finish opening or closing.")); return;
+    }
+    const auto st = parse(statusJson());
+    const auto networks = parse(networksJson());
+    const QString network = networks.value("active").toString();
+    if (network.isEmpty() || !networks.value("pending").toString().isEmpty()) {
+        say(QStringLiteral("Wait for the network switch to finish.")); return;
+    }
+    QJsonObject selected;
+    for (const auto &v : QJsonDocument::fromJson(accountsJson().toUtf8()).array()) {
+        const auto a = v.toObject();
+        if (a.value("id").toString() == accountId) { selected = a; break; }
+    }
+    const QString chain = network == QLatin1String("mainnet") ? QStringLiteral("main") : QStringLiteral("test");
+    if (selected.isEmpty() || !selected.value("available").toBool() || selected.value("chain").toString() != chain) {
+        say(QStringLiteral("That account is unavailable on this network. Refresh or manage it in Keystore.")); return;
+    }
+    if (walletReady() && st.value("group").toString() == accountId) return;
+    if (!st.value("openSend").toString().isEmpty() || liveSend(parse(sendStatusJson()).value("state").toString())) {
+        say(QStringLiteral("Finish or cancel the current payment before switching accounts.")); return;
+    }
+    const QString params = compact(QJsonObject{{"group", accountId}, {"network", network}, {"label", selected.value("label").toString()}});
+    if (walletReady()) {
+        // Reuse the backend's close job and queued-open flow. Never overlap two wallet sessions.
+        closeWallet();
+        if (!hasJob("close")) return;
+        m_openQueued = params;
+        m_openTries = 0;
+        setOpenQueuedJson(compact(QJsonObject{{"network", network}, {"error", "switching accounts"}}));
+    } else {
+        openWallet(params);
+    }
 }
 
 void BitcoinWalletUiBackend::loadRegistry() {
@@ -510,12 +582,68 @@ QString BitcoinWalletUiBackend::editSources(const std::function<QString(QJsonArr
     return settingsReply(modules().bitcoin_wallet_backend.set_sources(compact(list)));
 }
 
+QString BitcoinWalletUiBackend::useDirectSource(QString sourceId) {
+    // One validated write: do not leave Kyoto off with no replacement if a later edit fails.
+    return editSources([&sourceId](QJsonArray &list) -> QString {
+        bool found = false;
+        for (const QJsonValue &v : list) {
+            const QJsonObject s = v.toObject();
+            if (s.value("id").toString() != sourceId) continue;
+            const QUrl url(s.value("url").toString());
+            found = s.value("kind").toString() == QLatin1String("electrum")
+                    && url.scheme() == QLatin1String("ssl")
+                    && !url.host().endsWith(QLatin1String(".onion"), Qt::CaseInsensitive);
+        }
+        if (!found) return QStringLiteral("Choose an Electrum server with a regular TLS address (ssl://host:port).");
+        for (qsizetype i = 0; i < list.size(); ++i) {
+            QJsonObject s = list.at(i).toObject();
+            const bool selected = s.value("id").toString() == sourceId;
+            s.insert(QStringLiteral("use"), selected);
+            if (selected) {
+                s.insert(QStringLiteral("tor"), false);
+                s.insert(QStringLiteral("history"), true);
+            }
+            list.replace(i, s);
+        }
+        return {};
+    });
+}
+
 QString BitcoinWalletUiBackend::addSource(QString address, QString kind, QString name) {
+    return addServer(address, kind, name, {});
+}
+
+QString BitcoinWalletUiBackend::addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name) {
+    if (rpcUser.isEmpty() && !rpcPass.isEmpty()) return QStringLiteral("Enter the RPC username as well as the password.");
+    const QJsonObject credentials = rpcUser.isEmpty() ? QJsonObject{} : QJsonObject{{"username", rpcUser}, {"password", rpcPass}};
+    return addServer(address, QStringLiteral("rpc"), name, credentials);
+}
+
+QString BitcoinWalletUiBackend::useRpcSource(QString sourceId) {
+    return editSources([&](QJsonArray &list) -> QString {
+        bool found = false;
+        for (const QJsonValue &v : list) {
+            const auto s = v.toObject();
+            if (s.value("id").toString() == sourceId && s.value("kind").toString() == QLatin1String("rpc")) found = true;
+        }
+        if (!found) return QStringLiteral("Choose a Bitcoin Core RPC endpoint.");
+        for (qsizetype i = 0; i < list.size(); ++i) {
+            auto s = list.at(i).toObject();
+            const bool selected = s.value("id").toString() == sourceId;
+            s.insert("use", selected);
+            if (selected) s.insert("history", false);
+            list.replace(i, s);
+        }
+        return {};
+    });
+}
+
+QString BitcoinWalletUiBackend::addServer(QString address, QString kind, QString name, const QJsonObject &credentials) {
     address = address.trimmed();
     name = name.trimmed();
     kind = kind.trimmed().toLower();
-    if (kind != QLatin1String("electrum") && kind != QLatin1String("esplora"))
-        return QStringLiteral("Choose an Electrum or an Esplora server.");
+    if (kind != QLatin1String("electrum") && kind != QLatin1String("esplora") && kind != QLatin1String("rpc"))
+        return QStringLiteral("Choose an Electrum, Esplora or Bitcoin Core RPC server.");
     // The host only names the entry: the node module parses and normalizes the address itself.
     const QString host = QUrl(address.contains(QLatin1String("://")) ? address : QStringLiteral("tcp://") + address).host();
     if (host.isEmpty()) return QStringLiteral("Enter a server address, such as 192.168.1.20:50001 or electrs.lan.");
@@ -532,7 +660,10 @@ QString BitcoinWalletUiBackend::addSource(QString address, QString kind, QString
         };
         QString id = base;
         for (int n = 2; taken(id); ++n) id = base + QLatin1Char('-') + QString::number(n);
-        QJsonObject s{{"id", id}, {"kind", kind}, {"url", address}, {"use", true}, {"history", false}, {"tor", true}};
+        // RPC starts disabled: probing its capabilities does not switch the wallet's authority.
+        const bool rpc = kind == QLatin1String("rpc");
+        QJsonObject s{{"id", id}, {"kind", kind}, {"url", address}, {"use", !rpc}, {"history", false}, {"tor", !rpc}};
+        if (!credentials.isEmpty()) s.insert("credentials", credentials);
         if (!name.isEmpty()) s.insert("label", name);
         list.append(s);
         added = id;

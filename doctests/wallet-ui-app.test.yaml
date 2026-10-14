@@ -74,7 +74,7 @@ sections:
               timeout: 15000
               screenshot: "wallet-open-page.png"
 
-            - name: "Open Sources and privacy before any wallet is open"
+            - name: "Open Sources before any wallet is open"
               action: click_object
               find_value: "networkSettingsButton"
             - name: "The sheet opens"
@@ -89,6 +89,11 @@ sections:
               property: "sourcesConfigured"
               value: true
               timeout: 30000
+            - name: "Expand advanced settings"
+              action: call_method
+              find_value: "advancedSourcesButton"
+              method: "clicked"
+              args: []
             - name: "With Kyoto off, both servers in use are one operator's, and the app says so"
               action: expect_property
               find_value: "oneOperatorNotice"
@@ -131,21 +136,14 @@ sections:
               find_value: "bitcoinWalletRoot"
               method: "scrollSources"
               args: ["end"]
-            - name: "Turn on History for the Electrum server: the app asks first"
+            - name: "Expand Electrum details"
               action: call_method
-              find_value: "historySwitch_electrum.example"
+              find_value: "sourceDetails_electrum.example"
               method: "clicked"
               args: []
-            - name: "It says the server will learn every address"
-              action: expect_property
-              find_value: "historyConfirm_electrum.example"
-              property: "visible"
-              value: true
-              timeout: 5000
-              screenshot: "wallet-history-confirm.png"
-            - name: "Turn it on"
+            - name: "Turn on History for the Electrum server"
               action: call_method
-              find_value: "confirmHistory_electrum.example"
+              find_value: "historySwitch_electrum.example"
               method: "clicked"
               args: []
             - name: "History is on"
@@ -154,21 +152,9 @@ sections:
               property: "checked"
               value: true
               timeout: 10000
-            - name: "Switch its Tor off: the app asks first, in its row"
+            - name: "Switch its Tor off"
               action: call_method
               find_value: "torSwitch_electrum.example"
-              method: "clicked"
-              args: []
-            - name: "It says what the server would see"
-              action: expect_property
-              find_value: "torOffConfirm_electrum.example"
-              property: "visible"
-              value: true
-              timeout: 5000
-              screenshot: "wallet-tor-off-confirm.png"
-            - name: "Reach it without Tor"
-              action: call_method
-              find_value: "skipTor_electrum.example"
               method: "clicked"
               args: []
             - name: "The row is marked"
@@ -177,9 +163,9 @@ sections:
               property: "visible"
               value: true
               timeout: 10000
-            - name: "...and a notice lists it"
+            - name: "The public-service disclosure remains visible"
               action: expect_property
-              find_value: "withoutTorNotice"
+              find_value: "publicPrivacyNotice"
               property: "visible"
               value: true
               timeout: 10000
@@ -190,10 +176,15 @@ sections:
               args: []
             - name: "Nothing is reached without Tor"
               action: expect_property
-              find_value: "withoutTorNotice"
+              find_value: "withoutTorBadge_electrum.example"
               property: "visible"
               value: false
               timeout: 10000
+            - name: "Expand the local server details"
+              action: call_method
+              find_value: "sourceDetails_192.168.1.20"
+              method: "clicked"
+              args: []
             - name: "Remove your own server again"
               action: call_method
               find_value: "removeSource_192.168.1.20"
@@ -229,6 +220,11 @@ sections:
               find_value: "bitcoinWalletRoot"
               method: "scrollSources"
               args: ["end"]
+            - name: "Expand certificate details"
+              action: call_method
+              find_value: "sourceDetails_electrs.lan"
+              method: "clicked"
+              args: []
             - name: "...in its row"
               action: expect_property
               find_value: "certDetails_electrs.lan"
@@ -279,6 +275,11 @@ sections:
               find_value: "bitcoinWalletRoot"
               method: "scrollSources"
               args: ["top"]
+            - name: "Expand Bitcoin peer details"
+              action: call_method
+              find_value: "sourceDetails_kyoto"
+              method: "clicked"
+              args: []
             - name: "Under Kyoto, the install's peer book: the signed list, peers learned, and how many worked lately"
               action: expect_property
               find_value: "curatedLine"
@@ -1160,7 +1161,7 @@ sections:
               value: true
               timeout: 15000
               screenshot: "wallet-closed.png"
-            - name: "Sources and privacy, with the wallet closed"
+            - name: "Sources, with the wallet closed"
               action: call_method
               find_value: "networkSettingsButton"
               method: "clicked"

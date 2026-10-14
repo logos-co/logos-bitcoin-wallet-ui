@@ -48,6 +48,44 @@ Item {
     readonly property string displayedNetwork: (walletOpen || opening) && status.network ? status.network : activeNetwork
     readonly property var wallets: ready ? j(backend.walletsJson, "[]") : []
     readonly property var walletsOnNetwork: wallets.filter(function (w) { return !w.network || w.network === root.activeNetwork })
+    readonly property var accounts: ready ? j(backend.accountsJson, "[]") : []
+    readonly property bool accountsRead: ready && backend.accountsJson !== ""
+    readonly property var accountsOnNetwork: accounts.filter(function (a) {
+        return (a.family === "bitcoin" || a.family === "bitcoin_taproot")
+                && a.chain === (root.displayedNetwork === "mainnet" ? "main" : "test")
+    })
+    property string selectedAccountId: ""
+    readonly property string accountId: walletOpen ? (status.group || "") : selectedAccountId
+    readonly property var selectedAccount: accountsOnNetwork.filter(function (a) { return a.id === root.accountId })[0] || null
+    function accountIndex() {
+        for (var i = 0; i < accountsOnNetwork.length; i++) if (accountsOnNetwork[i].id === accountId) return i
+        return -1
+    }
+    function accountProvider(a) {
+        if (!a) return "Bitcoin account"
+        return a.signer === "keystore_module" ? "This device (Keystore)" : (a.signer || "Signer")
+    }
+    function accountTitle(a) { return a ? (a.label || "Wallet") + " · " + shortId(a.id) : "Select an account" }
+    readonly property bool accountSwitchBlocked: !!root.status.openSend || root.sendLive
+    function selectAccount(a) {
+        if (!a || a.available !== true || root.busy || root.opening || root.accountSwitchBlocked) return
+        root.selectedAccountId = a.id
+        backend.selectAccount(a.id)
+    }
+    function manageAccounts() {
+        logos.request("evm.accounts.manage", ({}), function (res) {
+            if (!res.ok && res.error !== "cancelled") root.notify("Keystore", "Open the Keystore app to create, restore or manage Bitcoin accounts.")
+            if (root.ready) backend.refresh()
+        })
+    }
+    onAccountIdChanged: {
+        if (root.walletOpen && root.status.group) root.selectedAccountId = root.status.group
+        if (accountPicker) accountPicker.syncIndex()
+    }
+    onAccountsOnNetworkChanged: {
+        if (!root.walletOpen && !root.accountsOnNetwork.some(function (a) { return a.id === root.selectedAccountId })) root.selectedAccountId = ""
+        if (accountPicker) accountPicker.syncIndex()
+    }
     // Source settings apply when a wallet opens; while one is open, opening or closing they show but do not change.
     readonly property bool networkLocked: walletOpen || opening || walletState === "closing" || busy
 
@@ -111,13 +149,24 @@ Item {
     readonly property var chainOperators: root.operatorsOf(chainSources)
     readonly property bool serversDecideChain: chainSources.length > 0 && chainSources.every(function (s) { return s.kind === "electrum" })
     readonly property string defaultProxy: "socks5h://127.0.0.1:9050"
-    // A switch waiting for its confirmation, by source id; the confirmation shows in that row.
-    property string historyAskedFor: ""
-    property string torOffAskedFor: ""
+    // A failed server probe can explain why Kyoto is peerless too: both use this proxy.
+    // Match a proxy connection failure, not a remote server refusing or timing out over Tor.
+    readonly property var torFailureSource: sourceList.find(function (s) {
+        var h = root.healthOf(s.id)
+        return s.use === true && root.usesTor(s) && h && h.state === "unreachable"
+               && /proxy server unreachable/i.test(String(h.error || ""))
+    }) || null
+    readonly property string torHelp: "Cannot reach " + (sourcesInfo.proxy || defaultProxy)
+                                      + ". Start Tor, update the proxy in Advanced, or close the wallet and choose Use without Tor under Electrum."
+    readonly property var directServers: sourceList.filter(function (s) {
+        return s.kind === "electrum" && /^ssl:\/\//i.test(String(s.url || "")) && !root.isOnion(s) && s.suspect !== true
+    })
+    // Keep expanded rows open across source-health refreshes.
+    property var expandedSources: []
     // What a settings call refused, shown where it was made ("proxy" or "sources").
     property string networkNote: ""
     property string networkNoteAt: ""
-    onNetworkLockedChanged: { historyAskedFor = ""; torOffAskedFor = ""; networkNote = "" }
+    onNetworkLockedChanged: networkNote = ""
 
     // ---- the birthday, a reorg, and the local node's pruned gap ----
     readonly property var birthdayJob: ready && backend.birthdayJson !== "" ? j(backend.birthdayJson, "{}") : ({})
@@ -171,7 +220,7 @@ Item {
     // A scan from the birthday started over, wider, by the authority's count.
     function rescanPass(st) {
         var k = st && st.authority ? st.authority.kind : ""
-        var r = k === "local_node" || k === "local" ? (st.node || {}).rescans : (k === "kyoto" ? (st.kyoto || {}).rescans : 0)
+        var r = k === "local_node" || k === "local" || k === "rpc_node" ? (st.node || {}).rescans : (k === "kyoto" ? (st.kyoto || {}).rescans : 0)
         return root.isNum(r) ? Number(r) : 0
     }
     readonly property var prunedGap: walletOpen && status.node && status.node.prunedGap && typeof status.node.prunedGap === "object"
@@ -411,6 +460,9 @@ Item {
         if (s !== "syncing" && s !== "ready") return ""
         var a = st.authority || {}
         var peers = root.isNum(a.peers) ? Number(a.peers) : 0
+        if (peers <= 0 && root.torFailureSource && root.chainSources.length > 0
+                && root.chainSources.every(function (source) { return root.usesTor(source) })
+                && (a.kind === "kyoto" || a.kind === "electrum_headers")) return "tor_blocked"
         if (!root.isNum(a.height)) return peers > 0 ? "headers" : "connecting"
         if (peers <= 0) return "isolated"
         var tip = st.walletTip
@@ -425,6 +477,7 @@ Item {
         var a = st && st.authority ? st.authority : {}
         var n = root.isNum(a.peers) ? Number(a.peers) : 0
         if (a.kind === "kyoto") return "Kyoto · " + n + (n === 1 ? " peer" : " peers")
+        if (a.kind === "rpc_node") return "Bitcoin Core RPC"
         if (a.kind === "local_node" || a.kind === "local") return "Your node"
         if (a.kind === "electrum_headers") return "Servers' headers"
         return ""
@@ -445,6 +498,7 @@ Item {
         case "opening": return "Opening the wallet…"
         case "closing": return "Closing…"
         case "failed": return "Failed" + (st.lastError ? ": " + st.lastError : "")
+        case "tor_blocked": return "Cannot reach Tor · the wallet cannot connect to its chain sources"
         case "connecting": return "Connecting to the chain's sources…"
         case "headers": return "Reading the chain's headers…"
         case "isolated": return "No source agrees · block " + h + (age ? ", tip " + age + " old" : "")
@@ -462,6 +516,7 @@ Item {
         case "unavailable": return "Not answering"
         case "closing": return "Closing…"
         case "failed": return "Failed"
+        case "tor_blocked": return "Tor unavailable"
         case "connecting": case "headers": return "Connecting…"
         case "isolated": return "No sources"
         case "stalled": return "Stalled"
@@ -474,7 +529,7 @@ Item {
     function syncColor(st) {
         var s = root.syncState(st)
         if (s === "synced" || s === "local") return Theme.palette.success
-        if (s === "isolated" || s === "stalled" || s === "failed" || s === "unavailable") return Theme.palette.error
+        if (s === "isolated" || s === "stalled" || s === "failed" || s === "unavailable" || s === "tor_blocked") return Theme.palette.error
         return Theme.palette.textSecondary
     }
     // What decides the chain, and how many sources agree on it.
@@ -490,6 +545,7 @@ Item {
         if (a.kind === "electrum_headers")
             return "The chain: headers from Electrum servers, checked here · " + n + (n === 1 ? " server agrees" : " servers agree")
         if (a.kind === "kyoto") return "The chain: Bitcoin peers, through block filters · " + n + (n === 1 ? " peer" : " peers")
+        if (a.kind === "rpc_node") return "The chain: Bitcoin Core RPC, headers checked here"
         if (a.kind === "local_node" || a.kind === "local") return "The chain: your own node, checked here"
         return ""
     }
@@ -629,6 +685,8 @@ Item {
         var on = list.filter(function (s) { return s.use === true && s.suspect !== true })
         var local = on.filter(function (s) { return s.kind === "local" })
         if (local.length) return local
+        var rpc = on.filter(function (s) { return s.kind === "rpc" })
+        if (rpc.length) return rpc
         var kyoto = on.filter(function (s) { return s.kind === "kyoto" })
         if (kyoto.length) return kyoto
         return on.filter(function (s) { return s.kind === "electrum" })
@@ -645,30 +703,27 @@ Item {
     function kindLabel(k) {
         if (k === "kyoto") return "Kyoto"
         if (k === "electrum") return "Electrum"
+        if (k === "rpc") return "Bitcoin Core RPC"
         if (k === "esplora") return "Esplora"
         if (k === "local") return "Your node"
         return k || ""
     }
-    function isServer(s) { return s.kind === "electrum" || s.kind === "esplora" }
+    function isServer(s) { return s.kind === "electrum" || s.kind === "esplora" || s.kind === "rpc" }
+    function usesTor(s) { return s.kind !== "local" && !s.lan && (s.route === "tor" || s.route === "onion") }
+    function sourceDescription(s) {
+        if (s.kind === "kyoto") return "Downloads block filters and matching blocks from Bitcoin peers; scans for your payments on this device without sending your addresses."
+        if (s.kind === "esplora") return "A block explorer's web API for fees and chain checks. With History on, it also looks up your payments."
+        if (s.kind === "electrum") return "A wallet server for fees and chain checks. With History on, it also looks up your payments. Can supply the chain when Kyoto and Your node are off."
+        if (s.kind === "rpc") return "Connects to Bitcoin Core over HTTP or HTTPS. Scans block filters when available, otherwise downloads full blocks; older-wallet restores can be slow."
+        if (s.kind === "local") return "Uses your Bitcoin Core node running in Logos to check the chain and find your payments. Requires the node module to be running and synced."
+        return ""
+    }
     function isOnion(s) { return /\.onion(:[0-9]+)?(\/|$)/i.test(String(s.url || "").replace(/^[a-z]+:\/\//i, "")) }
     function routeText(s) {
         if (s.kind === "local") return "over Logos IPC"
         if (s.lan) return "reached directly, on your network"
         if (root.isOnion(s)) return "an onion service, always through Tor"
         return s.route === "direct" ? "without Tor" : "through Tor"
-    }
-    // What a source sees of this computer without Tor, by what it does.
-    function torOffText(s) {
-        var sees = s.kind === "kyoto" ? "Its peers see this computer's IP address, the blocks the wallet downloads and the transactions it broadcasts."
-                 : s.history === true ? "It sees this computer's IP address, linked to every address and transaction of this wallet."
-                 : "It sees this computer's IP address, and that a Bitcoin wallet runs here."
-        return sees + " Your internet provider sees that this computer uses Bitcoin."
-    }
-    function historyOnText(s) {
-        return (s.label || s.id) + " will learn every address of this wallet and can link them to each other"
-               + (s.route === "direct" && !s.lan ? ", and to this computer's IP address, since it is reached without Tor" : "")
-               + ". If it fails, the next server with History on learns them too. In return it gives faster restores, "
-               + "and payments while they are still pending."
     }
     function healthOf(id) {
         var list = Array.isArray(root.health.sources) ? root.health.sources : []
@@ -685,7 +740,8 @@ Item {
         var w = root.walletViewOf(s.id)
         var h = root.healthOf(s.id)
         var parts = []
-        if (w && w.history) parts.push("history server")
+        if (w && w.history && s.kind !== "rpc") parts.push("history server")
+        if (s.kind === "rpc" && h && h.serverVersion) parts.push(h.serverVersion)
         if (w && (w.state === "stale" || w.state === "failing" || w.state === "down")) parts.push(w.state)
         if (!h) parts.push("not checked yet")
         else if (h.state === "ok") parts.push((root.isNum(h.rttMs) ? h.rttMs + " ms" : "reachable") + (root.isNum(h.tipHeight) ? " · block " + root.group(h.tipHeight) : ""))
@@ -693,7 +749,7 @@ Item {
         else if (h.state === "wrong_network") parts.push("on another network")
         else if (h.state === "no_route") parts.push("no route" + (h.error ? ": " + h.error : ""))
         else if (h.state === "no_peers") parts.push(h.error ? h.error : "no peer to dial")
-        else if (h.state === "not_probed") parts.push(s.kind === "kyoto" && root.isNum(h.peers) ? h.peers + (h.peers === 1 ? " peer today" : " peers today") : "not probed here")
+        else if (h.state === "not_probed") parts.push(s.kind === "kyoto" && root.isNum(h.peers) ? h.peers + " known peers · not a connection count" : "not probed here")
         else parts.push("not checked yet")
         return parts.join(" · ")
     }
@@ -703,9 +759,9 @@ Item {
         var servers = root.serversOverall(list)
         // Kyoto or your node decides the chain: it counts as a source of its own.
         var kind = st && st.authority ? st.authority.kind : ""
-        if (kind !== "kyoto" && kind !== "local_node") return servers
+        if (kind !== "kyoto" && kind !== "local_node" && kind !== "rpc_node") return servers
         var s = root.syncState(st)
-        var own = s === "synced" || s === "local" ? "ok" : (s === "isolated" ? "offline" : "")
+        var own = s === "synced" || s === "local" ? "ok" : (s === "isolated" || s === "tor_blocked" ? "offline" : "")
         if (list.length === 0) return own
         return own === "offline" && servers === "ok" ? "degraded" : servers
     }
@@ -943,6 +999,239 @@ Item {
     // Activity's expanded row, by txid.
     property string openTx: ""
 
+    component SourceCard: LogosFrame {
+        id: sourceRow
+        required property var modelData
+        readonly property bool expanded: root.expandedSources.indexOf(modelData.id) >= 0
+        objectName: "sourceCard_" + modelData.id
+        readonly property bool server: root.isServer(modelData)
+        readonly property bool onion: root.isOnion(modelData)
+        readonly property bool direct: modelData.route === "direct" && !modelData.lan && modelData.kind !== "local"
+        Layout.fillWidth: true
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing.tiny
+            RowLayout {
+                Layout.fillWidth: true
+                LogosText { Layout.fillWidth: true; Layout.preferredWidth: 1; wrapMode: Text.Wrap; textFormat: Text.PlainText; text: modelData.label || modelData.id || "" }
+                // Operators matter for servers: Kyoto's peers and your node have none to compare.
+                LogosText { visible: sourceRow.server && text !== "" && text !== (modelData.label || ""); textFormat: Text.PlainText
+                            color: Theme.palette.textTertiary; text: modelData.operator || "" }
+
+                LogosBadge { objectName: "sourceEnabled_" + modelData.id
+                             text: modelData.use === true ? "Enabled" : "Disabled"
+                             color: modelData.use === true ? Theme.palette.success : Theme.palette.textTertiary }
+                LogosBadge { objectName: "lanBadge_" + modelData.id; visible: modelData.lan === true && modelData.kind !== "local"
+                             text: "Your network"; color: Theme.palette.textSecondary }
+                LogosBadge { objectName: "withoutTorBadge_" + modelData.id; visible: sourceRow.direct && modelData.use === true
+                             text: "Direct"; color: Theme.palette.textSecondary }
+                LogosBadge { objectName: "suspectBadge_" + modelData.id; visible: modelData.suspect === true
+                             text: "Suspect"; color: Theme.palette.error }
+                LogosBadge { objectName: "notEncryptedBadge_" + modelData.id; visible: root.notEncrypted(modelData)
+                             text: "Not encrypted"; color: Theme.palette.warning }
+                LogosBadge { objectName: "pinnedBadge_" + modelData.id; visible: !!modelData.certSha256
+                             text: "Pinned"; color: Theme.palette.textSecondary }
+
+                LogosSwitch {
+                    objectName: "useSwitch_" + modelData.id
+                    visible: !root.networkLocked
+                    text: "Use"
+                    checkable: false
+                    checked: modelData.use === true
+                    enabled: root.ready
+                    onClicked: root.setSource(modelData.id, { use: !(modelData.use === true) })
+                }
+                LogosButton {
+                    objectName: "useRpc_" + modelData.id
+                    visible: modelData.kind === "rpc" && !root.networkLocked
+                    text: "Use only this"
+                    enabled: root.ready
+                    onClicked: root.networkCall(backend.useRpcSource(modelData.id), "sources")
+                }
+                LogosButton {
+                    objectName: "sourceDetails_" + modelData.id
+                    text: sourceRow.expanded ? "Hide details" : "Details"
+                    onClicked: root.expandedSources = sourceRow.expanded
+                               ? root.expandedSources.filter(function (id) { return id !== modelData.id })
+                               : root.expandedSources.concat([modelData.id])
+                }
+            }
+            LogosText { objectName: "sourceHealth_" + modelData.id
+                        visible: modelData.use === true || modelData.kind === "rpc"; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere
+                        textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
+                        text: modelData.use === true || modelData.kind === "rpc" ? root.healthLine(modelData) : "" }
+            LogosText { Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText
+                        font.pixelSize: 12; color: Theme.palette.textTertiary
+                        text: (modelData.url || "") + " · " + root.routeText(modelData) }
+            ColumnLayout {
+                objectName: "sourceOptions_" + modelData.id
+                Layout.fillWidth: true
+                visible: sourceRow.expanded
+                spacing: Theme.spacing.small
+                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
+                            color: Theme.palette.textSecondary; text: root.sourceDescription(modelData) }
+                RowLayout {
+                    Layout.fillWidth: true
+                    LogosSwitch {
+                        objectName: "historySwitch_" + modelData.id
+                        visible: !root.networkLocked && sourceRow.server && modelData.id !== "publicnode-rpc" && modelData.kind !== "rpc"
+                        text: "History"
+                        checkable: false
+                        checked: modelData.history === true
+                        enabled: root.ready
+                        onClicked: root.setSource(modelData.id, { history: !(modelData.history === true) })
+                    }
+                    LogosSwitch {
+                        objectName: "torSwitch_" + modelData.id
+                        visible: !root.networkLocked && modelData.kind !== "local" && modelData.lan !== true && !sourceRow.onion
+                        text: "Tor"
+                        checkable: false
+                        checked: modelData.tor === true
+                        enabled: root.ready
+                        onClicked: root.setSource(modelData.id, { tor: !(modelData.tor === true) })
+                    }
+                    LogosButton {
+                        objectName: "clearSuspect_" + modelData.id
+                        visible: modelData.suspect === true
+                        text: "Clear"
+                        enabled: root.ready
+                        onClicked: root.networkCall(backend.clearSuspect(modelData.id), "sources")
+                    }
+                    LogosButton {
+                        objectName: "checkRpc_" + modelData.id
+                        visible: modelData.kind === "rpc"
+                        text: "Check connection"
+                        enabled: root.ready
+                        onClicked: backend.probeSource(modelData.id)
+                    }
+                    LogosButton {
+                        objectName: "probeSource_" + modelData.id
+                        visible: root.isTls(modelData) && !modelData.certSha256 && !root.certOf(modelData)
+                                 && !(root.probe.sourceId === modelData.id && root.probe.state === "probing")
+                        text: "Check certificate"
+                        enabled: root.ready
+                        onClicked: backend.probeSource(modelData.id)
+                    }
+                    LogosButton {
+                        objectName: "removeSource_" + modelData.id
+                        visible: !root.networkLocked && sourceRow.server && modelData.id !== "publicnode-rpc"
+                        text: "Remove"
+                        enabled: root.ready
+                        onClicked: root.networkCall(backend.removeSource(modelData.id), "sources")
+                    }
+                }
+                LogosText { visible: sourceRow.server && modelData.kind !== "rpc"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                            font.pixelSize: 12; color: Theme.palette.textTertiary
+                            text: "History looks up your payments. Tor is optional and hides your IP, but not your queries." }
+                LogosText { objectName: "kyotoConflictLine"; visible: modelData.kind === "kyoto" && root.kyotoConflict !== null
+                            Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                            font.pixelSize: 12; color: Theme.palette.textSecondary
+                            text: root.kyotoConflict ? "Peers that disagreed were set aside at " + root.whenOf(root.kyotoConflict.at) : "" }
+                ColumnLayout {
+                    objectName: "ownPeersPane"
+                    visible: modelData.kind === "kyoto"
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing.tiny
+                    spacing: Theme.spacing.tiny
+                    LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
+                    LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
+                    LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                text: root.signedListNote() }
+                    LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
+                                color: Theme.palette.textSecondary
+                                text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "
+                                      + "few of Bitcoin Core's built-in onion nodes for more." }
+                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                text: "A peer of your own replaces all of these: Kyoto then connects to your peers alone, "
+                                      + "directly when they are on your network, otherwise through Tor." }
+                    Repeater {
+                        model: root.ownPeers
+                        RowLayout {
+                            Layout.fillWidth: true
+                            LogosText { objectName: "ownPeer_" + modelData; textFormat: Text.PlainText; font.pixelSize: 12; text: modelData }
+                            Item { Layout.fillWidth: true }
+                            LogosButton { objectName: "removeOwnPeer_" + modelData; visible: !root.networkLocked; text: "Remove"
+                                          enabled: root.ready
+                                          onClicked: root.setOwnPeers(root.ownPeers.filter(function (p) { return p !== modelData })) }
+                        }
+                    }
+                    LogosText { objectName: "ownPeersRoute"; visible: root.ownPeers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                font.pixelSize: 12; color: Theme.palette.textSecondary
+                                // Direct also when Kyoto's Tor is off, whatever the peers.
+                                text: root.peerList.route !== "direct" ? "Kyoto reaches them through Tor."
+                                      : (root.peerList.kyotoTor === false ? "Kyoto reaches them directly: its Tor is off."
+                                                                          : "Kyoto reaches them directly, on your network.") }
+                    RowLayout {
+                        visible: !root.networkLocked
+                        Layout.fillWidth: true
+                        LogosTextField { id: ownPeerField; objectName: "ownPeerField"; Layout.fillWidth: true
+                                         placeholderText: "host:port, such as 192.168.1.20:8333" }
+                        LogosButton { objectName: "addOwnPeerButton"; text: "Add"
+                                      enabled: root.ready && ownPeerField.text.trim() !== "" && root.ownPeers.length < 64
+                                      onClicked: root.setOwnPeers(root.ownPeers.concat([ownPeerField.text.trim()]),
+                                                                  function () { ownPeerField.text = "" }) }
+                    }
+                    LogosButton { objectName: "useCuratedButton"; visible: !root.networkLocked && root.ownPeers.length > 0
+                                  text: "Use the known peers again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
+                    LogosText { objectName: "ownPeersLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                font.pixelSize: 12; color: Theme.palette.textSecondary
+                                text: "Kyoto's peers change only while no wallet is open, like the other source settings." }
+                    LogosText { objectName: "ownPeersNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning; text: root.ownPeersNote }
+                }
+                // A pinned certificate, or one to look at before trusting it: untrusted, or just probed.
+                ColumnLayout {
+                    id: certPane
+                    objectName: "certPane_" + modelData.id
+                    readonly property var cert: root.certOf(modelData)
+                    readonly property bool pinned: !!modelData.certSha256
+                    readonly property bool mine: root.probe.sourceId === modelData.id
+                    visible: pinned || (mine && root.probe.state !== "done") || (!!cert && (cert.trusted === false || mine))
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.tiny
+                    LogosText { objectName: "certProbing_" + modelData.id; visible: certPane.mine && root.probe.state === "probing"
+                                font.pixelSize: 12; color: Theme.palette.textSecondary; text: "Checking the server…" }
+                    LogosText { objectName: "certProbeError_" + modelData.id; visible: certPane.mine && root.probe.state === "failed"
+                                Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; font.pixelSize: 12
+                                color: Theme.palette.warning; text: "Could not check it: " + (root.probe.error || "") }
+                    RowLayout {
+                        visible: certPane.pinned
+                        Layout.fillWidth: true
+                        LogosText { objectName: "certPin_" + modelData.id; Layout.fillWidth: true; Layout.preferredWidth: 1
+                                    wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText; font.pixelSize: 11
+                                    text: "Pinned certificate, SHA-256 " + root.fingerprint(modelData.certSha256) }
+                        LogosButton { objectName: "removePin_" + modelData.id; visible: !root.networkLocked; text: "Remove pin"
+                                      enabled: root.ready; onClicked: root.setSource(modelData.id, { certSha256: null }) }
+                    }
+                    LogosText { objectName: "certDetails_" + modelData.id; visible: !certPane.pinned && !!certPane.cert
+                                Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText; font.pixelSize: 11
+                                text: root.certText(certPane.cert) }
+                    LogosText { visible: !certPane.pinned && !!certPane.cert; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                font.pixelSize: 12; color: certPane.cert && certPane.cert.trusted === false ? Theme.palette.warning : Theme.palette.textSecondary
+                                text: certPane.cert && certPane.cert.trusted === false
+                                      ? "No authority this computer trusts signed it. Compare the fingerprint with the one its operator gives you before you trust it."
+                                      : "An authority this computer trusts signed it. Trusting it pins it: from then on only this certificate is accepted." }
+                    LogosButton { objectName: "trustCert_" + modelData.id; visible: !certPane.pinned && !!certPane.cert && !root.networkLocked
+                                  text: "Trust this certificate"; enabled: root.ready
+                                  onClicked: root.setSource(modelData.id, { certSha256: certPane.cert.certSha256 }) }
+                    LogosText { objectName: "pinLocked_" + modelData.id; visible: root.networkLocked && (certPane.pinned || !!certPane.cert)
+                                Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                text: "Pins change only while no wallet is open, like the other source settings: close the wallet to trust or remove one." }
+                }
+            }
+        }
+    }
+
+    component SourceList: ColumnLayout {
+        required property var entries
+        spacing: Theme.spacing.small
+        Repeater {
+            model: entries
+            SourceCard {}
+        }
+    }
+
     // ================= the sources pane: Settings, and the sheet before a wallet opens =================
     Component {
         id: networkPane
@@ -971,71 +1260,54 @@ Item {
                 message: "These settings apply when a wallet opens. Close the wallet to change them."
             }
 
-            LogosText { text: "Network privacy"; font.pixelSize: 15 }
-            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                        text: "Sources go through this Tor proxy, unless you set one to skip Tor. Servers on your own network "
-                              + "are reached directly, since Tor cannot reach them. A source set to Tor never falls back to a direct connection." }
-            RowLayout {
-                Layout.fillWidth: true
-                LogosTextField { id: proxyField; objectName: "proxyField"; Layout.fillWidth: true; readOnly: root.networkLocked
-                                 placeholderText: root.defaultProxy; text: root.sourcesInfo.proxy || "" }
-                LogosButton {
-                    objectName: "saveProxyButton"; text: "Save proxy"
-                    visible: !root.networkLocked
-                    enabled: root.ready && proxyField.text.trim() !== "" && proxyField.text.trim() !== (root.sourcesInfo.proxy || "")
-                    onClicked: root.networkCall(backend.setProxy(proxyField.text.trim()), "proxy")
-                }
-            }
-            LogosNotice {
-                Layout.fillWidth: true
-                severity: LogosNotice.Error
-                shown: root.networkNote !== "" && root.networkNoteAt === "proxy"
-                message: shown ? root.networkNote : ""
-            }
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: Theme.spacing.small
-                LogosText { text: "Sources"; font.pixelSize: 15 }
-                LogosInfoButton {
-                    objectName: "operatorsInfo"
-                    title: "Why a second operator matters"
-                    text: "Kyoto, when it serves the chain, asks several Bitcoin peers run by different people. A second server "
-                          + "operator adds four things. The cross-check compares its tip, and a header at a random height, with "
-                          + "the wallet's chain, which catches a server that lags or follows another chain. If the server holding "
-                          + "the wallet's history fails, the wallet moves to the next one with History on, which then learns the "
-                          + "addresses too. Fee rates become the median of the sources. With Kyoto off, the chain is the one with "
-                          + "the most work among the Electrum servers in use, so a server that hides blocks loses to another "
-                          + "operator. A second operator does not make the history more complete: only one server is asked about "
-                          + "the wallet's addresses at a time."
-                }
+                LogosText { text: "Connection"; font.pixelSize: 16; font.weight: Theme.typography.weightBold }
                 LogosBadge { visible: root.overall !== ""; text: root.overallLabel(root.overall); color: root.overallColor(root.overall) }
                 Item { Layout.fillWidth: true }
-            }
-            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textTertiary
-                        text: "Switch on the sources you want, one by one. Kyoto asks Bitcoin peers for blocks and learns no address. "
-                              + "A server with History on learns every address of this wallet." }
-            // Above the list, so it stays in place however long the list grows.
-            ColumnLayout {
-                objectName: "addSourcePane"
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacing.small
-                visible: !root.networkLocked
-                spacing: Theme.spacing.tiny
-                LogosText { text: "Add a server of your own"; font.weight: Theme.typography.weightMedium }
-                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            text: "An Electrum or Esplora server you run or trust: an address like 192.168.1.20:50001 or electrs.lan, "
-                                  + "or https://host:port. Servers on your own network are reached directly, without Tor." }
-                RowLayout {
-                    Layout.fillWidth: true
-                    LogosTextField { id: addSourceAddress; objectName: "addSourceAddress"; Layout.fillWidth: true
-                                     placeholderText: "192.168.1.20:50001" }
-                    LogosComboBox { id: addSourceKind; objectName: "addSourceKind"; model: ["Electrum", "Esplora"] }
-                    LogosTextField { id: addSourceName; objectName: "addSourceName"; Layout.preferredWidth: 160
-                                     placeholderText: "Name (optional)" }
-                    LogosButton { objectName: "addSourceButton"; text: "Add"
-                                  enabled: root.ready && addSourceAddress.text.trim() !== ""; onClicked: pane.addSource() }
+                LogosInfoButton {
+                    objectName: "operatorsInfo"
+                    title: "How Bitcoin sources work"
+                    text: "Connection types, providers and your own node."
+                    dialogWidth: 700
+                    dialogContentItem: ScrollView {
+                        id: sourceHelpScroll
+                        implicitHeight: Math.max(120, Math.min(540, root.height - 180))
+                        clip: true
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        ColumnLayout {
+                            width: sourceHelpScroll.availableWidth
+                            spacing: Theme.spacing.large
+                            Repeater {
+                                model: [
+                                    { heading: "Bitcoin Core RPC", body: "The interface to a public or self-hosted Bitcoin Core node. The wallet checks headers and scans block filters locally. Without filters, it scans full blocks, which can make restores slow. Credentials are optional; keys and signing stay in the keys app." },
+                                    { heading: "Electrum", body: "A wallet server protocol for chain headers, payment history, fee estimates and broadcasting transactions. It can synchronize the wallet without a local node." },
+                                    { heading: "Esplora", body: "A block explorer's web API for payment history, fee estimates and broadcasting transactions. This wallet also needs Electrum, your node or Bitcoin peers to supply its chain." },
+                                    { heading: "Providers", body: "Blockstream and mempool.space operate services. A provider may offer several connection types. Its regular and onion addresses are different routes to the same operator." },
+                                    { heading: "Your own node", body: "The bundled Bitcoin Core node validates the chain and scans for your payments locally. It must be running and synced. Disable public services to use only your node." },
+                                    { heading: "Advanced settings", body: "History enables payment lookups. Tor hides your IP from a provider, but not your queries; onion addresses require it. Kyoto scans block filters from Bitcoin peers. Certificates, custom servers, peers and the connection record are available in Details or Advanced." }
+                                ]
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacing.small
+                                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap
+                                                text: modelData.heading; font.weight: Theme.typography.weightBold }
+                                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap
+                                                text: modelData.body; color: Theme.palette.textSecondary }
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+            LogosNotice {
+                objectName: "torSettingsNotice"
+                Layout.fillWidth: true
+                severity: LogosNotice.Error
+                shown: root.torFailureSource !== null
+                title: "Cannot reach the Tor proxy"
+                message: root.torHelp
             }
             LogosNotice {
                 objectName: "sourcesNote"
@@ -1048,231 +1320,93 @@ Item {
                         text: !root.sourcesRead ? "Reading the sources…"
                               : !root.sourcesConfigured ? "Setting up the sources for " + (root.sourcesInfo.network || "this network") + "…"
                               : "No sources on this network yet: add a server of your own." }
-            Repeater {
-                model: root.sourceList
-                LogosFrame {
-                    id: sourceRow
-                    readonly property bool server: root.isServer(modelData)
-                    readonly property bool onion: root.isOnion(modelData)
-                    readonly property bool direct: modelData.route === "direct" && !modelData.lan && modelData.kind !== "local"
-                    Layout.fillWidth: true
-                    contentItem: ColumnLayout {
-                        spacing: Theme.spacing.tiny
-                        RowLayout {
-                            Layout.fillWidth: true
-                            LogosText { textFormat: Text.PlainText; text: modelData.label || modelData.id || "" }
-                            // Operators matter for servers: Kyoto's peers and your node have none to compare.
-                            LogosText { visible: sourceRow.server && text !== "" && text !== (modelData.label || ""); textFormat: Text.PlainText
-                                        color: Theme.palette.textTertiary; text: modelData.operator || "" }
-                            LogosBadge { text: root.kindLabel(modelData.kind); color: Theme.palette.textSecondary }
-                            LogosBadge { objectName: "lanBadge_" + modelData.id; visible: modelData.lan === true && modelData.kind !== "local"
-                                         text: "Your network"; color: Theme.palette.textSecondary }
-                            LogosBadge { objectName: "withoutTorBadge_" + modelData.id; visible: sourceRow.direct && modelData.use === true
-                                         text: "Without Tor"; color: Theme.palette.warning }
-                            LogosBadge { objectName: "suspectBadge_" + modelData.id; visible: modelData.suspect === true
-                                         text: "Suspect"; color: Theme.palette.error }
-                            LogosBadge { objectName: "notEncryptedBadge_" + modelData.id; visible: root.notEncrypted(modelData)
-                                         text: "Not encrypted"; color: Theme.palette.warning }
-                            LogosBadge { objectName: "pinnedBadge_" + modelData.id; visible: !!modelData.certSha256
-                                         text: "Pinned"; color: Theme.palette.textSecondary }
-                            // Takes the free space but asks for none, so a long error elides instead of
-                            // widening the row and pushing its switches out.
-                            LogosText { Layout.fillWidth: true; Layout.preferredWidth: 1; horizontalAlignment: Text.AlignRight
-                                        elide: Text.ElideMiddle; textFormat: Text.PlainText; font.pixelSize: 12
-                                        color: Theme.palette.textSecondary
-                                        text: modelData.use === true ? root.healthLine(modelData) : "" }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            LogosText { Layout.fillWidth: true; Layout.preferredWidth: 1; elide: Text.ElideRight; textFormat: Text.PlainText
-                                        font.pixelSize: 11; color: Theme.palette.textTertiary
-                                        text: (modelData.url || "") + " · " + root.routeText(modelData)
-                                              + (modelData.history === true ? " · learns your addresses" : "") }
-                            // On needs no asking; History on and Tor off ask first, in this row.
-                            LogosSwitch {
-                                objectName: "useSwitch_" + modelData.id
-                                visible: !root.networkLocked
-                                text: "Use"
-                                checkable: false
-                                checked: modelData.use === true
-                                enabled: root.ready
-                                onClicked: root.setSource(modelData.id, { use: !(modelData.use === true) })
-                            }
-                            LogosSwitch {
-                                objectName: "historySwitch_" + modelData.id
-                                visible: !root.networkLocked && sourceRow.server
-                                text: "History"
-                                checkable: false
-                                checked: modelData.history === true
-                                enabled: root.ready
-                                onClicked: {
-                                    if (modelData.history === true) root.setSource(modelData.id, { history: false })
-                                    else { root.torOffAskedFor = ""; root.historyAskedFor = modelData.id }
-                                }
-                            }
-                            LogosSwitch {
-                                objectName: "torSwitch_" + modelData.id
-                                visible: !root.networkLocked && modelData.kind !== "local" && modelData.lan !== true && !sourceRow.onion
-                                text: "Tor"
-                                checkable: false
-                                checked: modelData.tor === true
-                                enabled: root.ready
-                                onClicked: {
-                                    if (modelData.tor !== true) root.setSource(modelData.id, { tor: true })
-                                    else { root.historyAskedFor = ""; root.torOffAskedFor = modelData.id }
-                                }
-                            }
-                            LogosButton {
-                                objectName: "clearSuspect_" + modelData.id
-                                visible: modelData.suspect === true
-                                text: "Clear"
-                                enabled: root.ready
-                                onClicked: root.networkCall(backend.clearSuspect(modelData.id), "sources")
-                            }
-                            LogosButton {
-                                objectName: "probeSource_" + modelData.id
-                                visible: root.isTls(modelData) && !modelData.certSha256 && !root.certOf(modelData)
-                                         && !(root.probe.sourceId === modelData.id && root.probe.state === "probing")
-                                text: "Check certificate"
-                                enabled: root.ready
-                                onClicked: backend.probeSource(modelData.id)
-                            }
-                            LogosButton {
-                                objectName: "removeSource_" + modelData.id
-                                visible: !root.networkLocked && sourceRow.server
-                                text: "Remove"
-                                enabled: root.ready
-                                onClicked: root.networkCall(backend.removeSource(modelData.id), "sources")
-                            }
-                        }
-                        LogosNotice {
-                            objectName: "historyConfirm_" + modelData.id
-                            Layout.fillWidth: true
-                            severity: LogosNotice.Warning
-                            shown: root.historyAskedFor === modelData.id && modelData.history !== true && !root.networkLocked
-                            title: "Turn on History for " + (modelData.label || modelData.id) + "?"
-                            message: shown ? root.historyOnText(modelData) : ""
-                            actions: [
-                                LogosButton { objectName: "confirmHistory_" + modelData.id; text: "Turn on History"
-                                              onClicked: { root.historyAskedFor = ""; root.setSource(modelData.id, { history: true }) } },
-                                LogosButton { objectName: "keepHistoryOff_" + modelData.id; text: "Keep it off"
-                                              onClicked: root.historyAskedFor = "" }
-                            ]
-                        }
-                        LogosNotice {
-                            objectName: "torOffConfirm_" + modelData.id
-                            Layout.fillWidth: true
-                            severity: LogosNotice.Warning
-                            shown: root.torOffAskedFor === modelData.id && modelData.tor === true && !root.networkLocked
-                            title: "Reach " + (modelData.label || modelData.id) + " without Tor?"
-                            message: shown ? root.torOffText(modelData) : ""
-                            actions: [
-                                LogosButton { objectName: "skipTor_" + modelData.id; text: "Reach it without Tor"
-                                              onClicked: { root.torOffAskedFor = ""; root.setSource(modelData.id, { tor: false }) } },
-                                LogosButton { objectName: "keepTor_" + modelData.id; text: "Keep Tor"
-                                              onClicked: root.torOffAskedFor = "" }
-                            ]
-                        }
-                        LogosText { objectName: "kyotoConflictLine"; visible: modelData.kind === "kyoto" && root.kyotoConflict !== null
-                                    Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                                    font.pixelSize: 12; color: Theme.palette.textSecondary
-                                    text: root.kyotoConflict ? "Peers that disagreed were set aside at " + root.whenOf(root.kyotoConflict.at) : "" }
-                        ColumnLayout {
-                            objectName: "ownPeersPane"
-                            visible: modelData.kind === "kyoto"
-                            Layout.fillWidth: true
-                            Layout.topMargin: Theme.spacing.tiny
-                            spacing: Theme.spacing.tiny
-                            LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
-                            LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                                        font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
-                            LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                        textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                        text: root.signedListNote() }
-                            LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
-                                        color: Theme.palette.textSecondary
-                                        text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "
-                                              + "few of Bitcoin Core's built-in onion nodes for more." }
-                            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                        text: "A peer of your own replaces all of these: Kyoto then connects to your peers alone, "
-                                              + "directly when they are on your network, otherwise through Tor." }
-                            Repeater {
-                                model: root.ownPeers
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    LogosText { objectName: "ownPeer_" + modelData; textFormat: Text.PlainText; font.pixelSize: 12; text: modelData }
-                                    Item { Layout.fillWidth: true }
-                                    LogosButton { objectName: "removeOwnPeer_" + modelData; visible: !root.networkLocked; text: "Remove"
-                                                  enabled: root.ready
-                                                  onClicked: root.setOwnPeers(root.ownPeers.filter(function (p) { return p !== modelData })) }
-                                }
-                            }
-                            LogosText { objectName: "ownPeersRoute"; visible: root.ownPeers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                        font.pixelSize: 12; color: Theme.palette.textSecondary
-                                        // Direct also when Kyoto's Tor is off, whatever the peers.
-                                        text: root.peerList.route !== "direct" ? "Kyoto reaches them through Tor."
-                                              : (root.peerList.kyotoTor === false ? "Kyoto reaches them directly: its Tor is off."
-                                                                                  : "Kyoto reaches them directly, on your network.") }
-                            RowLayout {
-                                visible: !root.networkLocked
-                                Layout.fillWidth: true
-                                LogosTextField { id: ownPeerField; objectName: "ownPeerField"; Layout.fillWidth: true
-                                                 placeholderText: "host:port, such as 192.168.1.20:8333" }
-                                LogosButton { objectName: "addOwnPeerButton"; text: "Add"
-                                              enabled: root.ready && ownPeerField.text.trim() !== "" && root.ownPeers.length < 64
-                                              onClicked: root.setOwnPeers(root.ownPeers.concat([ownPeerField.text.trim()]),
-                                                                          function () { ownPeerField.text = "" }) }
-                            }
-                            LogosButton { objectName: "useCuratedButton"; visible: !root.networkLocked && root.ownPeers.length > 0
-                                          text: "Use the known peers again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
-                            LogosText { objectName: "ownPeersLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                        font.pixelSize: 12; color: Theme.palette.textSecondary
-                                        text: "Kyoto's peers change only while no wallet is open, like the other source settings." }
-                            LogosText { objectName: "ownPeersNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                        textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning; text: root.ownPeersNote }
-                        }
-                        // A pinned certificate, or one to look at before trusting it: untrusted, or just probed.
-                        ColumnLayout {
-                            id: certPane
-                            objectName: "certPane_" + modelData.id
-                            readonly property var cert: root.certOf(modelData)
-                            readonly property bool pinned: !!modelData.certSha256
-                            readonly property bool mine: root.probe.sourceId === modelData.id
-                            visible: pinned || (mine && root.probe.state !== "done") || (!!cert && (cert.trusted === false || mine))
-                            Layout.fillWidth: true
-                            spacing: Theme.spacing.tiny
-                            LogosText { objectName: "certProbing_" + modelData.id; visible: certPane.mine && root.probe.state === "probing"
-                                        font.pixelSize: 12; color: Theme.palette.textSecondary; text: "Checking the server…" }
-                            LogosText { objectName: "certProbeError_" + modelData.id; visible: certPane.mine && root.probe.state === "failed"
-                                        Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; font.pixelSize: 12
-                                        color: Theme.palette.warning; text: "Could not check it: " + (root.probe.error || "") }
-                            RowLayout {
-                                visible: certPane.pinned
-                                Layout.fillWidth: true
-                                LogosText { objectName: "certPin_" + modelData.id; Layout.fillWidth: true; Layout.preferredWidth: 1
-                                            wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText; font.pixelSize: 11
-                                            text: "Pinned certificate, SHA-256 " + root.fingerprint(modelData.certSha256) }
-                                LogosButton { objectName: "removePin_" + modelData.id; visible: !root.networkLocked; text: "Remove pin"
-                                              enabled: root.ready; onClicked: root.setSource(modelData.id, { certSha256: null }) }
-                            }
-                            LogosText { objectName: "certDetails_" + modelData.id; visible: !certPane.pinned && !!certPane.cert
-                                        Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText; font.pixelSize: 11
-                                        text: root.certText(certPane.cert) }
-                            LogosText { visible: !certPane.pinned && !!certPane.cert; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                        font.pixelSize: 12; color: certPane.cert && certPane.cert.trusted === false ? Theme.palette.warning : Theme.palette.textSecondary
-                                        text: certPane.cert && certPane.cert.trusted === false
-                                              ? "No authority this computer trusts signed it. Compare the fingerprint with the one its operator gives you before you trust it."
-                                              : "An authority this computer trusts signed it. Trusting it pins it: from then on only this certificate is accepted." }
-                            LogosButton { objectName: "trustCert_" + modelData.id; visible: !certPane.pinned && !!certPane.cert && !root.networkLocked
-                                          text: "Trust this certificate"; enabled: root.ready
-                                          onClicked: root.setSource(modelData.id, { certSha256: certPane.cert.certSha256 }) }
-                            LogosText { objectName: "pinLocked_" + modelData.id; visible: root.networkLocked && (certPane.pinned || !!certPane.cert)
-                                        Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                        text: "Pins change only while no wallet is open, like the other source settings: close the wallet to trust or remove one." }
+            // Below the list, so the rows do not move when they appear.
+            LogosNotice {
+                objectName: "noChainNotice"
+                Layout.fillWidth: true
+                severity: LogosNotice.Warning
+                shown: root.sourcesConfigured && root.chainSources.length === 0
+                message: "Enable an RPC endpoint, an Electrum server, your own node, or Bitcoin peers in Advanced to connect to the chain."
+            }
+
+            LogosText { objectName: "activeSourcesSummary"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        color: Theme.palette.textSecondary
+                        text: "Enabled: " + (root.sourceList.filter(function (s) { return s.use === true }).map(function (s) { return s.label || s.id }).join(", ") || "None") }
+
+            LogosText { objectName: "publicServicesHeading"; text: "Public service"; font.pixelSize: 16; Layout.topMargin: Theme.spacing.medium }
+            LogosText { objectName: "publicPrivacyNotice"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                        text: "When connecting directly, public providers see your IP address and wallet-related requests. For more privacy, use your own node." }
+            LogosText { text: "Bitcoin Core RPC"; font.pixelSize: 15; font.weight: Theme.typography.weightBold; Layout.topMargin: Theme.spacing.small }
+            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                        text: "Connect to a public or self-hosted Bitcoin Core endpoint. Without block filters, the wallet scans full blocks and restores can be slow." }
+            SourceList { objectName: "rpcSources"; Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "rpc" && !s.lan }) }
+            LogosFrame {
+                Layout.fillWidth: true
+                visible: !root.networkLocked
+                contentItem: ColumnLayout {
+                    LogosText { text: "Add an RPC endpoint"; font.weight: Theme.typography.weightBold }
+                    LogosTextField { id: rpcAddress; objectName: "rpcAddress"; Layout.fillWidth: true
+                                     placeholderText: "https://bitcoin-rpc.publicnode.com or http://192.168.1.20:8332" }
+                    LogosTextField { id: rpcName; objectName: "rpcName"; Layout.fillWidth: true; placeholderText: "Name (optional)" }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        LogosTextField { id: rpcUser; objectName: "rpcUser"; Layout.fillWidth: true; placeholderText: "RPC username (optional)" }
+                        LogosTextField { id: rpcPass; objectName: "rpcPass"; Layout.fillWidth: true; placeholderText: "RPC password (optional)"; echoMode: TextInput.Password }
+                    }
+                    LogosButton {
+                        objectName: "addRpcButton"
+                        text: "Add and check"
+                        enabled: root.ready && rpcAddress.text.trim() !== ""
+                        onClicked: {
+                            var address = rpcAddress.text.trim(), name = rpcName.text.trim()
+                            var user = rpcUser.text, pass = rpcPass.text
+                            rpcPass.text = ""
+                            root.networkCall(backend.addRpcSource(address, user, pass, name), "sources")
                         }
                     }
+                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textTertiary
+                                text: "Added with Tor off and disabled until you choose Use only this. Tor is available in the endpoint's Details." }
                 }
             }
+            LogosText { objectName: "electrumHeading"; text: "Electrum"; font.pixelSize: 15; font.weight: Theme.typography.weightBold; Layout.topMargin: Theme.spacing.small }
+            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                        text: "Wallet servers for synchronization, payment history, fees and broadcast." }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: !root.networkLocked && root.directServers.length > 0
+                LogosComboBox {
+                    id: directServerChoice
+                    objectName: "directServerChoice"
+                    Layout.fillWidth: true
+                    model: root.directServers.map(function (s) { return s.label || s.id })
+                }
+                LogosButton {
+                    objectName: "connectDirectButton"
+                    text: "Use without Tor"
+                    enabled: root.ready && !root.networkLocked && directServerChoice.currentIndex >= 0
+                             && directServerChoice.currentIndex < root.directServers.length
+                    onClicked: root.networkCall(backend.useDirectSource(root.directServers[directServerChoice.currentIndex].id), "sources")
+                }
+            }
+            LogosText { visible: !root.networkLocked && root.directServers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        font.pixelSize: 12; color: Theme.palette.textTertiary
+                        text: "Uses the selected server for all wallet connections and turns off other sources." }
+            SourceList { objectName: "electrumSources"; Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "electrum" && !s.lan }) }
+            LogosText { visible: root.sourceList.filter(function (s) { return s.kind === "electrum" && !s.lan }).length === 0
+                        text: "No public Electrum servers configured."; color: Theme.palette.textTertiary }
+            LogosText { objectName: "esploraHeading"; text: "Esplora"; font.pixelSize: 15; font.weight: Theme.typography.weightBold; Layout.topMargin: Theme.spacing.small }
+            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                        text: "Explorer services for payment history, fees and broadcast. Requires Electrum, your node, or Bitcoin peers for the chain." }
+            SourceList { objectName: "esploraSources"; Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "esplora" && !s.lan }) }
+            LogosText { visible: root.sourceList.filter(function (s) { return s.kind === "esplora" && !s.lan }).length === 0
+                        text: "No public Esplora servers configured."; color: Theme.palette.textTertiary }
+
+            LogosText { objectName: "ownNodeHeading"; text: "Your own node"; font.pixelSize: 16; Layout.topMargin: Theme.spacing.medium }
+            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                        text: "The privacy-focused option: run the bundled Bitcoin Core node. Turn off public services above to use only your node." }
+            SourceList { objectName: "ownNodeSources"; Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "local" || s.lan === true }) }
+            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textTertiary
+                        text: "The bundled node must be running and synced. Existing Electrum or Esplora servers on your network can be added in Advanced; Bitcoin Core RPC endpoints on your network also appear here." }
             ColumnLayout {
                 objectName: "walletSourcesPane"
                 visible: root.walletOnlySources.length > 0
@@ -1295,61 +1429,103 @@ Item {
                     }
                 }
             }
-            // Below the list, so the rows do not move when they appear.
-            LogosNotice {
-                objectName: "noChainNotice"
-                Layout.fillWidth: true
-                severity: LogosNotice.Warning
-                shown: root.sourcesConfigured && root.chainSources.length === 0
-                message: "Nothing in use defines the chain. Switch on Kyoto, or an Electrum server."
-            }
-            LogosNotice {
-                objectName: "oneOperatorNotice"
-                Layout.fillWidth: true
-                // Kyoto below its quorum (testnet4) is the same risk: one peer alone decides.
-                shown: root.onePeerDecides || (root.sourcesConfigured && root.serversDecideChain && root.chainOperators.length === 1)
-                title: root.onePeerDecides ? "One peer decides this wallet's chain" : ""
-                message: !shown ? ""
-                         : root.onePeerDecides
-                           ? "Kyoto could dial only one peer, so it takes that peer's headers and filters with nothing to check "
-                             + "them against. Add peers of your own, or turn on a server from another operator."
-                           : "Kyoto is off, so the Electrum servers in use decide the chain, and they are all "
-                             + root.chainOperators[0] + "'s: nothing checks them. Switch on Kyoto, or a server from another operator."
-            }
-            LogosNotice {
-                objectName: "withoutTorNotice"
-                Layout.fillWidth: true
-                severity: LogosNotice.Warning
-                shown: root.withoutTor.length > 0
-                title: "Reached without Tor"
-                message: shown ? root.withoutTor.map(function (d) { return d.id }).join(", ")
-                                 + (root.withoutTor.length === 1 ? " sees" : " see")
-                                 + " this computer's IP address, and can link it to this wallet." : ""
-            }
 
+            LogosButton {
+                id: advancedToggle
+                objectName: "advancedSourcesButton"
+                property bool expanded: false
+                text: expanded ? "Hide advanced settings" : "Advanced settings"
+                onClicked: expanded = !expanded
+            }
             ColumnLayout {
-                objectName: "exposurePane"
+                objectName: "advancedSourcesPane"
                 Layout.fillWidth: true
-                Layout.topMargin: Theme.spacing.small
-                spacing: Theme.spacing.tiny
-                LogosText { text: "Who has seen this wallet's addresses"; font.pixelSize: 15 }
-                LogosText { objectName: "exposureEmpty"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            visible: root.exposureServers.length === 0
-                            text: root.walletOpen ? "No server has been asked about this wallet's addresses."
-                                                  : "The record is kept with each wallet, and shows once one is open." }
-                Repeater {
-                    model: root.exposureServers
-                    LogosText {
-                        Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText; font.pixelSize: 12
-                        text: (modelData.url || modelData.source || "") + " (" + (modelData.operator || "") + ") · "
-                              + (modelData.role || "history") + " since " + root.whenOf(modelData.since)
-                              + (modelData.last ? ", last " + root.whenOf(modelData.last) : "")
+                visible: advancedToggle.expanded
+                spacing: Theme.spacing.small
+                LogosText { text: "Tor proxy (optional)"; font.pixelSize: 15 }
+                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                            text: "Tor hides your IP from the provider, but not your queries. Run Tor separately and enter its SOCKS proxy below. Onion addresses require Tor; connections set to Tor never fall back to direct." }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    LogosTextField { id: proxyField; objectName: "proxyField"; Layout.fillWidth: true; readOnly: root.networkLocked
+                                     placeholderText: root.defaultProxy; text: root.sourcesInfo.proxy || "" }
+                    LogosButton {
+                        objectName: "saveProxyButton"; text: "Save proxy"
+                        visible: !root.networkLocked
+                        enabled: root.ready && proxyField.text.trim() !== "" && proxyField.text.trim() !== (root.sourcesInfo.proxy || "")
+                        onClicked: root.networkCall(backend.setProxy(proxyField.text.trim()), "proxy")
                     }
                 }
-                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textTertiary; font.pixelSize: 12
-                            visible: root.exposes.length > 0
-                            text: "With History on, " + root.exposes.map(function (e) { return e.id }).join(", ")
-                                  + (root.exposes.length === 1 ? " learns" : " learn") + " every address of a wallet you open." }
+                LogosNotice {
+                    Layout.fillWidth: true
+                    severity: LogosNotice.Error
+                    shown: root.networkNote !== "" && root.networkNoteAt === "proxy"
+                    message: shown ? root.networkNote : ""
+                }
+                ColumnLayout {
+                    objectName: "addSourcePane"
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing.small
+                    visible: !root.networkLocked
+                    spacing: Theme.spacing.tiny
+                    LogosText { text: "Add a custom server"; font.weight: Theme.typography.weightMedium }
+                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                                text: "An Electrum or Esplora server you run or trust: an address like 192.168.1.20:50001 or electrs.lan, "
+                                      + "or https://host:port. Servers on your own network are reached directly, without Tor." }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        LogosTextField { id: addSourceAddress; objectName: "addSourceAddress"; Layout.fillWidth: true
+                                         placeholderText: "192.168.1.20:50001" }
+                        LogosComboBox { id: addSourceKind; objectName: "addSourceKind"; model: ["Electrum", "Esplora"] }
+                        LogosTextField { id: addSourceName; objectName: "addSourceName"; Layout.preferredWidth: 160
+                                         placeholderText: "Name (optional)" }
+                        LogosButton { objectName: "addSourceButton"; text: "Add"
+                                      enabled: root.ready && addSourceAddress.text.trim() !== ""; onClicked: pane.addSource() }
+                    }
+                }
+
+                LogosText { text: "Bitcoin peers (Kyoto)"; font.pixelSize: 15; Layout.topMargin: Theme.spacing.medium }
+                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                            text: "Scan block filters from Bitcoin peers on this device. The default onion peers need Tor. Expand Details to manage peers." }
+                SourceList { Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "kyoto" && !s.lan }) }
+                LogosNotice {
+                    objectName: "oneOperatorNotice"
+                    Layout.fillWidth: true
+                    // Kyoto below its quorum (testnet4) is the same risk: one peer alone decides.
+                    shown: root.onePeerDecides || (root.sourcesConfigured && root.serversDecideChain && root.chainOperators.length === 1)
+                    title: root.onePeerDecides ? "One peer decides this wallet's chain" : ""
+                    message: !shown ? ""
+                             : root.onePeerDecides
+                               ? "Kyoto could dial only one peer, so it takes that peer's headers and filters with nothing to check "
+                                 + "them against. Add peers of your own, or turn on a server from another operator."
+                               : "Kyoto is off, so the Electrum servers in use decide the chain, and they are all "
+                                 + root.chainOperators[0] + "'s: nothing checks them. Switch on Kyoto, or a server from another operator."
+                }
+                ColumnLayout {
+                    objectName: "exposurePane"
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing.small
+                    spacing: Theme.spacing.tiny
+                    LogosText { text: "Connection record"; font.pixelSize: 15 }
+                    LogosText { objectName: "exposureEmpty"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                                visible: root.exposureServers.length === 0
+                                text: root.walletOpen ? "No server has been asked about this wallet's addresses."
+                                                      : "The record is kept with each wallet, and shows once one is open." }
+                    Repeater {
+                        model: root.exposureServers
+                        LogosText {
+                            Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; textFormat: Text.PlainText; font.pixelSize: 12
+                            text: (modelData.url || modelData.source || "") + " (" + (modelData.operator || "") + ") · "
+                                  + (modelData.role || "history") + " since " + root.whenOf(modelData.since)
+                                  + (modelData.last ? ", last " + root.whenOf(modelData.last) : "")
+                        }
+                    }
+                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textTertiary; font.pixelSize: 12
+                                visible: root.exposes.length > 0
+                                text: "With History on, " + root.exposes.map(function (e) { return e.id }).join(", ")
+                                      + (root.exposes.length === 1 ? " learns" : " learn") + " every address of a wallet you open." }
+                }
             }
         }
     }
@@ -1378,6 +1554,67 @@ Item {
             }
         }
 
+        RowLayout {
+            objectName: "accountSelectorRow"
+            visible: root.ready
+            Layout.fillWidth: true
+            spacing: Theme.spacing.small
+            LogosComboBox {
+                id: accountPicker
+                objectName: "accountPicker"
+                Layout.preferredWidth: 440
+                Layout.maximumWidth: Math.max(200, root.width - 230)
+                implicitHeight: 82
+                model: root.accountsOnNetwork
+                enabled: root.accountsRead && backend.accountsError === "" && model.length > 0
+                         && !root.busy && !root.opening && !root.accountSwitchBlocked
+                displayText: root.accountTitle(root.selectedAccount)
+                Accessible.name: "Bitcoin account: " + displayText
+                leftPadding: 12; rightPadding: 36
+                function syncIndex() { currentIndex = root.accountIndex() }
+                Component.onCompleted: syncIndex()
+                onActivated: { root.selectAccount(root.accountsOnNetwork[currentIndex]); syncIndex() }
+                contentItem: ColumnLayout {
+                    spacing: 2
+                    LogosText { Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText
+                                text: root.accountProvider(root.selectedAccount) }
+                    LogosText { Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText
+                                color: Theme.palette.textSecondary
+                                text: root.selectedAccount ? root.accountTitle(root.selectedAccount)
+                                      : root.walletOpen ? (root.status.label || root.shortId(root.status.group))
+                                      : !root.accountsRead ? "Loading accounts…" : root.accountsOnNetwork.length ? "Select an account" : "No Bitcoin accounts on this network" }
+                    LogosText { Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText; font.pixelSize: 12
+                                color: Theme.palette.textTertiary
+                                text: root.selectedAccount ? root.familyLabel(root.selectedAccount.family) + (root.selectedAccount.available === true ? "" : " · unavailable")
+                                      : root.walletOpen ? "Account is no longer listed by the signer" : "Manage accounts in Keystore" }
+                }
+                delegate: ItemDelegate {
+                    required property var modelData
+                    required property int index
+                    width: accountPicker.width
+                    height: 78
+                    enabled: modelData.available === true
+                    highlighted: accountPicker.highlightedIndex === index
+                    contentItem: ColumnLayout {
+                        spacing: 2
+                        LogosText { Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight
+                                    text: root.accountProvider(modelData) }
+                        LogosText { Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight
+                                    color: Theme.palette.textSecondary; text: root.accountTitle(modelData) }
+                        LogosText { Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight; font.pixelSize: 12
+                                    color: Theme.palette.textTertiary
+                                    text: root.familyLabel(modelData.family) + (modelData.available === true ? "" : " · unavailable") }
+                    }
+                }
+            }
+            LogosButton { objectName: "manageAccountsButton"; text: "Manage in Keystore"; onClicked: root.manageAccounts() }
+            Item { Layout.fillWidth: true }
+        }
+        LogosText { objectName: "accountsErrorLine"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                    textFormat: Text.PlainText; color: Theme.palette.warning
+                    visible: root.ready && backend.accountsError !== ""
+                    text: root.ready ? backend.accountsError : "" }
+
         LogosText {
             objectName: "statusLine"
             textFormat: Text.PlainText
@@ -1405,6 +1642,27 @@ Item {
             message: root.ready ? backend.lastError : ""
             onMessageChanged: shown = message.length > 0
             Component.onCompleted: shown = message.length > 0
+        }
+        LogosNotice {
+            objectName: "torConnectionNotice"
+            Layout.fillWidth: true
+            severity: LogosNotice.Error
+            shown: root.torFailureSource !== null
+            title: "Cannot reach the Tor proxy"
+            message: root.torHelp
+            actions: [
+                LogosButton {
+                    objectName: "torSourcesButton"
+                    text: "Sources"
+                    onClicked: { if (root.walletOpen) root.selectTab(4); else networkSheet.open() }
+                },
+                LogosButton {
+                    objectName: "retryTorButton"
+                    text: root.probe.state === "probing" ? "Checking…" : "Check connection"
+                    enabled: root.ready && root.probe.state !== "probing"
+                    onClicked: { if (root.torFailureSource) backend.probeSource(root.torFailureSource.id) }
+                }
+            ]
         }
         LogosNotice {
             objectName: "unavailableNotice"
@@ -1488,7 +1746,7 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                LogosText { text: "Open a wallet"; font.pixelSize: 22 }
+                LogosText { text: "Choose an account"; font.pixelSize: 22 }
                 Item { Layout.fillWidth: true }
                 LogosText { text: "Network"; color: Theme.palette.textSecondary }
                 LogosComboBox {
@@ -1515,8 +1773,7 @@ Item {
                                           : (root.awaitingKeys ? "Waiting for the keys app" : "Asking the keys app…") }
                     }
                     LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                                text: "Pick a wallet in the keys app, or create or restore one there, and approve opening it for "
-                                      + "this app. The keys app keeps the recovery phrase and the password; this app never asks for them." }
+                                text: "Approve opening the selected account in Keystore. Passwords and recovery phrases stay there." }
                     LogosText { objectName: "keysNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                                 textFormat: Text.PlainText; color: Theme.palette.warning; text: root.keysNote }
                     RowLayout {
@@ -1535,60 +1792,23 @@ Item {
                 Layout.fillWidth: true
                 spacing: Theme.spacing.small
                 LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            text: "The keys app opens: pick a wallet there, or create or restore one. Creating and restoring "
-                                  + "happen there, never here. Choose the kind of address it uses." }
-                LogosRadioButton {
-                    objectName: "familySegwit"
-                    checkable: false
-                    checked: root.family === "bitcoin"
-                    text: "Native segwit: addresses start " + root.hrp + "1q, and every wallet and exchange can pay them"
-                    onClicked: root.family = "bitcoin"
-                }
-                LogosRadioButton {
-                    objectName: "familyTaproot"
-                    checkable: false
-                    checked: root.family === "bitcoin_taproot"
-                    text: "Taproot: addresses start " + root.hrp + "1p; a little cheaper to spend, newer"
-                    onClicked: root.family = "bitcoin_taproot"
-                }
+                            text: "Select a Bitcoin account above to open it. Create, restore and manage accounts in Keystore." }
                 RowLayout {
                     Layout.fillWidth: true
-                    LogosTextField { id: walletLabel; objectName: "walletLabelField"; Layout.preferredWidth: 280
-                                     placeholderText: "Name for this wallet (optional)" }
                     LogosButton {
                         objectName: "openWalletButton"
-                        text: "Open a wallet"
+                        text: "Open selected account"
+                        visible: root.selectedAccount !== null
                         variant: LogosButton.Variant.Primary
                         enabled: root.ready && !root.busy && root.statusRead && root.status.unavailable !== true
-                        onClicked: root.openWallet({ family: root.family })
+                                 && root.selectedAccount !== null && root.selectedAccount.available === true && backend.accountsError === ""
+                        onClicked: root.selectAccount(root.selectedAccount)
                     }
-                    Item { Layout.fillWidth: true }
-                    LogosButton { objectName: "networkSettingsButton"; text: "Sources and privacy"; enabled: root.ready; onClicked: networkSheet.open() }
+                    LogosButton { objectName: "networkSettingsButton"; text: "Sources"; enabled: root.ready; onClicked: networkSheet.open() }
                     LogosButton { objectName: "refreshButton"; text: "Refresh"; enabled: root.ready; onClicked: backend.clearAndRefresh() }
+                    Item { Layout.fillWidth: true }
                 }
 
-                LogosText { text: "Opened before"; font.pixelSize: 15; Layout.topMargin: Theme.spacing.small
-                            visible: root.walletsOnNetwork.length > 0 }
-                Repeater {
-                    model: root.walletsOnNetwork
-                    LogosFrame {
-                        Layout.fillWidth: true
-                        contentItem: RowLayout {
-                            spacing: Theme.spacing.small
-                            LogosText { textFormat: Text.PlainText; text: modelData.label || root.familyLabel(modelData.family) }
-                            LogosBadge { text: root.familyLabel(modelData.family); color: Theme.palette.textSecondary }
-                            LogosText { Layout.fillWidth: true; Layout.preferredWidth: 1; elide: Text.ElideRight; textFormat: Text.PlainText
-                                        color: Theme.palette.textTertiary; font.pixelSize: 12
-                                        text: root.shortId(modelData.group) + (modelData.lastOpened ? " · last opened " + root.whenOf(modelData.lastOpened) : "") }
-                            LogosButton {
-                                objectName: "reopen_" + modelData.group
-                                text: "Open"
-                                enabled: root.ready && !root.busy
-                                onClicked: root.openWallet({ group: modelData.group })
-                            }
-                        }
-                    }
-                }
                 Item { Layout.fillHeight: true }
             }
             // Holds the page at the top while the form is hidden.
@@ -1753,6 +1973,10 @@ Item {
                         LogosText { visible: !!root.status.lastError; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning
                                     text: "Last sync error: " + (root.status.lastError || "") }
+                        LogosText { objectName: "rpcPendingScanLine"; visible: (root.status.authority || {}).kind === "rpc_node" && Number(root.nodeStatus.pendingScanRemaining || 0) > 0
+                                    Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; font.pixelSize: 12
+                                    color: Theme.palette.textSecondary
+                                    text: "Checking pending transactions: " + root.group(root.nodeStatus.pendingScanRemaining) + " remaining" }
                         // A pruned node's gap that another source covers, or has covered.
                         LogosText { objectName: "prunedGapLine"; visible: !!root.prunedGap && !!root.prunedGap.via
                                     Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; font.pixelSize: 12
@@ -2267,8 +2491,6 @@ Item {
     // Bech32's human-readable part on the network shown.
     readonly property string hrp: displayedNetwork === "mainnet" ? "bc" : (displayedNetwork === "regtest" ? "bcrt" : "tb")
     function openWallet(params) {
-        var label = walletLabel.text.trim()
-        if (label !== "" && !params.group) params.label = label
         root.keysNote = ""
         backend.openWallet(JSON.stringify(params))
     }
@@ -2649,7 +2871,7 @@ Item {
     LogosDialog {
         id: networkSheet
         objectName: "networkSheet"
-        title: "Sources and privacy"
+        title: "Sources"
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 760)
         onOpened: if (root.ready) backend.refreshSources()

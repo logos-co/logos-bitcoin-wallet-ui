@@ -5,17 +5,21 @@
   "type": "ui_qml",
   "interface": "universal",
   "category": "wallet",
-  "description": "The Bitcoin wallet: the confirmed balance and what is still on its way, sends approved in the signer app, a fresh receive address with a BIP21 QR, activity that says what each transaction was for, and the sources the wallet reads the chain from. Wallets are opened, created and restored in the keys app: this app takes no password and holds no key material.",
+  "description": "The Bitcoin wallet: the confirmed balance and what is still on its way, sends approved in the signer app, a fresh receive address with a BIP21 QR, activity that says what each transaction was for, and the sources the wallet reads the chain from. Accounts come from signer_manager; Keystore handles creation, restoration and opening approval. This app holds no key material.",
   "author": "Logos Core Team",
   "main": "bitcoin_wallet_ui_plugin",
   "icon": "src/icons/bitcoin_wallet.png",
   "view": "qml/BitcoinWalletView.qml",
   "dependencies": [
-    "bitcoin_wallet_backend"
+    "bitcoin_wallet_backend",
+    "signer_manager_module"
   ],
   "dependency_overrides": {
     "bitcoin_wallet_backend": {
       "file": "contracts/bitcoin_wallet_backend.lidl"
+    },
+    "signer_manager_module": {
+      "file": "contracts/signer_manager_module.lidl"
     }
   },
   "uses": [
@@ -25,6 +29,10 @@
     },
     {
       "intent": "evm.signing.approve",
+      "cardinality": "single"
+    },
+    {
+      "intent": "evm.accounts.manage",
       "cardinality": "single"
     }
   ],

@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: The .rep declares no PROP and no SLOT named like a secret
-        # Nothing secret has a reason to cross here, as a PROP or as a SLOT. A case-insensitive
+        # Signing secrets must never cross here. Optional RPC login is a separate credential. A case-insensitive
         # substring match: `newPassword` and `recoveryPhrase` are caught where \b-anchored ones are not.
         shell: bash
         run: |
@@ -86,18 +86,21 @@ jobs:
           fi
           echo "NO_SECRET_PROP_OR_SLOT"
 
-      - name: The view has no password field
+      - name: The view takes only the optional RPC service password
         shell: bash
         run: |
           set -euo pipefail
           pat='echoMode|TextInput\.Password|passwordMaskDelay'
           printf '%s\n' 'LogosTextField { echoMode: TextInput.Password }' > /tmp/bad.qml
           grep -qE "$pat" /tmp/bad.qml || { echo "::error::the tripwire no longer finds a password field"; exit 1; }
-          if grep -nE "$pat" qml/*.qml; then
+          # Allow exactly the masked RPC service login; every other password field fails.
+          allowed='                        LogosTextField { id: rpcPass; objectName: "rpcPass"; Layout.fillWidth: true; placeholderText: "RPC password (optional)"; echoMode: TextInput.Password }'
+          [ "$(grep -hFx "$allowed" qml/*.qml | wc -l)" -eq 1 ]
+          if grep -hE "$pat" qml/*.qml | grep -vFx "$allowed"; then
             echo "::error::a password field above: wallets open in the keys app, and sends are approved in the signer app."
             exit 1
           fi
-          echo "NO_PASSWORD_FIELD"
+          echo "ONLY_RPC_PASSWORD_FIELD"
 
   qml:
     name: qmllint, construct, states

@@ -862,9 +862,9 @@ def phase_open_create():
     ins.call(ROOT, "selectNetwork", "regtest")
     ins.wait("networkChip", "text", "regtest", 30)
     node_routes_nothing(ins)
-    ins.press("familySegwit")
-    ins.set_text("walletLabelField", "E2E regtest")
-    ins.press("openWalletButton")
+    # Provision this test wallet through the existing open API; account creation lives in Keystore.
+    # Reopening below exercises the signer-manager account selector.
+    ins.call(ROOT, "openWallet", {"family": "bitcoin", "label": "E2E regtest"})
     ins.wait("keysWaitTitle", "visible", True, 60, "the app waits for the keys app")
     title = chooser(ins, KEYS)
     passed("the shell asks first (%r), and the person opens the keys app" % title)
@@ -1251,14 +1251,13 @@ def open_for_restore(ins):
     ins.call(ROOT, "selectNetwork", "regtest")
     ins.wait("networkChip", "text", "regtest", 30)
     node_routes_nothing(ins)
-    ins.press("familySegwit")
 
 
 def phase_restore():
     ins = Inspector()
     show_app(ins, APP)
     open_for_restore(ins)
-    ins.press("openWalletButton")
+    ins.call(ROOT, "openWallet", {"family": "bitcoin"})
     birthday = yesterday()
     restore_in_keys(ins, "E2E restored", birthday)
     passed("restored in the keys app from the written-down phrase, birthday %s" % birthday)
@@ -1274,7 +1273,7 @@ def phase_restore_birthday():
     ins = Inspector()
     show_app(ins, APP)
     open_for_restore(ins)
-    ins.press("openWalletButton")
+    ins.call(ROOT, "openWallet", {"family": "bitcoin"})
     restore_in_keys(ins, "E2E restored, no day")
     passed("restored in the keys app with no day given")
     ins.wait("needsBirthdayHomeNotice", "visible", True, 120, "restored without a birthday: Home asks for one")
@@ -1409,22 +1408,9 @@ def sat_of(text):
 
 # The listed wallet's Open, once a person could press it, then the keys app's approval.
 def reopen_listed(ins, password):
-    end = time.time() + 90
-    while True:
-        found = None
-        for m in ins.rpc("findByProperty", property="text", value="Open").get("matches", []):
-            try:
-                p = ins.props(m["id"])
-            except InspectorError:
-                continue
-            if p.get("visible") is True and p.get("enabled") is not False and str(p.get("objectName", "")).startswith("reopen_"):
-                found = m["id"]
-        if found:
-            ins.rpc("callMethod", objectId=found, method="clicked", args=[])
-            break
-        if time.time() > end:
-            raise Fail("no wallet listed to open again, or its Open stayed disabled")
-        time.sleep(0.5)
+    ins.wait("accountPicker", "enabled", True, 90, "the signer account list is ready")
+    ins.rpc("setProperty", objectId=ins.obj("accountPicker")[0], property="currentIndex", value=0)
+    ins.call("accountPicker", "activated", 0)
     # The shell asks which app answers, unless the keys app's request is already up.
     end = time.time() + 120
     while ins.get("accessSheet", "opened") is not True:

@@ -72,7 +72,7 @@ sections:
               property: "text"
               value: "signet"
               timeout: 20000
-            - name: "Open Sources and privacy"
+            - name: "Open Sources"
               action: click_object
               find_value: "networkSettingsButton"
             - name: "The sheet opens"
@@ -94,6 +94,11 @@ sections:
               value: false
               timeout: 5000
               screenshot: "real-sources.png"
+            - name: "Expand advanced settings"
+              action: call_method
+              find_value: "advancedSourcesButton"
+              method: "clicked"
+              args: []
             - name: "Type a server of your own"
               action: set_text
               find_by: "objectName"
@@ -113,20 +118,14 @@ sections:
               property: "visible"
               value: true
               timeout: 20000
-            - name: "Turn on its History: the app asks first"
+            - name: "Expand the server details"
               action: call_method
-              find_value: "historySwitch_192.168.1.20"
+              find_value: "sourceDetails_192.168.1.20"
               method: "clicked"
               args: []
-            - name: "The confirmation shows"
-              action: expect_property
-              find_value: "historyConfirm_192.168.1.20"
-              property: "visible"
-              value: true
-              timeout: 5000
-            - name: "Turn it on"
+            - name: "Turn on its History"
               action: call_method
-              find_value: "confirmHistory_192.168.1.20"
+              find_value: "historySwitch_192.168.1.20"
               method: "clicked"
               args: []
             - name: "The node module took it"
@@ -159,6 +158,11 @@ sections:
             - name: "Add it: the app asks the node module to probe it"
               action: click_object
               find_value: "addSourceButton"
+            - name: "Expand TLS server details"
+              action: call_method
+              find_value: "sourceDetails_127.0.0.1"
+              method: "clicked"
+              args: []
             - name: "The probe read its self-signed certificate, which nothing trusts yet"
               action: expect_property
               find_value: "trustCert_127.0.0.1"
@@ -205,6 +209,11 @@ sections:
               property: "visible"
               value: false
               timeout: 10000
+            - name: "Expand Bitcoin peer details"
+              action: call_method
+              find_value: "sourceDetails_kyoto"
+              method: "clicked"
+              args: []
             - name: "Under Kyoto, the node module's peer book for signet: its signed list, nothing learned yet"
               action: expect_property
               find_value: "curatedLine"

@@ -30,6 +30,8 @@ Item {
         property string statusJson: ""
         property string networksJson: ""
         property string walletsJson: "[]"
+        property string accountsJson: ""
+        property string accountsError: ""
         property string balancesJson: ""
         property string historyJson: ""
         property int historyPage: 0
@@ -58,6 +60,7 @@ Item {
         function count(name) { return calls.filter(function (c) { return c[0] === name }).length }
         function refresh() {}
         function clearAndRefresh() {}
+        function selectAccount(id) { note("selectAccount", [id]) }
         function setActiveNetwork(n) { note("setActiveNetwork", [n]) }
         function openWallet(p) { note("openWallet", [p]) }
         function closeWallet() { note("closeWallet", []) }
@@ -84,6 +87,9 @@ Item {
         function showHistoryPage(p) {}
         function dismissAlerts() { alertsJson = "[]" }
         function setSource(id, changes) { note("setSource", [id, changes]); return "" }
+        function addRpcSource(a,u,p,n) { note("addRpcSource", [a,u,p,n]); return "" }
+        function useRpcSource(id) { note("useRpcSource", [id]); return "" }
+        function useDirectSource(id) { note("useDirectSource", [id]); return "" }
         function addSource(a, k, n) { note("addSource", [a, k, n]); return "" }
         function removeSource(id) { note("removeSource", [id]); return "" }
         function setProxy(p) { note("setProxy", [p]); return "" }
@@ -135,6 +141,13 @@ Item {
         return out
     }
     function shownAny(name) { return findAll(view.item, name, 0, []).some(function (o) { return o.visible === true }) }
+
+    function expandAdvanced() {
+        findAll(view.item, "advancedSourcesButton", 0, []).forEach(function (b) { if (!b.expanded) b.clicked() })
+    }
+    function expandSources(ids) {
+        view.item.expandedSources = view.item.expandedSources.concat(ids)
+    }
 
     readonly property string syncedMainnet: JSON.stringify({ state: "ready", network: "mainnet", activeNetwork: "mainnet", family: "bitcoin",
         group: "g_test", synced: true, walletTip: 935500, syncPercent: 100, label: "Savings",
@@ -300,6 +313,11 @@ Item {
         function (v) {
             fake.networksJson = JSON.stringify({ networks: ["mainnet", "testnet4", "signet", "regtest"], active: "regtest" })
             fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+            fake.accountsJson = JSON.stringify([
+                {id:"g_test",family:"bitcoin_taproot",chain:"test",label:"Test wallet",signer:"keystore_module",available:true},
+                {id:"g_main",family:"bitcoin",chain:"main",label:"Main wallet",signer:"keystore_module",available:true},
+                {id:"g_offline",family:"bitcoin",chain:"test",signer:"keycard_module",available:false},
+                {id:"0x123",family:"evm",chain:"test",available:true}])
             fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "socks5h://127.0.0.1:9050", walletOpen: false,
                 sources: [{ id: "kyoto", kind: "kyoto", url: "p2p://peer-list", operator: "peers", label: "Bitcoin peers", use: false, history: false, tor: true, lan: false, route: "tor" },
                           { id: "electrum.example", kind: "electrum", url: "ssl://electrum.example:50002", operator: "example", label: "Example Electrum", use: true, history: false, tor: true, lan: false, route: "tor" },
@@ -313,9 +331,14 @@ Item {
             expect("status line", prop("statusLine", "text"), "No wallet open")
             expect("network chip", prop("networkChip", "text"), "regtest")
             expect("no password field", find(view.item, "openPasswordField", 0), null)
-            find(view.item, "familyTaproot", 0).clicked()
-            find(view.item, "openWalletButton", 0).clicked()
-            expect("open asked", fake.last("openWallet"), ["openWallet", JSON.stringify({ family: "bitcoin_taproot" })])
+            expect("only Bitcoin accounts on the network", v.accountsOnNetwork.map(function(a) { return a.id }), ["g_test", "g_offline"])
+            v.selectAccount(v.accountsOnNetwork[1])
+            expect("unavailable account does not open", fake.last("selectAccount"), null)
+            find(view.item, "accountPicker", 0).currentIndex = 0
+            find(view.item, "accountPicker", 0).activated(0)
+            expect("selected signer account opens", fake.last("selectAccount"), ["selectAccount", "g_test"])
+            find(view.item, "manageAccountsButton", 0).clicked()
+            expect("management goes to Keystore", logos.requests[logos.requests.length-1].intent, "evm.accounts.manage")
             fake.pendingJobKind = "open"
             fake.busy = true
             fake.statusJson = JSON.stringify({ state: "awaiting_open", network: "regtest", activeNetwork: "regtest", openHandle: "sma_t1" })
@@ -484,7 +507,7 @@ Item {
         function (v) {
             expect("settings locked", shown("networkLockedNotice"), true)
             expect("no switches while open", shown("useSwitch_electrum.example"), false)
-            expect("one operator", shown("oneOperatorNotice"), true)
+            expect("operator diagnostic is collapsed", shown("oneOperatorNotice"), false)
             fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
         },
         function (v) {
@@ -499,20 +522,25 @@ Item {
             expect("unconfigured says nothing of the chain", shown("noChainNotice"), false)
             fake.sourcesJson = keep
             expect("unlocked", shown("networkLockedNotice"), false)
-            expect("one operator, no wallet", shown("oneOperatorNotice"), true)
+            expect("public group visible", shown("publicServicesHeading"), true)
+            expect("advanced starts collapsed", shown("advancedSourcesPane"), false)
+            expect("details start collapsed", shown("sourceOptions_electrum.example"), false)
+            expect("Electrum grouped separately", prop("electrumSources", "entries").map(function (s) { return s.id }), ["electrum.example"])
+            expect("Esplora grouped separately", prop("esploraSources", "entries").map(function (s) { return s.id }), ["esplora.example"])
+            expect("RPC endpoint form available", shown("rpcAddress"), true)
+            find(view.item, "sourceDetails_electrum.example", 0).clicked()
+            find(view.item, "sourceDetails_esplora.example", 0).clicked()
+            expect("Details expands the selected row", shown("sourceOptions_electrum.example"), true)
+            expandAdvanced()
+            expect("operator diagnostic in Advanced", shown("oneOperatorNotice"), true)
             find(view.item, "historySwitch_esplora.example", 0).clicked()
         },
         function (v) {
-            expect("history asks first", shown("historyConfirm_esplora.example"), true)
-            expect("history not yet", fake.count("setSource"), 0)
-            find(view.item, "confirmHistory_esplora.example", 0).clicked()
+            expect("history changes without another privacy prompt", fake.count("setSource"), 1)
             expect("history on", fake.last("setSource"), ["setSource", "esplora.example", JSON.stringify({ history: true })])
             find(view.item, "torSwitch_electrum.example", 0).clicked()
         },
         function (v) {
-            expect("tor asks first", shown("torOffConfirm_electrum.example"), true)
-            expect("tor says what it sees", String(prop("torOffConfirm_electrum.example", "message")).indexOf("IP address") >= 0, true)
-            find(view.item, "skipTor_electrum.example", 0).clicked()
             expect("tor off", fake.last("setSource"), ["setSource", "electrum.example", JSON.stringify({ tor: false })])
             var s = JSON.parse(fake.sourcesJson)
             s.sources[1].tor = false
@@ -521,8 +549,9 @@ Item {
             fake.sourcesJson = JSON.stringify(s)
         },
         function (v) {
+            expect("details survive a source refresh", shown("sourceOptions_electrum.example"), true)
             expect("without tor badge", shown("withoutTorBadge_electrum.example"), true)
-            expect("without tor notice", shown("withoutTorNotice"), true)
+            expect("single public-service disclosure", shown("publicPrivacyNotice"), true)
             v.closeSheets()
             var st = JSON.parse(scene.syncedMainnet)
             st.needsBirthday = true
@@ -643,6 +672,8 @@ Item {
             find(view.item, "networkSettingsButton", 0).clicked()
         },
         function (v) {
+            expandSources(["mine", "plain", "newsrv"])
+            expect("LAN servers under your own node", prop("ownNodeSources", "entries").length, 3)
             expect("untrusted certificate shown", String(prop("certDetails_mine", "text")).indexOf("Subject CN=electrs.lan, issued by CN=electrs.lan") === 0, true)
             expect("trust offered", shown("trustCert_mine"), true)
             expect("plain text marked", shown("notEncryptedBadge_plain"), true)
@@ -721,6 +752,8 @@ Item {
             find(view.item, "networkSettingsButton", 0).clicked()
         },
         function (v) {
+            expandAdvanced()
+            expandSources(["kyoto"])
             expect("the peer book", prop("curatedLine", "text"), "14 known peers: 11 from the signed list, 3 learned · 6 worked in the last 30 days")
             expect("...the signed list's standing", prop("signedListNote", "text"), "The signed list is provisional, and signed with a test key, not a release.")
             expect("...and how it grows", prop("peerBookLine", "text"), "The wallet learns working peers from the peers it already uses; "
@@ -763,6 +796,7 @@ Item {
             v.selectTab(4)
         },
         function (v) {
+            expandAdvanced()
             expect("own peers locked while open", shownAny("ownPeersLocked"), true)
             expect("no adding while open", shownAny("addOwnPeerButton"), false)
             expect("no picking a network while open", v.canPickNetwork, false)
@@ -937,6 +971,135 @@ Item {
         },
         function (v) {
             expect("Kyoto's filters learn no address: no server is named", String(prop("gapLimitSheet", "message")).indexOf("history server"), -1)
+            v.selectTab(0)
+            fake.statusJson = JSON.stringify({ state: "syncing", network: "mainnet", authority: { kind: "kyoto", peers: 0 } })
+            fake.sourcesJson = JSON.stringify({ network: "mainnet", proxy: "socks5h://127.0.0.1:9050", sources: [
+                { id: "kyoto", kind: "kyoto", use: true, route: "tor" },
+                { id: "fee", kind: "esplora", use: true, route: "onion" },
+                { id: "backup", kind: "electrum", use: false, route: "tor", url: "ssl://example.com:50002" }] })
+            fake.healthJson = JSON.stringify({ sources: [
+                { id: "kyoto", state: "not_probed", peers: 1024 },
+                { id: "fee", state: "unreachable", error: "connect to server: through the proxy 127.0.0.1:9050: Proxy server unreachable" }] })
+        },
+        function (v) {
+            expect("proxy failure replaces endless connecting", prop("syncChip", "text"), "Tor unavailable")
+            expect("proxy failure on Home", shown("torConnectionNotice"), true)
+            expect("setup guidance names proxy", prop("torConnectionNotice", "message").indexOf("socks5h://127.0.0.1:9050") >= 0, true)
+            expect("peer list is not a connection count", v.healthLine({ id: "kyoto", kind: "kyoto" }), "1024 known peers · not a connection count")
+            find(view.item, "retryTorButton", 0).clicked()
+            expect("retry probes the failing enabled source", fake.last("probeSource"), ["probeSource", "fee"])
+            find(view.item, "torSourcesButton", 0).clicked()
+        },
+        function (v) {
+            expect("sources shows Tor help", shown("torSettingsNotice"), true)
+            expect("enabled source remains identifiable while locked", prop("sourceEnabled_kyoto", "text"), "Enabled")
+            expect("disabled source remains identifiable while locked", prop("sourceEnabled_backup", "text"), "Disabled")
+            var info = find(view.item, "operatorsInfo", 0)
+            info.open()
+            expect("sources help opens", info.opened, true)
+            expect("sources help title", info.title, "How Bitcoin sources work")
+            expect("sources help has scrollable content", info.dialogContentItem !== null, true)
+            info.close()
+            // A peer already answering overrides an older failed server health probe.
+            fake.statusJson = JSON.stringify({ state: "syncing", network: "mainnet", authority: { kind: "kyoto", peers: 1 } })
+        },
+        function (v) {
+            expect("working peers are not labelled Tor blocked", v.syncState(v.status), "headers")
+            expect("local node is not labelled Tor blocked", v.syncState({ state: "syncing", authority: { kind: "local_node", peers: 0 } }), "connecting")
+            fake.statusJson = JSON.stringify({ state: "syncing", network: "mainnet", authority: { kind: "kyoto", peers: 0 } })
+            // A remote failure after SOCKS connected does not prove the proxy is unreachable.
+            fake.healthJson = JSON.stringify({ sources: [{ id: "fee", state: "unreachable", error: "through the proxy 127.0.0.1:9050: TTL expired" }] })
+        },
+        function (v) {
+            expect("remote failure is not proxy failure", v.torFailureSource, null)
+            expect("remote failure keeps connecting", v.syncState(v.status), "connecting")
+            fake.healthJson = JSON.stringify({ sources: [{ id: "backup", state: "unreachable", error: "Proxy server unreachable" }] })
+        },
+        function (v) {
+            expect("disabled sources cannot raise proxy warning", v.torFailureSource, null)
+            fake.healthJson = JSON.stringify({ sources: [{ id: "fee", state: "ok", rttMs: 40 }] })
+        },
+        function (v) {
+            expect("healthy probe clears warning", shown("torConnectionNotice"), false)
+            expect("healthy probe clears settings warning", shown("torSettingsNotice"), false)
+            expect("direct mode needs a closed wallet", prop("connectDirectButton", "enabled"), false)
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "mainnet" })
+        },
+        function (v) {
+            find(view.item, "networkSettingsButton", 0).clicked()
+        },
+        function (v) {
+            expect("direct choice includes regular TLS Electrum only", v.directServers.map(function (s) { return s.id }), ["backup"])
+            expect("direct mode available without a wallet", prop("connectDirectButton", "enabled"), true)
+            find(view.item, "connectDirectButton", 0).clicked()
+            expect("direct setup is one atomic backend call", fake.last("useDirectSource"), ["useDirectSource", "backup"])
+            find(view.item, "rpcAddress", 0).text = "http://192.168.1.20:8332"
+            find(view.item, "rpcUser", 0).text = "rpc-user"
+            find(view.item, "rpcPass", 0).text = "rpc-test-password"
+            find(view.item, "rpcName", 0).text = "My Core"
+            find(view.item, "addRpcButton", 0).clicked()
+            expect("RPC configuration reaches backend", fake.last("addRpcSource"), ["addRpcSource", "http://192.168.1.20:8332", "rpc-user", "rpc-test-password", "My Core"])
+            expect("RPC password cleared after submission", prop("rpcPass", "text"), "")
+            fake.sourcesJson = JSON.stringify({sources:[
+                {id:"rpc-public",kind:"rpc",url:"https://rpc.example",use:false,tor:false,route:"direct"},
+                {id:"rpc-home",kind:"rpc",url:"http://192.168.1.20:8332",lan:true,use:false,tor:false,route:"direct"}]})
+        },
+        function (v) {
+            expect("public RPC in its group", prop("rpcSources", "entries").map(function (s) { return s.id }), ["rpc-public"])
+            expect("private RPC with own node", prop("ownNodeSources", "entries").map(function (s) { return s.id }), ["rpc-home"])
+            expandSources(["rpc-public"])
+            expect("RPC never offers address-history queries", shown("historySwitch_rpc-public"), false)
+            find(view.item, "useRpc_rpc-public", 0).clicked()
+            expect("RPC selection is atomic", fake.last("useRpcSource"), ["useRpcSource", "rpc-public"])
+            expect("RPC correctly names chain authority", v.authorityName({authority:{kind:"rpc_node"}}), "Bitcoin Core RPC")
+        },
+        function (v) {
+            v.closeSheets()
+            fake.networksJson = JSON.stringify({networks:["mainnet","signet"],active:"mainnet"})
+            fake.statusJson = JSON.stringify({state:"ready",network:"mainnet",group:"g_main",family:"bitcoin",synced:true})
+            fake.accountsJson = JSON.stringify([
+                {id:"g_main",family:"bitcoin",chain:"main",label:"Savings",signer:"keystore_module",available:true},
+                {id:"g_other",family:"bitcoin_taproot",chain:"main",label:"Other wallet",signer:"keystore_module",available:true}])
+        },
+        function (v) {
+            expect("open account identity", v.selectedAccount.id, "g_main")
+            expect("picker follows current wallet", prop("accountPicker","currentIndex"), 0)
+            fake.statusJson = JSON.stringify({state:"ready",network:"mainnet",group:"g_main",family:"bitcoin",openSend:"send-1"})
+        },
+        function (v) {
+            expect("unsettled payment blocks account switching", prop("accountPicker","enabled"), false)
+            fake.statusJson = JSON.stringify({state:"ready",network:"mainnet",group:"g_main",family:"bitcoin"})
+        },
+        function (v) {
+            find(view.item,"accountPicker",0).currentIndex = 1
+            find(view.item,"accountPicker",0).activated(1)
+            expect("account switch requested", fake.last("selectAccount"), ["selectAccount","g_other"])
+            expect("old identity stays until close", v.selectedAccount.id, "g_main")
+            fake.busy = true
+        },
+        function (v) {
+            expect("switching disables selector", prop("accountPicker","enabled"), false)
+            fake.busy = false
+            fake.statusJson = JSON.stringify({state:"ready",network:"mainnet",group:"g_other",family:"bitcoin_taproot",synced:true})
+        },
+        function (v) {
+            expect("new wallet identity follows status", v.selectedAccount.id,"g_other")
+            fake.accountsError = "Accounts unavailable"
+        },
+        function (v) {
+            expect("roster failure preserves identity", v.selectedAccount.id,"g_other")
+            expect("roster failure disables selector",prop("accountPicker","enabled"),false)
+            fake.accountsError = ""
+            fake.accountsJson = "[]"
+        },
+        function (v) {
+            expect("removed account cannot become another account",prop("accountPicker","currentIndex"),-1)
+            expect("empty roster disables selector",prop("accountPicker","enabled"),false)
+            fake.statusJson = JSON.stringify({state:"no_wallet",activeNetwork:"mainnet"})
+        },
+        function (v) {
+            expect("empty roster has no opening action",shown("openWalletButton"),false)
+            expect("management available with no accounts",shown("manageAccountsButton"),true)
         }
     ]
     property int step: 0
