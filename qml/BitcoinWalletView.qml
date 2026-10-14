@@ -55,7 +55,7 @@ Item {
                 && a.chain === (root.displayedNetwork === "mainnet" ? "main" : "test")
     })
     property string selectedAccountId: ""
-    readonly property string accountId: walletOpen ? (status.group || "") : selectedAccountId
+    readonly property string accountId: selectedAccountId
     readonly property var selectedAccount: accountsOnNetwork.filter(function (a) { return a.id === root.accountId })[0] || null
     function accountIndex() {
         for (var i = 0; i < accountsOnNetwork.length; i++) if (accountsOnNetwork[i].id === accountId) return i
@@ -70,7 +70,13 @@ Item {
     function selectAccount(a) {
         if (!a || a.available !== true || root.busy || root.opening || root.accountSwitchBlocked) return
         root.selectedAccountId = a.id
-        backend.selectAccount(a.id)
+    }
+    readonly property bool canOpenSelectedAccount: ready && statusRead && !busy && !opening
+        && !accountSwitchBlocked && walletState !== "closing" && status.unavailable !== true
+        && backend.accountsError === "" && selectedAccount !== null && selectedAccount.available === true
+        && (!walletOpen || selectedAccount.id !== status.group)
+    function openSelectedAccount() {
+        if (canOpenSelectedAccount) backend.selectAccount(selectedAccount.id)
     }
     function manageAccounts() {
         logos.request("evm.accounts.manage", ({}), function (res) {
@@ -78,12 +84,15 @@ Item {
             if (root.ready) backend.refresh()
         })
     }
-    onAccountIdChanged: {
-        if (root.walletOpen && root.status.group) root.selectedAccountId = root.status.group
-        if (accountPicker) accountPicker.syncIndex()
+    // A choice stays pending while the currently open wallet keeps refreshing.
+    readonly property string openedAccountId: walletOpen ? (status.group || "") : ""
+    onOpenedAccountIdChanged: {
+        if (openedAccountId) selectedAccountId = openedAccountId
     }
+    onAccountIdChanged: { if (accountPicker) accountPicker.syncIndex() }
     onAccountsOnNetworkChanged: {
-        if (!root.walletOpen && !root.accountsOnNetwork.some(function (a) { return a.id === root.selectedAccountId })) root.selectedAccountId = ""
+        if (!root.accountsOnNetwork.some(function (a) { return a.id === root.selectedAccountId }))
+            root.selectedAccountId = root.walletOpen && root.accountsOnNetwork.some(function (a) { return a.id === root.status.group }) ? root.status.group : ""
         if (accountPicker) accountPicker.syncIndex()
     }
     // Source settings apply when a wallet opens; while one is open, opening or closing they show but do not change.
@@ -1589,10 +1598,18 @@ Item {
                                       : root.walletOpen ? "Account is no longer listed by the signer" : "Manage accounts in Keystore" }
                 }
                 delegate: ItemDelegate {
+                    id: accountOption
                     required property var modelData
                     required property int index
-                    width: accountPicker.width
+                    objectName: "accountOption_" + index
+                    width: ListView.view ? ListView.view.width : accountPicker.width
                     height: 78
+                    hoverEnabled: true
+                    opacity: enabled ? 1 : 0.5
+                    background: Rectangle {
+                        color: accountOption.highlighted || accountOption.hovered ? Theme.palette.surface : "transparent"
+                    }
+                    HoverHandler { cursorShape: parent.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
                     enabled: modelData.available === true
                     highlighted: accountPicker.highlightedIndex === index
                     contentItem: ColumnLayout {
@@ -1606,6 +1623,12 @@ Item {
                                     text: root.familyLabel(modelData.family) + (modelData.available === true ? "" : " · unavailable") }
                     }
                 }
+            }
+            LogosButton {
+                objectName: "openWalletButton"
+                text: root.opening ? "Opening…" : "Open"
+                enabled: root.canOpenSelectedAccount
+                onClicked: root.openSelectedAccount()
             }
             LogosButton { objectName: "manageAccountsButton"; text: "Manage in Keystore"; onClicked: root.manageAccounts() }
             Item { Layout.fillWidth: true }
@@ -1792,18 +1815,9 @@ Item {
                 Layout.fillWidth: true
                 spacing: Theme.spacing.small
                 LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            text: "Select a Bitcoin account above to open it. Create, restore and manage accounts in Keystore." }
+                            text: "Select a Bitcoin account above, then press Open. Create, restore and manage accounts in Keystore." }
                 RowLayout {
                     Layout.fillWidth: true
-                    LogosButton {
-                        objectName: "openWalletButton"
-                        text: "Open selected account"
-                        visible: root.selectedAccount !== null
-                        variant: LogosButton.Variant.Primary
-                        enabled: root.ready && !root.busy && root.statusRead && root.status.unavailable !== true
-                                 && root.selectedAccount !== null && root.selectedAccount.available === true && backend.accountsError === ""
-                        onClicked: root.selectAccount(root.selectedAccount)
-                    }
                     LogosButton { objectName: "networkSettingsButton"; text: "Sources"; enabled: root.ready; onClicked: networkSheet.open() }
                     LogosButton { objectName: "refreshButton"; text: "Refresh"; enabled: root.ready; onClicked: backend.clearAndRefresh() }
                     Item { Layout.fillWidth: true }
