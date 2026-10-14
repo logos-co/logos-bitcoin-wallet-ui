@@ -13,8 +13,10 @@ is approved in the signer app.
   keeps the current identity visible and disables selection until a successful refresh.
   **Manage in Keystore** raises `evm.accounts.manage` for creation, restoration and management.
   Switching an open wallet closes it before opening the chosen account; an active send blocks
-  switching. The picker continues to name the current wallet until the close completes.
-- **Open an account:** select it in the picker. The backend's
+  switching. Selecting an entry only changes the pending choice; the current wallet remains open
+  until **Open** is pressed. Refreshes preserve the pending choice, and the status line names
+  the wallet that is actually open. Dropdown entries have consistent hover highlights.
+- **Open an account:** select it in the picker, then press **Open**. The backend's
   `open_wallet` answers a job, and while `wallet_status` carries an `openHandle` the app raises
   `keystore.accounts.open` with `{ handle }` and shows "Waiting for the keys app", with Ask again and
   Cancel. Cancel closes the wallet, which withdraws the open.

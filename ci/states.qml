@@ -336,7 +336,10 @@ Item {
             expect("unavailable account does not open", fake.last("selectAccount"), null)
             find(view.item, "accountPicker", 0).currentIndex = 0
             find(view.item, "accountPicker", 0).activated(0)
-            expect("selected signer account opens", fake.last("selectAccount"), ["selectAccount", "g_test"])
+            expect("selection alone does not open", fake.last("selectAccount"), null)
+            expect("chosen account stays selected", v.selectedAccount.id, "g_test")
+            find(view.item, "openWalletButton", 0).clicked()
+            expect("Open opens the selected account", fake.last("selectAccount"), ["selectAccount", "g_test"])
             find(view.item, "manageAccountsButton", 0).clicked()
             expect("management goes to Keystore", logos.requests[logos.requests.length-1].intent, "evm.accounts.manage")
             fake.pendingJobKind = "open"
@@ -1073,8 +1076,14 @@ Item {
         function (v) {
             find(view.item,"accountPicker",0).currentIndex = 1
             find(view.item,"accountPicker",0).activated(1)
-            expect("account switch requested", fake.last("selectAccount"), ["selectAccount","g_other"])
-            expect("old identity stays until close", v.selectedAccount.id, "g_main")
+            expect("selection changes without switching", v.selectedAccount.id, "g_other")
+            expect("current wallet stays open", v.status.group, "g_main")
+            expect("no switch requested by selection", fake.last("selectAccount"), ["selectAccount", "g_test"])
+            fake.accountsJson = JSON.stringify(JSON.parse(fake.accountsJson))
+            fake.statusJson = JSON.stringify({state:"syncing",network:"mainnet",group:"g_main",family:"bitcoin"})
+            expect("refresh keeps pending selection", v.selectedAccount.id, "g_other")
+            find(view.item,"openWalletButton",0).clicked()
+            expect("Open requests account switch", fake.last("selectAccount"), ["selectAccount","g_other"])
             fake.busy = true
         },
         function (v) {
@@ -1098,7 +1107,7 @@ Item {
             fake.statusJson = JSON.stringify({state:"no_wallet",activeNetwork:"mainnet"})
         },
         function (v) {
-            expect("empty roster has no opening action",shown("openWalletButton"),false)
+            expect("empty roster disables Open",prop("openWalletButton","enabled"),false)
             expect("management available with no accounts",shown("manageAccountsButton"),true)
         }
     ]
