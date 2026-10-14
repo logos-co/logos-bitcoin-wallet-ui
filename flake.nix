@@ -1,5 +1,5 @@
 {
-  description = "Logos bitcoin_wallet_ui: the Bitcoin wallet app. Takes no password and holds no key material.";
+  description = "Logos bitcoin_wallet_ui: the Bitcoin wallet app. Takes no signing password and holds no key material.";
 
   inputs = {
     logos-module-builder.url = "github:logos-co/logos-module-builder";

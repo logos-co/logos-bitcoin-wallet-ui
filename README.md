@@ -1,11 +1,20 @@
 # logos-bitcoin-wallet-ui
 
 `bitcoin_wallet_ui`: the Bitcoin wallet app for Logos Basecamp, built on the Logos Design System.
-It talks only to `bitcoin_wallet_backend`, whose default custodian it is. It takes no password and
+It talks to `bitcoin_wallet_backend`, whose default custodian it is, and reads the account roster
+from `signer_manager_module`. It takes no signing password and
 holds no key material: wallets are opened, created and restored in the keys app, and every send
 is approved in the signer app.
 
-- **Open a wallet:** pick native segwit or taproot, or a wallet opened before. The backend's
+- **Account selector:** lists Bitcoin and Taproot accounts from `signer_manager.accounts()`,
+  including accounts never opened in this app. Mainnet uses `chain: main`; test networks use
+  `chain: test`. Unavailable signers stay visible but cannot be selected. Names and availability
+  refresh on `accounts_changed`, manual refresh and periodic reconciliation. A failed roster read
+  keeps the current identity visible and disables selection until a successful refresh.
+  **Manage in Keystore** raises `evm.accounts.manage` for creation, restoration and management.
+  Switching an open wallet closes it before opening the chosen account; an active send blocks
+  switching. The picker continues to name the current wallet until the close completes.
+- **Open an account:** select it in the picker. The backend's
   `open_wallet` answers a job, and while `wallet_status` carries an `openHandle` the app raises
   `keystore.accounts.open` with `{ handle }` and shows "Waiting for the keys app", with Ask again and
   Cancel. Cancel closes the wallet, which withdraws the open.
@@ -28,6 +37,10 @@ is approved in the signer app.
     `rescanFrom` holds, Home reads "Rescanning from block H", with a share only under Kyoto.
   - Source alerts show as a banner above the tabs; Kyoto naming a chain the checks refuse
     (`authority_suspect`) has a banner of its own.
+  - An enabled source reporting `Proxy server unreachable` shows a Tor setup notice with the
+    configured SOCKS address and a connection-check button. A peerless chain routed entirely
+    through Tor reads "Tor unavailable" instead of "Connecting". Working peers and direct/local
+    chain sources keep their own status. A successful health probe clears the notice.
   - Payments a server reported below where the wallet's chain starts (history state `unchecked`,
     `balances.unchecked`) show apart from the confirmed balance, as "Reported, not checked", and
     in Activity as "Reported by X, not checked", never as confirmed. The core leaves `reportedBy`
@@ -76,17 +89,29 @@ is approved in the signer app.
     rescans from its birthday and downloads more, and an enabled history server is asked about
     more addresses. The rescan shows on Home as a birthday's does; refusals (`invalid`, `busy`)
     are said in plain words.
-  - Each source has Use, History and Tor switches (`set_source`). Turning History on asks first:
-    the server will learn every address. Turning Tor off asks first, in that row, and says what
-    the source would see.
-  - The info button says what a second operator adds, claiming only what the design does.
-    Notices name the sources reached without Tor, and say when Kyoto is off and the Electrum
-    servers of one operator alone decide the chain, or when Kyoto runs below its quorum on one
-    peer (`kyoto.onePeerDecides`, testnet4): "One peer decides this wallet's chain". A
-    filter-header conflict (`kyoto.lastConflict`) is a quiet line under Kyoto: "Peers that
-    disagreed were set aside at T".
-  - Your own servers, added by address; the Tor proxy; the exposure record. A server reached in
-    plain text outside Tor is marked "Not encrypted".
+  - Sources groups **Public service** by **Bitcoin Core RPC**, **Electrum** and **Esplora**,
+    followed by **Your own node**. Public RPC endpoints appear in the RPC group; local-network
+    endpoints appear with the bundled node. PublicNode is built in for mainnet, disabled until
+    selected, with Tor off. Add an HTTP/HTTPS endpoint with optional RPC basic
+    authentication, check its network and block-filter capability, then choose **Use only this**.
+    This atomically disables the other sources. RPC starts with Tor off; Details offers Tor and
+    certificate pinning. The wallet checks headers and scans payments locally, using block filters
+    where available and full blocks otherwise. Full-block restores can be very slow.
+  - Compact provider rows show Enabled/Disabled, route and health, even while settings are
+    locked. Details reveals History, optional Tor, certificates and removal. Expansion survives
+    health refreshes. History and Tor changes apply without extra privacy confirmations.
+  - One short public-service disclosure explains that direct connections reveal the IP and
+    wallet-related requests. Running your own node, with public services disabled, is presented
+    as the privacy-focused option. The help popup explains connection types and providers.
+  - **Use without Tor**, under Electrum, selects a regular TLS server. `useDirectSource` enables
+    it with History on and Tor off and disables every other source in one `set_sources` call
+    against a freshly read list. Pins and credentials remain intact; a wallet must be closed.
+  - **Advanced settings** holds the Tor proxy, custom-server form, Kyoto peers, operator
+    diagnostics and connection record. Tor must run separately; onion addresses require it.
+    Kyoto does not automatically hand the chain to Electrum when it cannot connect. Enabled
+    sources are summarized above the groups, including Kyoto when Advanced is collapsed.
+  - No-chain, unreachable-proxy and source-health errors remain visible. A server reached in
+    plain text outside Tor is marked Not encrypted. One-operator diagnostics live in Advanced.
   - Under Kyoto, the install's peer book (`peer_list`'s `counts`): "N known peers: M from the
     signed list, K learned · L worked in the last 30 days", whether the signed list is provisional
     or signed with a test key, and how it grows: the wallet learns working peers from the ones it
@@ -106,10 +131,11 @@ is approved in the signer app.
 
 ## Secrets
 
-None cross the view's interface (`src/bitcoin_wallet_ui.rep`), in either direction. CI checks that
-no PROP and no SLOT is named like a secret, with positive controls, and that the view has no
-password field. The descriptors are a SLOT's return value, shown on Settings and dropped when it
-is left.
+Signing secrets never cross the view's interface (`src/bitcoin_wallet_ui.rep`). CI keeps the
+signing-secret tripwire and permits only the masked RPC service password field. Optional RPC
+credentials are submitted to the node module, never returned as view properties, and the field
+is cleared on submission. They authenticate a node service, not a wallet or signer. The descriptors
+are a SLOT's return value, shown on Settings and dropped when it is left.
 
 ## The backend's contract
 
@@ -117,11 +143,13 @@ is left.
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
 interface changes; this copy is from logos-bitcoin-wallet-backend 966277c.
+`contracts/signer_manager_module.lidl` supplies the account-read API and `accounts_changed` event;
+only public identity fields are copied into the view's account roster.
 
 ## Intents
 
-The app **uses** `keystore.accounts.open` (the keys app, `evm_keystore_ui`) and
-`evm.signing.approve` (the signer app). Their answers are advisory: `wallet_status` and
+The app **uses** `evm.accounts.manage` (Keystore account management), `keystore.accounts.open`
+(Keystore opening approval) and `evm.signing.approve` (the signer app). Their answers are advisory: `wallet_status` and
 `send_status` settle what happened. `unavailable` is shown with what to do by hand.
 
 ## Checks

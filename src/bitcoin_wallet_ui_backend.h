@@ -25,6 +25,7 @@ public:
     void setActiveNetwork(QString network) override;
     void openWallet(QString paramsJson) override;
     void closeWallet() override;
+    void selectAccount(QString accountId) override;
     void setBirthday(QString paramsJson) override;
     void setGapLimit(QString paramsJson) override;
 
@@ -43,7 +44,10 @@ public:
     void dismissAlerts() override;
 
     QString setSource(QString sourceId, QString changesJson) override;
+    QString useDirectSource(QString sourceId) override;
     QString addSource(QString address, QString kind, QString name) override;
+    QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name) override;
+    QString useRpcSource(QString sourceId) override;
     QString removeSource(QString sourceId) override;
     QString setProxy(QString proxy) override;
     QString setOwnPeers(QString peersJson) override;
@@ -56,6 +60,7 @@ protected:
     void onContextReady() override;
 
 private:
+    QString addServer(QString address, QString kind, QString name, const QJsonObject &credentials);
     // A reply lost for kStaleReadMs no longer holds up the next read of its kind.
     struct Read {
         bool inFlight = false;
@@ -84,6 +89,7 @@ private:
     void walletBecameReady();
     void clearWalletReads();
     void loadRegistry();
+    void loadAccounts();
     void loadBalances();
     void applyBalances(const QString &reply, quint64 epoch);
     void readHistory(bool quiet);
@@ -115,6 +121,8 @@ private:
     QTimer m_readPoll;
     QTimer m_jobPoll;
     QTimer m_sendPoll;
+    Read m_accountsRead;
+    QElapsedTimer m_accountsAge;
     Read m_statusRead, m_walletsRead, m_balanceRead, m_historyRead, m_feeRead;
     Read m_sourcesRead, m_healthRead, m_exposureRead, m_sendRead;
     QElapsedTimer m_feeAge, m_sourcesAge, m_healthAge, m_exposureAge, m_historyAge, m_readySince;

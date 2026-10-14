@@ -19,6 +19,9 @@ class BitcoinWalletUi
     PROP(QString openQueuedJson="" READONLY)
     // list_wallets().wallets: [{ group, family, network, label, birthday, lastOpened }]
     PROP(QString walletsJson="[]" READONLY)
+    // Public account identities only, read directly from signer_manager.accounts().
+    PROP(QString accountsJson="" READONLY)
+    PROP(QString accountsError="" READONLY)
     // balances() without ok: the last read that was not busy.
     PROP(QString balancesJson="" READONLY)
     // history(page): { page, pageSize, total, rows }
@@ -58,6 +61,7 @@ class BitcoinWalletUi
     SLOT(void openWallet(QString paramsJson))
     // Also withdraws an open still waiting in the keys app.
     SLOT(void closeWallet())
+    SLOT(void selectAccount(QString accountId))
     // { date: "YYYY-MM-DD" } or { height }, for an open wallet; the core scans again from it.
     SLOT(void setBirthday(QString paramsJson))
     // { gapLimit }, 20 to 1000: the wallet scans again from its birthday.
@@ -88,8 +92,12 @@ class BitcoinWalletUi
     // ---- sources: each returns "" or the refusal; locked while a wallet is open ----
     // { use?, history?, tor?, certSha256? }; certSha256 null removes a pin.
     SLOT(QString setSource(QString sourceId, QString changesJson))
+    // Select one TLS Electrum server for every role, directly, after the UI explains exposure.
+    SLOT(QString useDirectSource(QString sourceId))
     // kind is electrum or esplora; the node module normalizes the address. The new server is probed.
     SLOT(QString addSource(QString address, QString kind, QString name))
+    SLOT(QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name))
+    SLOT(QString useRpcSource(QString sourceId))
     SLOT(QString removeSource(QString sourceId))
     SLOT(QString setProxy(QString proxy))
     // Kyoto's own peers, a JSON array of host[:port], at most 64; [] restores the peer book.
