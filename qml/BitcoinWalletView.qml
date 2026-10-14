@@ -1598,6 +1598,7 @@ Item {
                                       : root.walletOpen ? "Account is no longer listed by the signer" : "Manage accounts in Keystore" }
                 }
                 delegate: ItemDelegate {
+                    id: accountOption
                     required property var modelData
                     required property int index
                     objectName: "accountOption_" + index
@@ -1606,7 +1607,7 @@ Item {
                     hoverEnabled: true
                     opacity: enabled ? 1 : 0.5
                     background: Rectangle {
-                        color: parent.highlighted || parent.hovered ? Theme.palette.surface : "transparent"
+                        color: accountOption.highlighted || accountOption.hovered ? Theme.palette.surface : "transparent"
                     }
                     HoverHandler { cursorShape: parent.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
                     enabled: modelData.available === true
