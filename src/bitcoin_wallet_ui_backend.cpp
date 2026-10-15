@@ -272,7 +272,8 @@ void BitcoinWalletUiBackend::loadAccounts() {
                     const auto family = a.value("family").toString();
                     if (family != QLatin1String("bitcoin") && family != QLatin1String("bitcoin_taproot")) continue;
                     QJsonObject row;
-                    for (const auto *key : {"id", "family", "chain", "label", "signer", "available"})
+                    // `origin` names the device kind and the seed wallet; the view shows that, never a module.
+                    for (const auto *key : {"id", "family", "chain", "label", "signer", "available", "origin"})
                         if (a.contains(QLatin1String(key))) row.insert(QLatin1String(key), a.value(QLatin1String(key)));
                     if (!row.value("id").toString().isEmpty()) accounts.append(row);
                 }
@@ -301,7 +302,10 @@ void BitcoinWalletUiBackend::selectAccount(QString accountId) {
         if (a.value("id").toString() == accountId) { selected = a; break; }
     }
     const QString chain = network == QLatin1String("mainnet") ? QStringLiteral("main") : QStringLiteral("test");
-    if (selected.isEmpty() || !selected.value("available").toBool() || selected.value("chain").toString() != chain) {
+    // A device signs on its own screen, so its wallet opens while it is unplugged; only sending needs it.
+    const QString signer = selected.value("signer").toString();
+    const bool device = !signer.isEmpty() && signer != QLatin1String("keystore_module");
+    if (selected.isEmpty() || (!selected.value("available").toBool() && !device) || selected.value("chain").toString() != chain) {
         say(QStringLiteral("That account is unavailable on this network. Refresh or manage it in Keystore.")); return;
     }
     if (walletReady() && st.value("group").toString() == accountId) return;

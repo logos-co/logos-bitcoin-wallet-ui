@@ -8,14 +8,20 @@ is approved in the signer app.
 
 - **Account selector:** lists Bitcoin and Taproot accounts from `signer_manager.accounts()`,
   including accounts never opened in this app. Mainnet uses `chain: main`; test networks use
-  `chain: test`. Unavailable signers stay visible but cannot be selected. Names and availability
-  refresh on `accounts_changed`, manual refresh and periodic reconciliation. A failed roster read
-  keeps the current identity visible and disables selection until a successful refresh.
-  **Manage in Keystore** raises `evm.accounts.manage` for creation, restoration and management.
-  Switching an open wallet closes it before opening the chosen account; an active send blocks
-  switching. Selecting an entry only changes the pending choice; the current wallet remains open
-  until **Open** is pressed. Refreshes preserve the pending choice, and the status line names
-  the wallet that is actually open. Dropdown entries have consistent hover highlights.
+  `chain: test`. Each row names its source from the manager's `origin`, never a module: "This device
+  (Keystore)", "Keycard" with its seed wallet's name ("Keycard · Black Card"), or "Signer". A device
+  account (any signer but the keystore) opens while its device is unplugged, since a device signs by
+  itself and only sending needs it: its row says "Keycard not connected", with one line on what
+  signing needs (a card in a reader or a Keycard Shell, and applet 4.0 for Taproot), and Send says
+  the same. A failure while it is unplugged says to connect it, and can be asked again. An
+  unavailable keystore account stays visible but cannot be selected. Names and availability refresh
+  on `accounts_changed`, manual refresh and periodic reconciliation. A failed roster read keeps the
+  current identity visible and disables selection until a successful refresh. **Manage in Keystore**
+  raises `evm.accounts.manage` for creation, restoration and management. Switching an open wallet
+  closes it before opening the chosen account; an active send blocks switching. Selecting an entry
+  only changes the pending choice; the current wallet remains open until **Open** is pressed.
+  Refreshes preserve the pending choice, and the status line names the wallet that is actually open.
+  Dropdown entries have consistent hover highlights.
 - **Open an account:** select it in the picker, then press **Open**. The backend's
   `open_wallet` answers a job, and while `wallet_status` carries an `openHandle` the app raises
   `keystore.accounts.open` with `{ handle }` and shows "Waiting for the keys app", with Ask again and
