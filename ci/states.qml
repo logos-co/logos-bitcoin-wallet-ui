@@ -183,6 +183,16 @@ Item {
             [mainnet({ synced: false, authority: { height: 935500, tipAgeSecs: 75600, peers: 0, asked: false } }), "Connecting to the chain's sources… · last known block 935,500"],
             [mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: true } }), "No source agrees · block 935,500, tip 4 min old"],
             [mainnet({ network: "regtest", walletTip: 150, authority: { height: 150, tipAgeSecs: 30, peers: 0, asked: false } }), "Connecting to the chain's sources… · last known block 150"],
+            // A header download: how far it read of the server's tip, never "stalled" or "no source agrees".
+            [mainnet({ state: "syncing", synced: false, walletTip: 84000, authority: { kind: "electrum_headers", height: 84000, tipAgeSecs: 50000000, peers: 1, asked: true,
+                       headers: { have: 84000, target: 157000 } } }), "Reading the chain's headers… 84,000 of 157,000"],
+            [mainnet({ state: "syncing", synced: false, authority: { height: 2016, tipAgeSecs: 50000000, peers: 0, asked: false, headers: { have: 2016, target: 157000 } } }),
+             "Reading the chain's headers… 2,016 of 157,000"],
+            // Kyoto's peers' tip is unknown: only how far it read.
+            [mainnet({ state: "syncing", synced: false, authority: { kind: "kyoto", height: 0, tipAgeSecs: 50000000, peers: 2, asked: true, headers: { have: 6000, target: null } } }),
+             "Reading the chain's headers… block 6,000"],
+            // At the tip the core says null: the usual states.
+            [mainnet({ authority: { kind: "electrum_headers", height: 935500, tipAgeSecs: 240, peers: 2, headers: null } }), "Synchronized · block 935,500, tip 4 min old · Servers' headers"],
             // A tip older than an hour is never synchronized.
             [mainnet({ authority: { height: 935500, tipAgeSecs: 3601, peers: 3 } }), "Stalled · block 935,500, tip 1 hour old"],
             [mainnet({ authority: { height: 935500, tipAgeSecs: 200000, peers: 3 } }), "Stalled · block 935,500, tip 2 days old"],
@@ -198,6 +208,10 @@ Item {
         expect("chip synced", v.syncChip(mainnet({})), "Synced · 935,500")
         expect("chip no peers", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } })), "No sources")
         expect("chip not asked yet", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: false } })), "Connecting…")
+        expect("chip reading headers", v.syncChip(mainnet({ authority: { height: 84000, tipAgeSecs: 50000000, peers: 1, headers: { have: 84000, target: 157000 } } })), "Headers 53%")
+        expect("chip never says done before the tip", v.syncChip(mainnet({ authority: { height: 156999, peers: 1, headers: { have: 156999, target: 157000 } } })), "Headers 99%")
+        expect("chip reading Kyoto's headers", v.syncChip(mainnet({ authority: { kind: "kyoto", height: 0, peers: 2, headers: { have: 6000, target: null } } })), "Reading headers…")
+        expect("chip without a height, as before", v.syncChip(mainnet({ state: "syncing", authority: { height: null, peers: 2 } })), "Connecting…")
         expect("authority not asked yet", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: false } })),
                "The chain: headers from Electrum servers, checked here · waiting for their first answer")
         expect("authority asked, none agrees", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: true } })),
@@ -451,6 +465,17 @@ Item {
             expect("...the authority", prop("authorityLine", "text"), "The chain: headers from Electrum servers, checked here · waiting for their first answer")
             expect("...and no badge while nothing was asked", shown("healthBadge"), false)
             fake.healthJson = ""
+            var st = JSON.parse(scene.syncedMainnet)
+            st.state = "syncing"
+            st.synced = false
+            st.walletTip = 84000
+            st.authority = { kind: "electrum_headers", height: 84000, tipAgeSecs: 50000000, peers: 1, asked: true, headers: { have: 84000, target: 157000 } }
+            fake.statusJson = JSON.stringify(st)
+        },
+        function (v) {
+            expect("rendered: a header download", prop("syncLine", "text"), "Reading the chain's headers… 84,000 of 157,000")
+            expect("...the chip", prop("syncChip", "text"), "Headers 53%")
+            expect("...the server sending them agrees", prop("authorityLine", "text"), "The chain: headers from Electrum servers, checked here · 1 server agrees")
             fake.statusJson = scene.syncedMainnet
             fake.feeRatesJson = ""
             v.selectTab(1)

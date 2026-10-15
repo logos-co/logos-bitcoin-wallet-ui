@@ -13,7 +13,7 @@ module bitcoin_wallet_backend {
   method descriptors() -> tstr description "CUSTODIAN. The open wallet's public descriptors, as a call result only, never an event."
   method set_birthday(params_json: tstr) -> tstr description "CUSTODIAN. `{ date: \"YYYY-MM-DD\" }` or `{ height }` for the open wallet; the core scans again from\nit. `{ ok, jobId }`; the job's result is `{ birthday: { height, source }, rescanFrom }`."
   method set_gap_limit(params_json: tstr) -> tstr description "CUSTODIAN. `{ gapLimit }`, 20 to 1000, for the open wallet; a raise scans again from the birthday.\n`{ ok, jobId }`; the job's result is `{ gapLimit, rescanFrom }`. Refusal codes: invalid, busy, no_wallet."
-  method wallet_status() -> tstr description "The core's status, `gapLimit` and `authority.asked` included, plus `syncPercent`, `activeNetwork`,\n`label` and `openSend`."
+  method wallet_status() -> tstr description "The core's status, `gapLimit`, `authority.asked` and `authority.headers` (`{ have, target }` while\nthe chain's headers come in, else null) included, plus `syncPercent` (none during that download),\n`activeNetwork`, `label` and `openSend`."
   method balances() -> tstr description "`{ ok, busy, confirmed, waiting, pending, sent, immature, tooSmall, beyondGap: { count, sat, confirmedSat } }`\nin satoshis, each with a `…Btc` twin. beyondGap is coins past the gap limit, confirmedSat its confirmed\npart: outside confirmed, waiting, pending and sent, still spendable. Empty while busy, never zero."
   method history(page: int) -> tstr description "The core's history page, newest first; rows gain `amountBtc` and `feeBtc`, and keep `beyondGap` (false\nunless the wallet's part is only through addresses past the gap limit)."
   method receive_address() -> tstr description "`{ ok, address, index, fresh, unused, gapLimit }`: a fresh receive address, or with `fresh` false the\nfirst unused one, when `unused` unused addresses already reach the gap limit."
@@ -41,7 +41,7 @@ module bitcoin_wallet_backend {
   method abandon_send(params_json: tstr) -> tstr description "CUSTODIAN. `{ txid }` of a send in `unknown`: the core frees its coins. `{ ok, jobId, requestId,\ntxid, note }`; if the original still confirms, a later send from them fails, or replaces it first."
 
   event wallet_state_changed(payload: tstr) description "wallet_status()'s shape, whenever the core's state changes."
-  event sync_progress(payload: tstr) description "`{ state, network, walletTip, authorityHeight, tipAgeSecs, percent, synced }`, on change."
+  event sync_progress(payload: tstr) description "`{ state, network, walletTip, authorityHeight, tipAgeSecs, percent, synced, headers }`, on change;\n`headers` is the core's header download, `{ have, target }` or null."
   event balance_changed(payload: tstr) description "balances()'s shape, when an amount the core read changes."
   event send_status_changed(request_id: tstr, state: tstr)
   event job_finished(job_id: tstr, state: tstr) description "Opens, closes and rebroadcasts, under the backend's job ids."

@@ -515,6 +515,8 @@ Item {
         if (peers <= 0 && root.torFailureSource && root.chainSources.length > 0
                 && root.chainSources.every(function (source) { return root.usesTor(source) })
                 && (a.kind === "kyoto" || a.kind === "electrum_headers")) return "tor_blocked"
+        // A header download: how far it read, not "no source agrees" or a stale tip.
+        if (a.headers && typeof a.headers === "object") return "headers"
         if (!root.isNum(a.height)) return peers > 0 ? "headers" : "connecting"
         // Last session's chain before any source answered this open: no news, not "none agrees".
         if (peers <= 0 && a.asked === false) return "connecting"
@@ -554,7 +556,7 @@ Item {
         case "failed": return "Failed" + (st.lastError ? ": " + st.lastError : "")
         case "tor_blocked": return "Cannot reach Tor · the wallet cannot connect to its chain sources"
         case "connecting": return "Connecting to the chain's sources…" + (root.isNum(a.height) ? " · last known block " + h : "")
-        case "headers": return "Reading the chain's headers…"
+        case "headers": return "Reading the chain's headers…" + root.headersRead(a.headers)
         case "isolated": return "No source agrees · block " + h + (age ? ", tip " + age + " old" : "")
         case "stalled": return "Stalled · block " + h + ", tip " + age + " old"
         case "syncing": return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
@@ -565,13 +567,24 @@ Item {
         }
         return ""
     }
+    // A header download's progress: "84,000 of 157,000", or Kyoto's own height, its peers' tip unknown.
+    function headersRead(p) {
+        if (!p || typeof p !== "object" || !root.isNum(p.have)) return ""
+        return root.isNum(p.target) ? " " + root.group(p.have) + " of " + root.group(p.target) : " block " + root.group(p.have)
+    }
+    function headersShare(p) {
+        if (!p || typeof p !== "object" || !root.isNum(p.have) || !root.isNum(p.target) || Number(p.target) <= 0) return null
+        return Math.min(99, Math.floor(Number(p.have) * 100 / Number(p.target)))
+    }
     function syncChip(st) {
+        var share = root.headersShare(st && st.authority ? st.authority.headers : null)
         switch (root.syncState(st)) {
         case "unavailable": return "Not answering"
         case "closing": return "Closing…"
         case "failed": return "Failed"
         case "tor_blocked": return "Tor unavailable"
-        case "connecting": case "headers": return "Connecting…"
+        case "headers": return share !== null ? "Headers " + share + "%" : (st.authority.headers ? "Reading headers…" : "Connecting…")
+        case "connecting": return "Connecting…"
         case "isolated": return "No sources"
         case "stalled": return "Stalled"
         case "syncing": return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")

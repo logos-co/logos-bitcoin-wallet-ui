@@ -41,7 +41,10 @@ is approved in the signer app.
     "Older blocks via <source>", or a notice while nothing can scan it. Until the open's first
     round of asking the chain's sources ends (`authority.asked` false), last session's chain reads
     "Connecting to the chain's sources… · last known block N", never "No source agrees": the chip,
-    the authority line and the sources badge wait for that answer too.
+    the authority line and the sources badge wait for that answer too. While the chain's headers
+    come in (`authority.headers`), it reads "Reading the chain's headers… 84,000 of 157,000", or
+    "… block 6,000" under Kyoto, whose peers' tip isn't known, and the chip "Headers 53%"; the
+    server sending them counts as agreeing.
   - A wallet restored without a birthday (`needsBirthday`) asks for one: a day, or "I don't know"
     (`set_birthday`, a job; `{ height: 0 }` scans from where the wallet's kind of address began).
     A refusal, such as a day after its first payment, shows with the core's reason; while
@@ -159,7 +162,7 @@ are a SLOT's return value, shown on Settings and dropped when it is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend c407b26.
+interface changes; this copy is from logos-bitcoin-wallet-backend ccc24c3.
 `contracts/signer_manager_module.lidl` supplies the account-read API and `accounts_changed` event;
 only public identity fields are copied into the view's account roster.
 
@@ -198,7 +201,7 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   reported below the chain's start until an earlier birthday checks it (with a wider pass), one peer
   deciding the chain on testnet4, and a coin past the 20-address gap limit that a small send spends
   and a gap limit of 30 takes into the balance. Each open shows last session's chain as connecting for
-  its first 4 s; reopens show the first unused address again; testnet4's wallet already holds 20 unused
+  its first 4 s, and the first open on a network then reads the chain's headers for 4 s; reopens show the first unused address again; testnet4's wallet already holds 20 unused
   ones, so New address there says so; Kyoto on testnet4 has no fee estimate and Esplora's under Kyoto
   on signet is a quiet network's. A send's fate is picked by its amount; the header of `sim.rs` says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
