@@ -11,13 +11,14 @@ intro: |
   intent to each of their outcomes: nobody acknowledging within 60 s and asking again, a cancel, a
   rejection, an unknown outcome that is forgotten, and a payment that goes out and is sped up. The
   sync line never claims "Synchronized" once no source agrees with the wallet's chain, nor "No
-  source agrees" before its sources first answered. Opens show the first unused address, New
+  source agrees" before its sources first answered, and counts the chain's headers while the
+  first wallet on a network reads them. Opens show the first unused address, New
   address at the gap limit says why it gives no new one, and the fee presets need an estimate.
   While a wallet is open the account picker stays on it and Open is off until it is closed; an
   open asked for past the picker is refused too.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend c407b26) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend ccc24c3) with a script behind it, and no
   wallet core, keystore, chain or network. The signer manager is one too, doctests/fixture-manager:
   its `accounts` answers a keystore wallet on each chain and a Keycard account with no card
   inserted, which the account picker names by its seed wallet and still opens: only sending needs
@@ -26,7 +27,8 @@ intro: |
   the first open of a run, approves the next after 4 s, and picks a send's fate by its amount:
   0.0002 BTC is rejected, 0.0003 BTC expires unacknowledged, 0.0004 BTC goes out with an unknown
   outcome, 0.0005 BTC leaves change too small to spend (added to the fee when asked), and the first
-  payment sent makes the history server report a confirmation on another chain. A wallet opens
+  payment sent makes the history server report a confirmation on another chain. The first wallet
+  opened on a network reads the chain's headers for 4 s after its server first answers. A wallet opens
   without a birthday (one after its first payment, 2026-05-31, is refused), a reorg re-anchors the
   transfer to yourself 5 s after the first open is ready, and with Kyoto in use it is the authority
   and names a chain the wallet refuses. A TLS server of your own is probed and pinned, a peer of
@@ -437,6 +439,25 @@ sections:
               value: "Connecting to the chain's sources… · last known block 290,123"
               timeout: 4000
               screenshot: "wallet-first-answer.png"
+            - name: "The first wallet on signet then reads the chain's headers: the sync line counts them as the server sends them"
+              action: expect_property
+              find_value: "syncLine"
+              property: "text"
+              value: "Reading the chain's headers… 145,061 of 290,123"
+              timeout: 8000
+              screenshot: "wallet-reading-headers.png"
+            - name: "...the chip shows the share read"
+              action: expect_property
+              find_value: "syncChip"
+              property: "text"
+              value: "Headers 49%"
+              timeout: 3000
+            - name: "...and the server sending them agrees with the chain"
+              action: expect_property
+              find_value: "authorityLine"
+              property: "text"
+              value: "The chain: headers from Electrum servers, checked here · 1 server agrees"
+              timeout: 3000
             - name: "...on signet"
               action: expect_property
               find_value: "statusLine"

@@ -11,7 +11,7 @@
 //! refused there. Fee estimates: none on testnet4, a quiet 1 sat/vB under Kyoto on signet. No
 //! network, no key.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -55,6 +55,9 @@ const BEYOND_GAP_NEEDS: u64 = 30;
 const GAP_LIMIT_DEFAULT: u64 = 20;
 /// Until the first round of asking the chain's sources ends: no peers, the sources unasked.
 const FIRST_ANSWER: Duration = Duration::from_secs(4);
+/// The first open on a network then reads the chain's headers this long, at half the tip, from
+/// one server; later opens there find them stored.
+const HEADERS_TIME: Duration = Duration::from_secs(4);
 /// testnet4's wallet was opened this often by an app that revealed an address at each open.
 const OLD_APP_OPENS: u32 = 20;
 /// The wallet's first payment, a fixed day so a birthday after it is refused the same way every run.
@@ -192,6 +195,10 @@ pub struct Sim {
     birthday_source: String,
     rescan_from: Option<u64>,
     rescan_until: Option<Instant>,
+    /// A first open's header download: from the first answer until then.
+    headers_until: Option<Instant>,
+    /// Networks whose headers a wallet has read.
+    headers_read: BTreeSet<String>,
     reorg_at: Option<Instant>,
     reorged: bool,
     last_reorg: Value,
@@ -476,6 +483,8 @@ impl Sim {
             birthday_source: String::new(),
             rescan_from: None,
             rescan_until: None,
+            headers_until: None,
+            headers_read: BTreeSet::new(),
             reorg_at: None,
             reorged: false,
             last_reorg: Value::Null,
@@ -576,13 +585,22 @@ impl Sim {
         }
     }
 
+    /// A first open's header download, after the server's first answer: half the tip read.
+    fn reading_headers(&self, now: Instant) -> Option<u64> {
+        (self.open() && self.asked && self.headers_until.is_some_and(|t| now < t)).then(|| tip(&self.network) / 2)
+    }
+
     pub fn status(&self, now: Instant) -> Value {
         let open = self.open();
         let kyoto = open && self.kyoto();
-        let authority = if open {
+        let authority = if let Some(have) = self.reading_headers(now) {
+            json!({"kind": if kyoto { "kyoto" } else { "electrum_headers" }, "height": have,
+                   "hash": "00000000000000000001a2b3fixture", "tipAgeSecs": TIP_AGE_SECS * 10_000, "peers": 1,
+                   "asked": true, "base": self.chain_base, "headers": {"have": have, "target": if kyoto { Value::Null } else { json!(tip(&self.network)) }}})
+        } else if open {
             json!({"kind": if kyoto { "kyoto" } else { "electrum_headers" }, "height": tip(&self.network),
                    "hash": "00000000000000000002f1c4fixture", "tipAgeSecs": TIP_AGE_SECS, "peers": if self.asked { self.peers() } else { 0 },
-                   "asked": self.asked, "base": self.chain_base})
+                   "asked": self.asked, "base": self.chain_base, "headers": null})
         } else {
             json!({"kind": null, "height": null, "hash": null, "tipAgeSecs": null, "peers": 0})
         };
@@ -606,6 +624,15 @@ impl Sim {
             let (b, h) = (birthday(&self.network), tip(&self.network));
             v["syncPercent"] = json!(if t >= h { 100 } else { (t - b) * 100 / (h - b) });
             v["historyServer"] = json!("electrum.example");
+        }
+        // The backend gives no percentage while the headers come in; the wallet follows the chain.
+        if let Some(have) = self.reading_headers(now) {
+            v["state"] = json!("syncing");
+            v["synced"] = json!(false);
+            v["walletTip"] = json!(have);
+            if let Some(m) = v.as_object_mut() {
+                m.remove("syncPercent");
+            }
         }
         // A rescan reports a share done only under Kyoto; a server's full scan has no height to count,
         // and the fixture's wider pass shows none either.
@@ -1508,6 +1535,9 @@ impl Sim {
                 self.state = WState::Syncing;
                 self.since = now;
                 (self.asked, self.answer_at) = (false, Some(now + FIRST_ANSWER));
+                // The first wallet on a network reads the chain's headers once its server answers.
+                let first = self.headers_read.insert(self.network.clone());
+                self.headers_until = first.then(|| now + FIRST_ANSWER + HEADERS_TIME);
                 self.seed_wallet();
                 // Restored without a birthday: the scan starts where its kind of address began.
                 self.birthday_height = activation(&self.network, &self.family);
@@ -1606,12 +1636,12 @@ impl Sim {
         }
         // Change events, as the backend sends them: on what the status says, and on amounts.
         let st = self.status(now);
-        let digest = json!([st["state"], st["openHandle"], st["walletTip"], st["authority"]["peers"], st["authority"]["asked"], st["openSend"]]).to_string();
+        let digest = json!([st["state"], st["openHandle"], st["walletTip"], st["authority"]["peers"], st["authority"]["asked"], st["authority"]["headers"], st["openSend"]]).to_string();
         if digest != self.last_status {
             self.last_status = digest;
             out.push(Event::SyncProgress(json!({"state": st["state"], "network": st["network"], "walletTip": st["walletTip"],
                 "authorityHeight": st["authority"]["height"], "tipAgeSecs": st["authority"]["tipAgeSecs"], "percent": st["syncPercent"],
-                "synced": st["synced"]})));
+                "synced": st["synced"], "headers": st["authority"]["headers"]})));
             out.push(Event::WalletState(st));
         }
         let b = self.balances();
@@ -1838,7 +1868,8 @@ mod tests {
         sim.close_wallet(t, &mut ev);
         assert_eq!(sim.status(t)["state"], "no_wallet");
         sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
-        let t = run(&mut sim, t, 10);
+        // Approved at 4 s, answered at 9 s, then a first open's 4 s of headers.
+        let t = run(&mut sim, t, 14);
         assert_eq!(sim.status(t)["state"], "ready");
         (sim, t)
     }
@@ -1861,6 +1892,23 @@ mod tests {
         let a = sim.status(t)["authority"].clone();
         assert_eq!((a["peers"].clone(), a["asked"].clone()), (json!(1), json!(true)), "{a}");
         assert!(sim.source_health(0)["wallet"]["sources"].as_array().unwrap().iter().all(|w| w["state"] == "ok"));
+        // A first open then reads the chain's headers: half the tip, no percentage, not synced.
+        let st = sim.status(t);
+        assert_eq!((st["authority"]["headers"].clone(), st["authority"]["height"].clone()), (json!({"have": 145_061, "target": 290_123}), json!(145_061)), "{st}");
+        assert_eq!((st["state"].clone(), st["synced"].clone(), st.get("syncPercent")), (json!("syncing"), json!(false), None));
+        let t = run(&mut sim, t, 4);
+        let st = sim.status(t);
+        assert_eq!((st["authority"]["headers"].clone(), st["authority"]["height"].clone(), st["state"].clone()), (Value::Null, json!(290_123), json!("ready")));
+        // A reopen has its chain: no headers to read.
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
+        let mut t = t;
+        for _ in 0..140 {
+            t = run(&mut sim, t, 0) + Duration::from_millis(100);
+            sim.tick(t);
+            assert!(sim.status(t)["authority"]["headers"].is_null(), "{}", sim.status(t));
+        }
     }
 
     #[test]
@@ -1917,7 +1965,8 @@ mod tests {
         sim.close_wallet(t, &mut ev);
         let id = "shell-cdcdcdcd-84-1-0";
         assert_eq!(sim.open_wallet(&format!(r#"{{"group":"{id}","network":"signet"}}"#), t, &mut ev)["ok"], true);
-        let t = run(&mut sim, t, 10);
+        // The first open on signet reads its headers for 4 s after the first answer.
+        let t = run(&mut sim, t, 14);
         assert_eq!((sim.status(t)["state"].clone(), sim.status(t)["group"].clone()), (json!("ready"), json!(id)));
         assert_eq!(sim.list_wallets()["wallets"][0]["group"], id);
     }
