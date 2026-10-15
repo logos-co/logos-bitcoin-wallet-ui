@@ -846,6 +846,8 @@ def node_routes_nothing(ins):
     ins.press("networkSettingsButton")
     ins.wait("networkSheet", "opened", True, 20)
     ins.wait(ROOT, "sourcesConfigured", True, 60, "the node module's regtest sources are read")
+    # Kyoto's row is under the advanced settings, collapsed when the sheet first opens.
+    ins.rpc("setProperty", objectId=ins.obj("advancedSourcesButton")[0], property="expanded", value=True)
     if ins.get("useSwitch_kyoto", "checked") is True:
         ins.press("useSwitch_kyoto")
         ins.wait("useSwitch_kyoto", "checked", False, 20, "Kyoto off in the node module")
