@@ -10,10 +10,12 @@ intro: |
   while it is open, a fresh BIP21 address is handed out, and sends go through the signer app's
   intent to each of their outcomes: nobody acknowledging within 60 s and asking again, a cancel, a
   rejection, an unknown outcome that is forgotten, and a payment that goes out and is sped up. The
-  sync line never claims "Synchronized" once no source agrees with the wallet's chain.
+  sync line never claims "Synchronized" once no source agrees with the wallet's chain, nor "No
+  source agrees" before its sources first answered. Opens show the first unused address, New
+  address at the gap limit says why it gives no new one, and the fee presets need an estimate.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 966277c) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend 70172f8) with a script behind it, and no
   wallet core, keystore, chain or network. The signer manager is one too, doctests/fixture-manager:
   its `accounts` answers a keystore wallet on each chain and a Keycard account with no card
   inserted, which the account picker names by its seed wallet and still opens: only sending needs
@@ -426,6 +428,13 @@ sections:
               property: "walletOpen"
               value: true
               timeout: 30000
+            - name: "Until its sources first answer, last session's chain shows as connecting, never as no source agreeing"
+              action: expect_property
+              find_value: "syncLine"
+              property: "text"
+              value: "Connecting to the chain's sources… · last known block 290,123"
+              timeout: 4000
+              screenshot: "wallet-first-answer.png"
             - name: "...on signet"
               action: expect_property
               find_value: "statusLine"
@@ -1228,6 +1237,34 @@ sections:
               property: "text"
               value: "Synchronized · block 290,123, tip 4 min old · Kyoto · 4 peers"
               timeout: 30000
+            - name: "Receive, after the reopen"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [2]
+            - name: "It shows the first unused address again: an open reveals none"
+              action: expect_property
+              find_value: "receiveAddress"
+              property: "text"
+              value: "tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r"
+              timeout: 10000
+            - name: "Send, under Kyoto"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [1]
+            - name: "Esplora's estimate puts every speed at 1 sat/vB: the app says the network is quiet, and whose estimate it is"
+              action: expect_property
+              find_value: "feeQuietNote"
+              property: "text"
+              value: "The network is quiet: every speed costs 1 sat/vB. Estimate from Example Esplora."
+              timeout: 15000
+              screenshot: "wallet-fees-quiet.png"
+            - name: "Home again"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [0]
             - name: "Kyoto's peers name a chain the wallet refuses: a banner of its own"
               action: expect_property
               find_value: "authoritySuspectBanner"
@@ -1450,6 +1487,49 @@ sections:
               find_value: "bitcoinWalletRoot"
               property: "displayedNetwork"
               value: "testnet4"
+            - name: "Receive on testnet4, where an older app's opens left 20 unused addresses"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [2]
+            - name: "It shows the first of them"
+              action: expect_property
+              find_value: "receiveAddress"
+              property: "text"
+              value: "tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r"
+              timeout: 10000
+            - name: "Ask for another"
+              action: click_object
+              find_value: "newAddressButton"
+            - name: "None past the gap limit: the app says why, and what to do"
+              action: expect_property
+              find_value: "receiveGapNote"
+              property: "text"
+              value: "You already have 20 unused addresses. This one is shown until one receives coins; raise the gap limit in Settings for more."
+              timeout: 10000
+              screenshot: "wallet-receive-gap.png"
+            - name: "...and keeps showing the first unused one"
+              action: expect_property
+              find_value: "receiveAddress"
+              property: "text"
+              value: "tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r"
+            - name: "Send on testnet4, where Kyoto estimates no fee"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [1]
+            - name: "No estimate yet: the app says so"
+              action: expect_property
+              find_value: "feeUnknownNote"
+              property: "text"
+              value: "Fee estimate not available yet. Give a rate of your own, in sat/vB."
+              timeout: 15000
+              screenshot: "wallet-fees-unknown.png"
+            - name: "...and offers no preset in its place"
+              action: expect_property
+              find_value: "feeNormal"
+              property: "visible"
+              value: false
             - name: "On testnet4 Kyoto runs on its one curated peer"
               action: call_method
               find_value: "bitcoinWalletRoot"

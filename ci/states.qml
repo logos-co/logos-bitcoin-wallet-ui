@@ -179,6 +179,10 @@ Item {
             // No agreeing source: the core's own `synced` is not enough.
             [mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } }), "No source agrees · block 935,500, tip 4 min old"],
             [mainnet({ authority: { height: 935500, tipAgeSecs: 7300, peers: 0 } }), "No source agrees · block 935,500, tip 2 hours old"],
+            // Last session's chain before any source answered this open: connecting, never "none agrees".
+            [mainnet({ synced: false, authority: { height: 935500, tipAgeSecs: 75600, peers: 0, asked: false } }), "Connecting to the chain's sources… · last known block 935,500"],
+            [mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: true } }), "No source agrees · block 935,500, tip 4 min old"],
+            [mainnet({ network: "regtest", walletTip: 150, authority: { height: 150, tipAgeSecs: 30, peers: 0, asked: false } }), "Connecting to the chain's sources… · last known block 150"],
             // A tip older than an hour is never synchronized.
             [mainnet({ authority: { height: 935500, tipAgeSecs: 3601, peers: 3 } }), "Stalled · block 935,500, tip 1 hour old"],
             [mainnet({ authority: { height: 935500, tipAgeSecs: 200000, peers: 3 } }), "Stalled · block 935,500, tip 2 days old"],
@@ -193,6 +197,12 @@ Item {
         for (var i = 0; i < sync.length; i++) expect("sync " + i, v.syncLabel(sync[i][0]), sync[i][1])
         expect("chip synced", v.syncChip(mainnet({})), "Synced · 935,500")
         expect("chip no peers", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } })), "No sources")
+        expect("chip not asked yet", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: false } })), "Connecting…")
+        expect("authority not asked yet", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: false } })),
+               "The chain: headers from Electrum servers, checked here · waiting for their first answer")
+        expect("authority asked, none agrees", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: true } })),
+               "The chain: headers from Electrum servers, checked here · 0 servers agree")
+        expect("kyoto not asked yet", v.authorityLine({ authority: { kind: "kyoto", peers: 0, asked: false } }), "The chain: Bitcoin peers, through block filters · connecting")
         expect("chip stalled", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 4000, peers: 2 } })), "Stalled")
 
         var sends = [
@@ -286,6 +296,8 @@ Item {
                                                  authority: { kind: "local_node", height: 150, tipAgeSecs: 30, peers: peers } } }
         expect("your node alone", v.walletOverall([], nodeAt(1)), "ok")
         expect("your node unreachable", v.walletOverall([], nodeAt(0)), "offline")
+        expect("kyoto not asked yet is no news", v.walletOverall([], { state: "ready", network: "mainnet", walletTip: 935500,
+               authority: { kind: "kyoto", height: 935500, tipAgeSecs: 75600, peers: 0, asked: false } }), "")
         expect("kyoto isolated, a server fine", v.walletOverall([{ state: "ok" }],
                { state: "ready", network: "regtest", walletTip: 150, authority: { kind: "kyoto", height: 150, peers: 0 } }), "degraded")
         expect("servers decide", v.walletOverall([], { state: "ready", authority: { kind: "electrum_headers", height: 1, peers: 1 } }), "")
@@ -426,7 +438,51 @@ Item {
         },
         function (v) {
             expect("rendered: no peers is never synchronized", prop("syncLine", "text"), "No source agrees · block 935,500, tip 4 min old · Servers' headers")
+            var st = JSON.parse(scene.syncedMainnet)
+            st.synced = false
+            st.authority = { kind: "electrum_headers", height: 935432, tipAgeSecs: 75600, peers: 0, asked: false }
+            fake.statusJson = JSON.stringify(st)
+            fake.healthJson = JSON.stringify({ overall: "ok", sources: [], wallet: { sources: [
+                { id: "regtest-0", state: "unknown", suspect: false, roles: ["chain", "history"] }, { id: "regtest-1", state: "unknown", suspect: false, roles: ["chain"] }] } })
+        },
+        function (v) {
+            expect("rendered: before the first answer", prop("syncLine", "text"), "Connecting to the chain's sources… · last known block 935,432")
+            expect("...the chip", prop("syncChip", "text"), "Connecting…")
+            expect("...the authority", prop("authorityLine", "text"), "The chain: headers from Electrum servers, checked here · waiting for their first answer")
+            expect("...and no badge while nothing was asked", shown("healthBadge"), false)
+            fake.healthJson = ""
             fake.statusJson = scene.syncedMainnet
+            fake.feeRatesJson = ""
+            v.selectTab(1)
+        },
+        function (v) {
+            expect("no estimate: said so", shown("feeUnknownNote"), true)
+            expect("...in plain words", prop("feeUnknownNote", "text"), "Fee estimate not available yet. Give a rate of your own, in sat/vB.")
+            expect("...no preset offered", shown("feeNormal"), false)
+            expect("...a rate of your own", prop("feeCustomChoice", "checked"), true)
+            fake.feeRatesJson = JSON.stringify({ fast: 1, normal: 1, slow: 1, minimum: 1, sources: ["esplora.example"], estimated: true })
+        },
+        function (v) {
+            expect("a quiet network, said plainly with its source", prop("feeQuietNote", "text"), "The network is quiet: every speed costs 1 sat/vB. Estimate from Example Esplora.")
+            expect("...the presets back", shown("feeNormal"), true)
+            expect("...no unknown note", shown("feeUnknownNote"), false)
+            fake.feeRatesJson = JSON.stringify({ fast: 12, normal: 6, slow: 2, minimum: 1, sources: ["esplora.example"], estimated: true })
+        },
+        function (v) {
+            expect("levels apart: no quiet note", shown("feeQuietNote"), false)
+            v.selectTab(2)
+            fake.receiveJson = JSON.stringify({ address: "bcrt1qfirst", index: 0, uri: "bitcoin:bcrt1qfirst", amount: "", gap: { unused: 20, gapLimit: 20 } })
+        },
+        function (v) {
+            expect("New address at the gap limit says so", prop("receiveGapNote", "text"),
+                   "You already have 20 unused addresses. This one is shown until one receives coins; raise the gap limit in Settings for more.")
+            expect("...and shows the first unused one", prop("receiveAddress", "text"), "bcrt1qfirst")
+            find(view.item, "newAddressButton", 0).clicked()
+            expect("New address asks the backend", fake.count("newAddress"), 1)
+            fake.receiveJson = JSON.stringify({ address: "bcrt1qnext", index: 1, uri: "bitcoin:bcrt1qnext", amount: "" })
+        },
+        function (v) {
+            expect("a fresh one: no note", shown("receiveGapNote"), false)
             v.selectTab(1)
             find(view.item, "sendRecipientField", 0).text = "bcrt1qrecipient"
             v.checkRecipient()

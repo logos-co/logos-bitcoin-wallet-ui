@@ -1,5 +1,5 @@
 //! A stand-in for `bitcoin_wallet_backend` in the wallet app's doctest. The trait is the real
-//! backend's (logos-bitcoin-wallet-backend 966277c), so the contract matches; behind it, sim.rs.
+//! backend's (logos-bitcoin-wallet-backend 70172f8), so the contract matches; behind it, sim.rs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -44,7 +44,8 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     /// `{ ok, jobId }`; the job's result is `{ gapLimit, rescanFrom }`. Refusal codes: invalid, busy, no_wallet.
     fn set_gap_limit(&self, params_json: String) -> String;
 
-    /// The core's status, `gapLimit` included, plus `syncPercent`, `activeNetwork`, `label` and `openSend`.
+    /// The core's status, `gapLimit` and `authority.asked` included, plus `syncPercent`, `activeNetwork`,
+    /// `label` and `openSend`.
     fn wallet_status(&self) -> String;
     /// `{ ok, busy, confirmed, waiting, pending, sent, immature, tooSmall, beyondGap: { count, sat, confirmedSat } }`
     /// in satoshis, each with a `…Btc` twin. beyondGap is coins past the gap limit, confirmedSat its confirmed
@@ -53,9 +54,13 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     /// The core's history page, newest first; rows gain `amountBtc` and `feeBtc`, and keep `beyondGap` (false
     /// unless the wallet's part is only through addresses past the gap limit).
     fn history(&self, page: i64) -> String;
-    /// `{ ok, address, index }`: a fresh receive address.
+    /// `{ ok, address, index, fresh, unused, gapLimit }`: a fresh receive address, or with `fresh` false the
+    /// first unused one, when `unused` unused addresses already reach the gap limit.
     fn receive_address(&self) -> String;
-    /// `{ ok, fast, normal, slow, minimum, sources }` in sat/vB.
+    /// `{ ok, address, index }`: the first unused receive address, revealed only when none is.
+    fn current_address(&self) -> String;
+    /// `{ ok, fast, normal, slow, minimum, sources, estimated }` in sat/vB, or `{ ok: false, error }` until
+    /// every level has an estimate.
     fn fee_rates(&self) -> String;
     /// An address or BIP21 URI on the wallet's network: `{ ok, valid, address, type, amountSat?, reason? }`.
     fn address_valid(&self, text: String) -> String;
@@ -244,6 +249,10 @@ impl BitcoinWalletBackendModule for BitcoinWalletBackendModuleImpl {
 
     fn receive_address(&self) -> String {
         self.with(|s, _, _| s.receive_address())
+    }
+
+    fn current_address(&self) -> String {
+        self.with(|s, _, _| s.current_address())
     }
 
     fn fee_rates(&self) -> String {

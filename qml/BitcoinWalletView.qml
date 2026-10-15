@@ -152,7 +152,19 @@ Item {
     readonly property var unconfirmedSends: homeRows.filter(function (r) { return root.canSpeedUp(r) })
     readonly property var receive: ready && backend.receiveJson !== "" ? j(backend.receiveJson, "{}") : ({})
     readonly property var feeRates: ready && backend.feeRatesJson !== "" ? j(backend.feeRatesJson, "{}") : ({})
-    readonly property bool feesKnown: isNum(feeRates.normal) && Number(feeRates.normal) > 0
+    // Only an estimate counts: the core never offers the floor in its place.
+    readonly property bool feesKnown: isNum(feeRates.normal) && Number(feeRates.normal) > 0 && feeRates.estimated !== false
+    readonly property bool feesQuiet: feesKnown && Number(feeRates.fast) === Number(feeRates.normal) && Number(feeRates.slow) === Number(feeRates.normal)
+    function feeSourceNames() {
+        var ids = Array.isArray(root.feeRates.sources) ? root.feeRates.sources : []
+        return ids.map(function (id) { var s = root.sourceList.find(function (x) { return x.id === id }); return s && s.label ? s.label : root.viaName(id) }).join(", ")
+    }
+    function feeQuietLine() {
+        var by = root.feeSourceNames()
+        return "The network is quiet: every speed costs " + root.feeRates.normal + " sat/vB." + (by ? " Estimate from " + by + "." : "")
+    }
+    // New address at the gap limit hands back the first unused one: { unused, gapLimit }.
+    readonly property var receiveGap: receive.gap && typeof receive.gap === "object" ? receive.gap : null
 
     // ---- sources ----
     readonly property bool sourcesRead: ready && backend.sourcesJson !== ""
@@ -505,6 +517,8 @@ Item {
                 && root.chainSources.every(function (source) { return root.usesTor(source) })
                 && (a.kind === "kyoto" || a.kind === "electrum_headers")) return "tor_blocked"
         if (!root.isNum(a.height)) return peers > 0 ? "headers" : "connecting"
+        // Last session's chain before any source answered this open: no news, not "none agrees".
+        if (peers <= 0 && a.asked === false) return "connecting"
         if (peers <= 0) return "isolated"
         var tip = st.walletTip
         var caughtUp = root.isNum(tip) ? Number(tip) >= Number(a.height) : st.synced === true
@@ -540,7 +554,7 @@ Item {
         case "closing": return "Closing…"
         case "failed": return "Failed" + (st.lastError ? ": " + st.lastError : "")
         case "tor_blocked": return "Cannot reach Tor · the wallet cannot connect to its chain sources"
-        case "connecting": return "Connecting to the chain's sources…"
+        case "connecting": return "Connecting to the chain's sources…" + (root.isNum(a.height) ? " · last known block " + h : "")
         case "headers": return "Reading the chain's headers…"
         case "isolated": return "No source agrees · block " + h + (age ? ", tip " + age + " old" : "")
         case "stalled": return "Stalled · block " + h + ", tip " + age + " old"
@@ -583,9 +597,11 @@ Item {
     function authorityLine(st) {
         var a = st && st.authority ? st.authority : {}
         var n = root.isNum(a.peers) ? Number(a.peers) : 0
+        var asking = n === 0 && a.asked === false
         if (a.kind === "electrum_headers")
-            return "The chain: headers from Electrum servers, checked here · " + n + (n === 1 ? " server agrees" : " servers agree")
-        if (a.kind === "kyoto") return "The chain: Bitcoin peers, through block filters · " + n + (n === 1 ? " peer" : " peers")
+            return "The chain: headers from Electrum servers, checked here · "
+                   + (asking ? "waiting for their first answer" : n + (n === 1 ? " server agrees" : " servers agree"))
+        if (a.kind === "kyoto") return "The chain: Bitcoin peers, through block filters · " + (asking ? "connecting" : n + (n === 1 ? " peer" : " peers"))
         if (a.kind === "rpc_node") return "The chain: Bitcoin Core RPC, headers checked here"
         if (a.kind === "local_node" || a.kind === "local") return "The chain: your own node, checked here"
         return ""
@@ -2189,8 +2205,10 @@ Item {
                     }
 
                     LogosText { text: "Fee"; color: Theme.palette.textSecondary }
-                    LogosText { visible: !root.feesKnown; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textTertiary
-                                text: "No fee estimate from the sources yet: give a rate of your own." }
+                    LogosText { objectName: "feeUnknownNote"; visible: !root.feesKnown; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                color: Theme.palette.textTertiary; text: "Fee estimate not available yet. Give a rate of your own, in sat/vB." }
+                    LogosText { objectName: "feeQuietNote"; visible: root.feesQuiet; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                textFormat: Text.PlainText; color: Theme.palette.textTertiary; text: root.feesQuiet ? root.feeQuietLine() : "" }
                     RowLayout {
                         spacing: Theme.spacing.medium
                         LogosRadioButton { objectName: "feeFast"; visible: root.feesKnown; checkable: false; checked: root.feeChoice === "fast"
@@ -2254,6 +2272,10 @@ Item {
                     }
                     LogosText { visible: root.isNum(root.receive.index); color: Theme.palette.textTertiary; font.pixelSize: 12
                                 textFormat: Text.PlainText; text: "Receive address #" + root.receive.index }
+                    LogosText { objectName: "receiveGapNote"; visible: !!root.receiveGap; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                textFormat: Text.PlainText; color: Theme.palette.warning
+                                text: root.receiveGap ? "You already have " + root.receiveGap.unused + " unused addresses. This one is shown until one "
+                                                        + "receives coins; raise the gap limit in Settings for more." : "" }
                     RowLayout {
                         Layout.fillWidth: true
                         LogosText { text: "Ask for an amount (BTC, optional)"; color: Theme.palette.textSecondary }

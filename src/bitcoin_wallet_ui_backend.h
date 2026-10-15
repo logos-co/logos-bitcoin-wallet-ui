@@ -103,6 +103,7 @@ private:
     void loadExposure();
     void addAlert(const QString &payload);
     void setReceive(const QString &address, qint64 index, const QString &amount);
+    void showCurrentAddress();
     QString qrModulesJson(const QString &text) const;
 
     void track(const QString &reply, const QString &kind);
@@ -140,4 +141,6 @@ private:
     QString m_receiveAddress;
     qint64 m_receiveIndex = -1;
     QString m_receiveAmount;
+    // { unused, gapLimit } when New address met the gap limit; empty otherwise.
+    QJsonObject m_receiveGap;
 };
