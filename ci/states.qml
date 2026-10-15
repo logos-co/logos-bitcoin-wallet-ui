@@ -150,7 +150,7 @@ Item {
     }
 
     function cardRow(available) {
-        return {id:"g_card",family:"bitcoin",chain:"test",label:"Card account",signer:"keycard_module",available:available,
+        return {id:"keycard-cdcdcdcd-84-1-0",family:"bitcoin",chain:"test",label:"Card account",signer:"keycard_module",available:available,
                 origin:{devices:[{kind:"keycard",id:"ab".repeat(32),name:"Keycard"}],phrase:{id:"seed:"+"cd".repeat(32),name:"Black Card"}}}
     }
     readonly property string syncedMainnet: JSON.stringify({ state: "ready", network: "mainnet", activeNetwork: "mainnet", family: "bitcoin",
@@ -321,9 +321,9 @@ Item {
                 {id:"g_test",family:"bitcoin_taproot",chain:"test",label:"Test wallet",signer:"keystore_module",available:true},
                 {id:"g_main",family:"bitcoin",chain:"main",label:"Main wallet",signer:"keystore_module",available:true},
                 // Routed Keycard rows (signer manager 3ef020c): seed-centric, unplugged; one kept the Shell's copy.
-                {id:"g_card",family:"bitcoin",chain:"test",label:"Card account",signer:"keycard_module",available:false,
+                {id:"keycard-cdcdcdcd-84-1-0",family:"bitcoin",chain:"test",label:"Card account",signer:"keycard_module",available:false,
                  origin:{devices:[{kind:"keycard",id:"ab".repeat(32),name:"Keycard"}],phrase:{id:"seed:"+"cd".repeat(32),name:"Black Card"}}},
-                {id:"g_tap",family:"bitcoin_taproot",chain:"test",label:"Taproot",signer:"keycard_shell_module",available:false,
+                {id:"shell-cdcdcdcd-86-1-0",family:"bitcoin_taproot",chain:"test",label:"Taproot",signer:"keycard_shell_module",available:false,
                  origin:{devices:[{kind:"keycard",id:"ab".repeat(32),name:"Keycard"}],phrase:{id:"seed:"+"cd".repeat(32),name:"Black Card"}}},
                 {id:"g_gone",family:"bitcoin",chain:"test",label:"Gone",signer:"keystore_module",available:false},
                 {id:"0x123",family:"evm",chain:"test",available:true}])
@@ -340,7 +340,7 @@ Item {
             expect("status line", prop("statusLine", "text"), "No wallet open")
             expect("network chip", prop("networkChip", "text"), "regtest")
             expect("no password field", find(view.item, "openPasswordField", 0), null)
-            expect("only Bitcoin accounts on the network", v.accountsOnNetwork.map(function(a) { return a.id }), ["g_test", "g_card", "g_tap", "g_gone"])
+            expect("only Bitcoin accounts on the network", v.accountsOnNetwork.map(function(a) { return a.id }), ["g_test", "keycard-cdcdcdcd-84-1-0", "shell-cdcdcdcd-86-1-0", "g_gone"])
             v.selectAccount(v.accountsOnNetwork[3])
             expect("an unavailable keystore account is not selected", v.selectedAccount, null)
             expect("...and does not open", fake.last("selectAccount"), null)
@@ -348,7 +348,7 @@ Item {
             expect("...with no device reason", v.reasonLine(v.accountsOnNetwork[3]), "")
             // A device signs by itself: its wallet opens while it is unplugged.
             v.selectAccount(v.accountsOnNetwork[1])
-            expect("an unplugged Keycard's account is selected", v.selectedAccount.id, "g_card")
+            expect("an unplugged Keycard's account is selected", v.selectedAccount.id, "keycard-cdcdcdcd-84-1-0")
             expect("the provider is Keycard and its seed wallet", v.accountProvider(v.selectedAccount), "Keycard · Black Card")
             expect("...and its row says it is not connected", v.availabilityLine(v.selectedAccount), " · Keycard not connected")
             expect("a quiet note says what works", prop("deviceAbsentNote", "text"),
@@ -364,10 +364,10 @@ Item {
                 return (v.accountProvider(a) + v.availabilityLine(a) + v.reasonLine(a)).indexOf("_module") >= 0 }).length, 0)
             expect("Open is enabled", prop("openWalletButton", "enabled"), true)
             find(view.item, "openWalletButton", 0).clicked()
-            expect("Open opens it", fake.last("selectAccount"), ["selectAccount", "g_card"])
+            expect("Open opens it", fake.last("selectAccount"), ["selectAccount", "keycard-cdcdcdcd-84-1-0"])
             find(view.item, "accountPicker", 0).currentIndex = 0
             find(view.item, "accountPicker", 0).activated(0)
-            expect("selection alone does not open", fake.last("selectAccount"), ["selectAccount", "g_card"])
+            expect("selection alone does not open", fake.last("selectAccount"), ["selectAccount", "keycard-cdcdcdcd-84-1-0"])
             expect("chosen account stays selected", v.selectedAccount.id, "g_test")
             find(view.item, "openWalletButton", 0).clicked()
             expect("Open opens the selected account", fake.last("selectAccount"), ["selectAccount", "g_test"])
@@ -1143,10 +1143,10 @@ Item {
             // An unplugged device's wallet is open: viewing works, sending says to connect it.
             fake.networksJson = JSON.stringify({networks:["mainnet","regtest"],active:"regtest"})
             fake.accountsJson = JSON.stringify([scene.cardRow(false)])
-            fake.statusJson = JSON.stringify({state:"ready",network:"regtest",activeNetwork:"regtest",group:"g_card",family:"bitcoin",synced:true})
+            fake.statusJson = JSON.stringify({state:"ready",network:"regtest",activeNetwork:"regtest",group:"keycard-cdcdcdcd-84-1-0",family:"bitcoin",synced:true})
         },
         function (v) {
-            expect("the Keycard's wallet is open", v.openedAccount ? v.openedAccount.id : null, "g_card")
+            expect("the Keycard's wallet is open", v.openedAccount ? v.openedAccount.id : null, "keycard-cdcdcdcd-84-1-0")
             expect("Send says what signing needs", prop("sendDeviceNote", "text"), "Keycard not connected. Insert Black Card in a reader "
                    + "or connect a Keycard Shell to sign. You can view this wallet; sending needs it.")
             var gone = { state: "failed", errorCode: "signer_unavailable", error: "signer_manager_module: no answer" }

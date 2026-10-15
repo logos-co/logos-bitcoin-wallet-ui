@@ -932,8 +932,9 @@ impl Sim {
         let group = p["group"].as_str().map(String::from);
         let family = p["family"].as_str().map(String::from).or_else(|| {
             group.as_ref().and_then(|g| self.wallets.iter().find(|w| w["group"] == g.as_str())).and_then(|w| w["family"].as_str().map(String::from))
-        // The app names a group from the signer's roster and no family: the doctest's are native segwit.
-        }).or_else(|| group.as_ref().filter(|g| g.starts_with("g_")).map(|_| "bitcoin".to_string()));
+        // The app names an account from the signer's roster (a keystore group or a device's id) and
+        // no family: the doctest's are native segwit.
+        }).or_else(|| group.as_ref().map(|_| "bitcoin".to_string()));
         let Some(family) = family.filter(|f| f == "bitcoin" || f == "bitcoin_taproot") else {
             return json!({"ok": false, "error": "name a group to reopen, or a family to pick, create or restore one"});
         };
@@ -1801,6 +1802,22 @@ mod tests {
         assert_eq!((st["walletTip"].clone(), st["authority"]["peers"].clone(), st["syncPercent"].clone()), (json!(290_123), json!(1), json!(100)));
         assert_eq!(sim.balances()["confirmed"], "125000000");
         assert_eq!(sim.list_wallets()["wallets"][0]["group"], "g_fixture2");
+    }
+
+    #[test]
+    fn a_device_account_opens_by_its_id() {
+        let t0 = Instant::now();
+        let mut sim = Sim::new(false, t0);
+        sim.set_active_network("signet");
+        let mut ev = vec![];
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t0, &mut ev);
+        let t = run(&mut sim, t0, 10);
+        sim.close_wallet(t, &mut ev);
+        let id = "shell-cdcdcdcd-84-1-0";
+        assert_eq!(sim.open_wallet(&format!(r#"{{"group":"{id}","network":"signet"}}"#), t, &mut ev)["ok"], true);
+        let t = run(&mut sim, t, 10);
+        assert_eq!((sim.status(t)["state"].clone(), sim.status(t)["group"].clone()), (json!("ready"), json!(id)));
+        assert_eq!(sim.list_wallets()["wallets"][0]["group"], id);
     }
 
     #[test]
