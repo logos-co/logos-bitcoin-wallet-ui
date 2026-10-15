@@ -54,8 +54,10 @@ Item {
         return (a.family === "bitcoin" || a.family === "bitcoin_taproot")
                 && a.chain === (root.displayedNetwork === "mainnet" ? "main" : "test")
     })
+    // One wallet at a time: while one is open, opening or closing, the picker shows it and is locked.
+    readonly property bool accountLocked: walletOpen || opening || walletState === "closing" || pendingKind === "close"
     property string selectedAccountId: ""
-    readonly property string accountId: selectedAccountId
+    readonly property string accountId: accountLocked && status.group ? status.group : selectedAccountId
     readonly property var selectedAccount: accountsOnNetwork.filter(function (a) { return a.id === root.accountId })[0] || null
     function accountIndex() {
         for (var i = 0; i < accountsOnNetwork.length; i++) if (accountsOnNetwork[i].id === accountId) return i
@@ -98,15 +100,12 @@ Item {
     readonly property var openedAccount: walletOpen ? accounts.filter(function (a) { return a.id === root.status.group })[0] || null : null
     readonly property bool openedDeviceAbsent: deviceAbsent(openedAccount)
     function accountTitle(a) { return a ? (a.label || "Wallet") + " · " + shortId(a.id) : "Select an account" }
-    readonly property bool accountSwitchBlocked: !!root.status.openSend || root.sendLive
     function selectAccount(a) {
-        if (!root.canOpenAccount(a) || root.busy || root.opening || root.accountSwitchBlocked) return
+        if (!root.canOpenAccount(a) || root.busy || root.accountLocked) return
         root.selectedAccountId = a.id
     }
-    readonly property bool canOpenSelectedAccount: ready && statusRead && !busy && !opening
-        && !accountSwitchBlocked && walletState !== "closing" && status.unavailable !== true
-        && backend.accountsError === "" && canOpenAccount(selectedAccount)
-        && (!walletOpen || selectedAccount.id !== status.group)
+    readonly property bool canOpenSelectedAccount: ready && statusRead && !busy && !accountLocked
+        && status.unavailable !== true && backend.accountsError === "" && canOpenAccount(selectedAccount)
     function openSelectedAccount() {
         if (canOpenSelectedAccount) backend.selectAccount(selectedAccount.id)
     }
@@ -116,15 +115,15 @@ Item {
             if (root.ready) backend.refresh()
         })
     }
-    // A choice stays pending while the currently open wallet keeps refreshing.
-    readonly property string openedAccountId: walletOpen ? (status.group || "") : ""
+    // The open account stays selected once it has closed, to open again.
+    readonly property string openedAccountId: accountLocked ? (status.group || "") : ""
     onOpenedAccountIdChanged: {
         if (openedAccountId) selectedAccountId = openedAccountId
     }
     onAccountIdChanged: { if (accountPicker) accountPicker.syncIndex() }
     onAccountsOnNetworkChanged: {
         if (!root.accountsOnNetwork.some(function (a) { return a.id === root.selectedAccountId }))
-            root.selectedAccountId = root.walletOpen && root.accountsOnNetwork.some(function (a) { return a.id === root.status.group }) ? root.status.group : ""
+            root.selectedAccountId = root.accountLocked && root.accountsOnNetwork.some(function (a) { return a.id === root.status.group }) ? root.status.group : ""
         if (accountPicker) accountPicker.syncIndex()
     }
     // Source settings apply when a wallet opens; while one is open, opening or closing they show but do not change.
@@ -1637,7 +1636,7 @@ Item {
                 implicitHeight: 82
                 model: root.accountsOnNetwork
                 enabled: root.accountsRead && backend.accountsError === "" && model.length > 0
-                         && !root.busy && !root.opening && !root.accountSwitchBlocked
+                         && !root.busy && !root.accountLocked
                 displayText: root.accountTitle(root.selectedAccount)
                 Accessible.name: "Bitcoin account: " + displayText
                 leftPadding: 12; rightPadding: 36
@@ -1704,6 +1703,9 @@ Item {
         LogosText { objectName: "deviceReasonLine"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.reasonLine(root.selectedAccount) }
+        LogosText { objectName: "accountLockedNote"; visible: root.walletOpen; Layout.fillWidth: true; wrapMode: Text.Wrap
+                    textFormat: Text.PlainText; color: Theme.palette.textSecondary
+                    text: "Close this wallet to open another." }
         LogosText { objectName: "accountsErrorLine"; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.warning
                     visible: root.ready && backend.accountsError !== ""

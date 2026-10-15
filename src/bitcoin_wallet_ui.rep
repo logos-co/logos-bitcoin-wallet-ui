@@ -59,9 +59,11 @@ class BitcoinWalletUi
     // ---- wallets: opened, created and restored in the keys app ----
     SLOT(void setActiveNetwork(QString network))
     // { family } to pick, create or restore one, or { group } to reopen one; { label } optional.
+    // Refused while a wallet is open: close it first.
     SLOT(void openWallet(QString paramsJson))
     // Also withdraws an open still waiting in the keys app.
     SLOT(void closeWallet())
+    // Opens a roster account on the active network; refused, as openWallet is, while one is open.
     SLOT(void selectAccount(QString accountId))
     // { date: "YYYY-MM-DD" } or { height }, for an open wallet; the core scans again from it.
     SLOT(void setBirthday(QString paramsJson))

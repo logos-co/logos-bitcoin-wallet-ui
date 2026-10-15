@@ -17,11 +17,11 @@ is approved in the signer app.
   unavailable keystore account stays visible but cannot be selected. Names and availability refresh
   on `accounts_changed`, manual refresh and periodic reconciliation. A failed roster read keeps the
   current identity visible and disables selection until a successful refresh. **Manage in Keystore**
-  raises `evm.accounts.manage` for creation, restoration and management. Switching an open wallet
-  closes it before opening the chosen account; an active send blocks switching. Selecting an entry
-  only changes the pending choice; the current wallet remains open until **Open** is pressed.
-  Refreshes preserve the pending choice, and the status line names the wallet that is actually open.
-  Dropdown entries have consistent hover highlights.
+  raises `evm.accounts.manage` for creation, restoration and management. One wallet is open at a
+  time: while one is open, opening or closing, the picker is locked on it and **Open** is disabled
+  ("Close this wallet to open another."), and the backend refuses an open as well. Once it has
+  closed the picker unlocks with that account still selected. Selecting an entry only changes the
+  choice; nothing opens until **Open** is pressed. Dropdown entries have consistent hover highlights.
 - **Open an account:** select it in the picker, then press **Open**. The backend's
   `open_wallet` answers a job, and while `wallet_status` carries an `openHandle` the app raises
   `keystore.accounts.open` with `{ handle }` and shows "Waiting for the keys app", with Ask again and
@@ -193,7 +193,8 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   answers a keystore wallet on each chain and a Keycard account with no card inserted: every flow,
   to every send outcome, a birthday refused and set, change added to the fee, a reorg, Kyoto as the
   authority and a chain it names that is refused, a TLS server's certificate pinned, a Kyoto peer of
-  your own, a network switch queued behind a close with an open refused until it applies, a payment
+  your own, a network switch queued behind a close with an open refused until it applies, the
+  account picker locked on an open wallet with another account's open refused, a payment
   reported below the chain's start until an earlier birthday checks it (with a wider pass), one peer
   deciding the chain on testnet4, and a coin past the 20-address gap limit that a small send spends
   and a gap limit of 30 takes into the balance. Each open shows last session's chain as connecting for
