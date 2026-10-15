@@ -61,19 +61,51 @@ Item {
         for (var i = 0; i < accountsOnNetwork.length; i++) if (accountsOnNetwork[i].id === accountId) return i
         return -1
     }
+    // The signer manager's `origin`, never a module name: a routed Keycard row names its seed wallet.
     function accountProvider(a) {
         if (!a) return "Bitcoin account"
-        return a.signer === "keystore_module" ? "This device (Keystore)" : (a.signer || "Signer")
+        if (a.signer === "keystore_module") return "This device (Keystore)"
+        if (!root.isKeycard(a)) return "Signer"
+        var name = root.seedName(a)
+        return "Keycard" + (name ? " · " + name : "")
     }
+    function isKeycard(a) {
+        var devices = a && a.origin && Array.isArray(a.origin.devices) ? a.origin.devices : []
+        return devices.some(function (d) { return d.kind === "keycard" || d.kind === "keycard_shell" })
+            || (!!a && (a.signer === "keycard_module" || a.signer === "keycard_shell_module"))
+    }
+    function seedName(a) { return a && a.origin && a.origin.phrase && a.origin.phrase.name ? String(a.origin.phrase.name) : "" }
+    // A device signs by itself, so its wallet opens without it: only sending needs it.
+    function isDevice(a) { return !!a && !!a.signer && a.signer !== "keystore_module" }
+    function deviceName(a) { return root.isKeycard(a) ? "Keycard" : "The device" }
+    function canOpenAccount(a) { return !!a && (a.available === true || root.isDevice(a)) }
+    function deviceAbsent(a) { return root.isDevice(a) && a.available !== true }
+    function availabilityLine(a) {
+        return !a || a.available === true ? "" : root.isDevice(a) ? " · " + root.deviceName(a) + " not connected" : " · unavailable"
+    }
+    // Why an unplugged device's row can't sign, inferred from its origin and family: the manager says no more.
+    function signHint(a) {
+        if (!root.deviceAbsent(a)) return ""
+        if (!root.isKeycard(a)) return "Connect the device to sign"
+        return "Insert " + (root.seedName(a) || "the Keycard") + " in a reader or connect a Keycard Shell to sign"
+    }
+    function taprootNote(a) { return root.isKeycard(a) && a.family === "bitcoin_taproot" ? "Taproot needs a Keycard with applet 4.0" : "" }
+    // The one line under an unplugged device's row.
+    function reasonLine(a) {
+        var hint = root.signHint(a), tap = hint ? root.taprootNote(a) : ""
+        return hint + (tap ? ". " + tap : "")
+    }
+    readonly property var openedAccount: walletOpen ? accounts.filter(function (a) { return a.id === root.status.group })[0] || null : null
+    readonly property bool openedDeviceAbsent: deviceAbsent(openedAccount)
     function accountTitle(a) { return a ? (a.label || "Wallet") + " · " + shortId(a.id) : "Select an account" }
     readonly property bool accountSwitchBlocked: !!root.status.openSend || root.sendLive
     function selectAccount(a) {
-        if (!a || a.available !== true || root.busy || root.opening || root.accountSwitchBlocked) return
+        if (!root.canOpenAccount(a) || root.busy || root.opening || root.accountSwitchBlocked) return
         root.selectedAccountId = a.id
     }
     readonly property bool canOpenSelectedAccount: ready && statusRead && !busy && !opening
         && !accountSwitchBlocked && walletState !== "closing" && status.unavailable !== true
-        && backend.accountsError === "" && selectedAccount !== null && selectedAccount.available === true
+        && backend.accountsError === "" && canOpenAccount(selectedAccount)
         && (!walletOpen || selectedAccount.id !== status.group)
     function openSelectedAccount() {
         if (canOpenSelectedAccount) backend.selectAccount(selectedAccount.id)
@@ -588,6 +620,7 @@ Item {
         case "cancelled": return "Cancelled"
         }
         var code = s && s.errorCode ? s.errorCode : ""
+        if (root.deviceFailed(s)) return root.deviceName(root.openedAccount) + " could not sign: it is not connected"
         if (code === "insufficient_funds") return "Not enough confirmed bitcoin for this and its fee"
         if (code === "no_route") return "No source can broadcast it"
         if (code === "busy") return "The wallet was busy"
@@ -600,9 +633,15 @@ Item {
         if (code === "backend_restarted") return "The wallet backend restarted"
         return "The send failed"
     }
+    // A failure from the open wallet's device while it is unplugged: say to connect it, not that it failed.
+    function deviceFailed(s) {
+        if (!s || !root.openedDeviceAbsent || root.sendOutcome(s) !== "failed") return false
+        return s.errorCode === "signer_unavailable" || String(s.error || "").indexOf(root.openedAccount.signer + ":") === 0
+    }
     // The backend's own words under the headline, unless the headline already says it all.
     function sendDetail(s) {
         var o = root.sendOutcome(s)
+        if (root.deviceFailed(s)) return "Nothing went out. " + root.signHint(root.openedAccount) + ", then try again."
         if (o === "expired") return "The signer app never showed the request, so it expired. Ask again to send it once more."
         if (o === "unknown") return "Rebroadcast it, or replace it with a higher fee. Do not pay again from other coins while it could still confirm."
         if (o === "forgotten") return "Its coins are spendable again. If it still confirms, a later send from those coins fails; "
@@ -618,6 +657,7 @@ Item {
     // A failure worth repeating as it was: the same request, a new approval.
     function canRetry(s) {
         var o = root.sendOutcome(s)
+        if (root.deviceFailed(s)) return true
         if (o === "expired") return true
         return o === "failed" && ["coins_changed", "core_lost", "backend_restarted", "busy", "signer_unavailable"].indexOf(s.errorCode || "") >= 0
     }
@@ -1131,63 +1171,68 @@ Item {
                 LogosText { visible: sourceRow.server && modelData.kind !== "rpc"; Layout.fillWidth: true; wrapMode: Text.Wrap
                             font.pixelSize: 12; color: Theme.palette.textTertiary
                             text: "History looks up your payments. Tor is optional and hides your IP, but not your queries." }
-                LogosText { objectName: "kyotoConflictLine"; visible: modelData.kind === "kyoto" && root.kyotoConflict !== null
+                LogosText { objectName: modelData.kind === "kyoto" ? "kyotoConflictLine" : ""
+                            visible: modelData.kind === "kyoto" && root.kyotoConflict !== null
                             Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                             font.pixelSize: 12; color: Theme.palette.textSecondary
                             text: root.kyotoConflict ? "Peers that disagreed were set aside at " + root.whenOf(root.kyotoConflict.at) : "" }
-                ColumnLayout {
-                    objectName: "ownPeersPane"
-                    visible: modelData.kind === "kyoto"
+                // Only Kyoto's row lists peers: one pane, not a hidden copy under every source.
+                Loader {
+                    active: modelData.kind === "kyoto"
+                    visible: active
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spacing.tiny
-                    spacing: Theme.spacing.tiny
-                    LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
-                    LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                                font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
-                    LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                text: root.signedListNote() }
-                    LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
-                                color: Theme.palette.textSecondary
-                                text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "
-                                      + "few of Bitcoin Core's built-in onion nodes for more." }
-                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                text: "A peer of your own replaces all of these: Kyoto then connects to your peers alone, "
-                                      + "directly when they are on your network, otherwise through Tor." }
-                    Repeater {
-                        model: root.ownPeers
-                        RowLayout {
-                            Layout.fillWidth: true
-                            LogosText { objectName: "ownPeer_" + modelData; textFormat: Text.PlainText; font.pixelSize: 12; text: modelData }
-                            Item { Layout.fillWidth: true }
-                            LogosButton { objectName: "removeOwnPeer_" + modelData; visible: !root.networkLocked; text: "Remove"
-                                          enabled: root.ready
-                                          onClicked: root.setOwnPeers(root.ownPeers.filter(function (p) { return p !== modelData })) }
+                    sourceComponent: ColumnLayout {
+                        objectName: "ownPeersPane"
+                        spacing: Theme.spacing.tiny
+                        LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
+                        LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
+                        LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: root.signedListNote() }
+                        LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
+                                    color: Theme.palette.textSecondary
+                                    text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "
+                                          + "few of Bitcoin Core's built-in onion nodes for more." }
+                        LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: "A peer of your own replaces all of these: Kyoto then connects to your peers alone, "
+                                          + "directly when they are on your network, otherwise through Tor." }
+                        Repeater {
+                            model: root.ownPeers
+                            RowLayout {
+                                Layout.fillWidth: true
+                                LogosText { objectName: "ownPeer_" + modelData; textFormat: Text.PlainText; font.pixelSize: 12; text: modelData }
+                                Item { Layout.fillWidth: true }
+                                LogosButton { objectName: "removeOwnPeer_" + modelData; visible: !root.networkLocked; text: "Remove"
+                                              enabled: root.ready
+                                              onClicked: root.setOwnPeers(root.ownPeers.filter(function (p) { return p !== modelData })) }
+                            }
                         }
+                        LogosText { objectName: "ownPeersRoute"; visible: root.ownPeers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    // Direct also when Kyoto's Tor is off, whatever the peers.
+                                    text: root.peerList.route !== "direct" ? "Kyoto reaches them through Tor."
+                                          : (root.peerList.kyotoTor === false ? "Kyoto reaches them directly: its Tor is off."
+                                                                              : "Kyoto reaches them directly, on your network.") }
+                        RowLayout {
+                            visible: !root.networkLocked
+                            Layout.fillWidth: true
+                            LogosTextField { id: ownPeerField; objectName: "ownPeerField"; Layout.fillWidth: true
+                                             placeholderText: "host:port, such as 192.168.1.20:8333" }
+                            LogosButton { objectName: "addOwnPeerButton"; text: "Add"
+                                          enabled: root.ready && ownPeerField.text.trim() !== "" && root.ownPeers.length < 64
+                                          onClicked: root.setOwnPeers(root.ownPeers.concat([ownPeerField.text.trim()]),
+                                                                      function () { ownPeerField.text = "" }) }
+                        }
+                        LogosButton { objectName: "useCuratedButton"; visible: !root.networkLocked && root.ownPeers.length > 0
+                                      text: "Use the known peers again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
+                        LogosText { objectName: "ownPeersLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: "Kyoto's peers change only while no wallet is open, like the other source settings." }
+                        LogosText { objectName: "ownPeersNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning; text: root.ownPeersNote }
                     }
-                    LogosText { objectName: "ownPeersRoute"; visible: root.ownPeers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                font.pixelSize: 12; color: Theme.palette.textSecondary
-                                // Direct also when Kyoto's Tor is off, whatever the peers.
-                                text: root.peerList.route !== "direct" ? "Kyoto reaches them through Tor."
-                                      : (root.peerList.kyotoTor === false ? "Kyoto reaches them directly: its Tor is off."
-                                                                          : "Kyoto reaches them directly, on your network.") }
-                    RowLayout {
-                        visible: !root.networkLocked
-                        Layout.fillWidth: true
-                        LogosTextField { id: ownPeerField; objectName: "ownPeerField"; Layout.fillWidth: true
-                                         placeholderText: "host:port, such as 192.168.1.20:8333" }
-                        LogosButton { objectName: "addOwnPeerButton"; text: "Add"
-                                      enabled: root.ready && ownPeerField.text.trim() !== "" && root.ownPeers.length < 64
-                                      onClicked: root.setOwnPeers(root.ownPeers.concat([ownPeerField.text.trim()]),
-                                                                  function () { ownPeerField.text = "" }) }
-                    }
-                    LogosButton { objectName: "useCuratedButton"; visible: !root.networkLocked && root.ownPeers.length > 0
-                                  text: "Use the known peers again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
-                    LogosText { objectName: "ownPeersLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                font.pixelSize: 12; color: Theme.palette.textSecondary
-                                text: "Kyoto's peers change only while no wallet is open, like the other source settings." }
-                    LogosText { objectName: "ownPeersNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning; text: root.ownPeersNote }
                 }
                 // A pinned certificate, or one to look at before trusting it: untrusted, or just probed.
                 ColumnLayout {
@@ -1585,16 +1630,16 @@ Item {
                 onActivated: { root.selectAccount(root.accountsOnNetwork[currentIndex]); syncIndex() }
                 contentItem: ColumnLayout {
                     spacing: 2
-                    LogosText { Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText
+                    LogosText { objectName: "selectedAccountProvider"; Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText
                                 text: root.accountProvider(root.selectedAccount) }
                     LogosText { Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText
                                 color: Theme.palette.textSecondary
                                 text: root.selectedAccount ? root.accountTitle(root.selectedAccount)
                                       : root.walletOpen ? (root.status.label || root.shortId(root.status.group))
                                       : !root.accountsRead ? "Loading accounts…" : root.accountsOnNetwork.length ? "Select an account" : "No Bitcoin accounts on this network" }
-                    LogosText { Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText; font.pixelSize: 12
+                    LogosText { objectName: "selectedAccountDetail"; Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText; font.pixelSize: 12
                                 color: Theme.palette.textTertiary
-                                text: root.selectedAccount ? root.familyLabel(root.selectedAccount.family) + (root.selectedAccount.available === true ? "" : " · unavailable")
+                                text: root.selectedAccount ? root.familyLabel(root.selectedAccount.family) + root.availabilityLine(root.selectedAccount)
                                       : root.walletOpen ? "Account is no longer listed by the signer" : "Manage accounts in Keystore" }
                 }
                 delegate: ItemDelegate {
@@ -1603,14 +1648,14 @@ Item {
                     required property int index
                     objectName: "accountOption_" + index
                     width: ListView.view ? ListView.view.width : accountPicker.width
-                    height: 78
+                    height: root.reasonLine(modelData) ? 98 : 78
                     hoverEnabled: true
                     opacity: enabled ? 1 : 0.5
                     background: Rectangle {
                         color: accountOption.highlighted || accountOption.hovered ? Theme.palette.surface : "transparent"
                     }
                     HoverHandler { cursorShape: parent.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                    enabled: modelData.available === true
+                    enabled: root.canOpenAccount(modelData)
                     highlighted: accountPicker.highlightedIndex === index
                     contentItem: ColumnLayout {
                         spacing: 2
@@ -1620,7 +1665,10 @@ Item {
                                     color: Theme.palette.textSecondary; text: root.accountTitle(modelData) }
                         LogosText { Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight; font.pixelSize: 12
                                     color: Theme.palette.textTertiary
-                                    text: root.familyLabel(modelData.family) + (modelData.available === true ? "" : " · unavailable") }
+                                    text: root.familyLabel(modelData.family) + root.availabilityLine(modelData) }
+                        LogosText { objectName: "accountReason_" + accountOption.index; visible: text !== ""
+                                    Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight; font.pixelSize: 12
+                                    color: Theme.palette.textTertiary; text: root.reasonLine(modelData) }
                     }
                 }
             }
@@ -1633,6 +1681,13 @@ Item {
             LogosButton { objectName: "manageAccountsButton"; text: "Manage in Keystore"; onClicked: root.manageAccounts() }
             Item { Layout.fillWidth: true }
         }
+        LogosText { objectName: "deviceAbsentNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                    textFormat: Text.PlainText; color: Theme.palette.textSecondary
+                    text: root.deviceAbsent(root.selectedAccount)
+                          ? root.deviceName(root.selectedAccount) + " not connected · you can view this wallet; sending needs the device" : "" }
+        LogosText { objectName: "deviceReasonLine"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                    textFormat: Text.PlainText; color: Theme.palette.textSecondary
+                    text: root.reasonLine(root.selectedAccount) }
         LogosText { objectName: "accountsErrorLine"; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.warning
                     visible: root.ready && backend.accountsError !== ""
@@ -2053,6 +2108,14 @@ Item {
                         text: root.hasBeyondGap ? "Send spends confirmed coins, those found beyond the gap limit included: "
                                                   + root.btcOf(root.spendableSat) + " BTC."
                               : "Send spends confirmed coins only" + (root.balancesRead ? ": " + root.btcOf(root.balances.confirmed) + " BTC." : ".")
+                    }
+                    LogosText {
+                        objectName: "sendDeviceNote"
+                        visible: root.openedDeviceAbsent
+                        Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                        color: Theme.palette.warning
+                        text: root.openedDeviceAbsent ? root.deviceName(root.openedAccount) + " not connected. "
+                                        + root.reasonLine(root.openedAccount) + ". You can view this wallet; sending needs it." : ""
                     }
                     LogosText { text: "Recipient"; color: Theme.palette.textSecondary }
                     RowLayout {
@@ -2606,6 +2669,10 @@ Item {
                 LogosText { objectName: "signerNote"; visible: !root.reviewDraft && text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                             textFormat: Text.PlainText; color: Theme.palette.warning
                             text: root.sendState === "awaiting_approval" ? root.signerNote : "" }
+                LogosText { objectName: "deviceSignNote"; visible: !root.reviewDraft && text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                            textFormat: Text.PlainText; color: Theme.palette.warning
+                            text: root.sendLive && root.openedDeviceAbsent ? root.signHint(root.openedAccount) + " this payment."
+                                  + (root.taprootNote(root.openedAccount) ? " " + root.taprootNote(root.openedAccount) + "." : "") : "" }
 
                 ColumnLayout {
                     objectName: "summaryPane"

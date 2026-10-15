@@ -149,6 +149,10 @@ Item {
         view.item.expandedSources = view.item.expandedSources.concat(ids)
     }
 
+    function cardRow(available) {
+        return {id:"g_card",family:"bitcoin",chain:"test",label:"Card account",signer:"keycard_module",available:available,
+                origin:{devices:[{kind:"keycard",id:"ab".repeat(32),name:"Keycard"}],phrase:{id:"seed:"+"cd".repeat(32),name:"Black Card"}}}
+    }
     readonly property string syncedMainnet: JSON.stringify({ state: "ready", network: "mainnet", activeNetwork: "mainnet", family: "bitcoin",
         group: "g_test", synced: true, walletTip: 935500, syncPercent: 100, label: "Savings",
         authority: { kind: "electrum_headers", height: 935500, tipAgeSecs: 240, peers: 2 } })
@@ -316,7 +320,12 @@ Item {
             fake.accountsJson = JSON.stringify([
                 {id:"g_test",family:"bitcoin_taproot",chain:"test",label:"Test wallet",signer:"keystore_module",available:true},
                 {id:"g_main",family:"bitcoin",chain:"main",label:"Main wallet",signer:"keystore_module",available:true},
-                {id:"g_offline",family:"bitcoin",chain:"test",signer:"keycard_module",available:false},
+                // Routed Keycard rows (signer manager 3ef020c): seed-centric, unplugged; one kept the Shell's copy.
+                {id:"g_card",family:"bitcoin",chain:"test",label:"Card account",signer:"keycard_module",available:false,
+                 origin:{devices:[{kind:"keycard",id:"ab".repeat(32),name:"Keycard"}],phrase:{id:"seed:"+"cd".repeat(32),name:"Black Card"}}},
+                {id:"g_tap",family:"bitcoin_taproot",chain:"test",label:"Taproot",signer:"keycard_shell_module",available:false,
+                 origin:{devices:[{kind:"keycard",id:"ab".repeat(32),name:"Keycard"}],phrase:{id:"seed:"+"cd".repeat(32),name:"Black Card"}}},
+                {id:"g_gone",family:"bitcoin",chain:"test",label:"Gone",signer:"keystore_module",available:false},
                 {id:"0x123",family:"evm",chain:"test",available:true}])
             fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "socks5h://127.0.0.1:9050", walletOpen: false,
                 sources: [{ id: "kyoto", kind: "kyoto", url: "p2p://peer-list", operator: "peers", label: "Bitcoin peers", use: false, history: false, tor: true, lan: false, route: "tor" },
@@ -331,12 +340,34 @@ Item {
             expect("status line", prop("statusLine", "text"), "No wallet open")
             expect("network chip", prop("networkChip", "text"), "regtest")
             expect("no password field", find(view.item, "openPasswordField", 0), null)
-            expect("only Bitcoin accounts on the network", v.accountsOnNetwork.map(function(a) { return a.id }), ["g_test", "g_offline"])
+            expect("only Bitcoin accounts on the network", v.accountsOnNetwork.map(function(a) { return a.id }), ["g_test", "g_card", "g_tap", "g_gone"])
+            v.selectAccount(v.accountsOnNetwork[3])
+            expect("an unavailable keystore account is not selected", v.selectedAccount, null)
+            expect("...and does not open", fake.last("selectAccount"), null)
+            expect("...and says why", v.availabilityLine(v.accountsOnNetwork[3]), " · unavailable")
+            expect("...with no device reason", v.reasonLine(v.accountsOnNetwork[3]), "")
+            // A device signs by itself: its wallet opens while it is unplugged.
             v.selectAccount(v.accountsOnNetwork[1])
-            expect("unavailable account does not open", fake.last("selectAccount"), null)
+            expect("an unplugged Keycard's account is selected", v.selectedAccount.id, "g_card")
+            expect("the provider is Keycard and its seed wallet", v.accountProvider(v.selectedAccount), "Keycard · Black Card")
+            expect("...and its row says it is not connected", v.availabilityLine(v.selectedAccount), " · Keycard not connected")
+            expect("a quiet note says what works", prop("deviceAbsentNote", "text"),
+                   "Keycard not connected · you can view this wallet; sending needs the device")
+            expect("...and what signing needs", prop("deviceReasonLine", "text"),
+                   "Insert Black Card in a reader or connect a Keycard Shell to sign")
+            expect("a row that kept the Shell's copy still reads Keycard", v.accountProvider(v.accountsOnNetwork[2]), "Keycard · Black Card")
+            expect("Taproot names the applet it needs", v.reasonLine(v.accountsOnNetwork[2]),
+                   "Insert Black Card in a reader or connect a Keycard Shell to sign. Taproot needs a Keycard with applet 4.0")
+            expect("an unrouted Keycard row is still Keycard", v.accountProvider({ signer: "keycard_shell_module" }), "Keycard")
+            expect("any other signer is Signer", v.accountProvider({ signer: "mock_device_signer" }), "Signer")
+            expect("no row names a module", v.accountsOnNetwork.filter(function (a) {
+                return (v.accountProvider(a) + v.availabilityLine(a) + v.reasonLine(a)).indexOf("_module") >= 0 }).length, 0)
+            expect("Open is enabled", prop("openWalletButton", "enabled"), true)
+            find(view.item, "openWalletButton", 0).clicked()
+            expect("Open opens it", fake.last("selectAccount"), ["selectAccount", "g_card"])
             find(view.item, "accountPicker", 0).currentIndex = 0
             find(view.item, "accountPicker", 0).activated(0)
-            expect("selection alone does not open", fake.last("selectAccount"), null)
+            expect("selection alone does not open", fake.last("selectAccount"), ["selectAccount", "g_card"])
             expect("chosen account stays selected", v.selectedAccount.id, "g_test")
             find(view.item, "openWalletButton", 0).clicked()
             expect("Open opens the selected account", fake.last("selectAccount"), ["selectAccount", "g_test"])
@@ -1109,6 +1140,31 @@ Item {
         function (v) {
             expect("empty roster disables Open",prop("openWalletButton","enabled"),false)
             expect("management available with no accounts",shown("manageAccountsButton"),true)
+            // An unplugged device's wallet is open: viewing works, sending says to connect it.
+            fake.networksJson = JSON.stringify({networks:["mainnet","regtest"],active:"regtest"})
+            fake.accountsJson = JSON.stringify([scene.cardRow(false)])
+            fake.statusJson = JSON.stringify({state:"ready",network:"regtest",activeNetwork:"regtest",group:"g_card",family:"bitcoin",synced:true})
+        },
+        function (v) {
+            expect("the Keycard's wallet is open", v.openedAccount ? v.openedAccount.id : null, "g_card")
+            expect("Send says what signing needs", prop("sendDeviceNote", "text"), "Keycard not connected. Insert Black Card in a reader "
+                   + "or connect a Keycard Shell to sign. You can view this wallet; sending needs it.")
+            var gone = { state: "failed", errorCode: "signer_unavailable", error: "signer_manager_module: no answer" }
+            expect("a failure while it is unplugged says so", v.sendHeadline(gone), "Keycard could not sign: it is not connected")
+            expect("...that nothing went out", v.sendDetail(gone),
+                   "Nothing went out. Insert Black Card in a reader or connect a Keycard Shell to sign, then try again.")
+            expect("...and it can be asked again", v.canRetry(gone), true)
+            var refused = { state: "failed", errorCode: "failed", error: "keycard_module: no card in the reader" }
+            expect("the device's own refusal reads the same", v.sendHeadline(refused), "Keycard could not sign: it is not connected")
+            expect("...and can be asked again", v.canRetry(refused), true)
+            fake.accountsJson = JSON.stringify([scene.cardRow(true)])
+        },
+        function (v) {
+            expect("plugged in, Send says nothing more", prop("sendDeviceNote", "text"), "")
+            expect("...nor the row", prop("deviceAbsentNote", "text"), "")
+            expect("...nor a reason", prop("deviceReasonLine", "text"), "")
+            expect("...and a failure is the signer's again", v.sendHeadline({ state: "failed", errorCode: "signer_unavailable", error: "x" }),
+                   "The signer could not be reached")
         }
     ]
     property int step: 0
