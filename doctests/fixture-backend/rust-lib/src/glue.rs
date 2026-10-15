@@ -1,5 +1,5 @@
 //! A stand-in for `bitcoin_wallet_backend` in the wallet app's doctest. The trait is the real
-//! backend's (logos-bitcoin-wallet-backend 70172f8), so the contract matches; behind it, sim.rs.
+//! backend's (logos-bitcoin-wallet-backend c407b26), so the contract matches; behind it, sim.rs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
