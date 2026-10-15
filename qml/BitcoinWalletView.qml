@@ -1171,63 +1171,68 @@ Item {
                 LogosText { visible: sourceRow.server && modelData.kind !== "rpc"; Layout.fillWidth: true; wrapMode: Text.Wrap
                             font.pixelSize: 12; color: Theme.palette.textTertiary
                             text: "History looks up your payments. Tor is optional and hides your IP, but not your queries." }
-                LogosText { objectName: "kyotoConflictLine"; visible: modelData.kind === "kyoto" && root.kyotoConflict !== null
+                LogosText { objectName: modelData.kind === "kyoto" ? "kyotoConflictLine" : ""
+                            visible: modelData.kind === "kyoto" && root.kyotoConflict !== null
                             Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                             font.pixelSize: 12; color: Theme.palette.textSecondary
                             text: root.kyotoConflict ? "Peers that disagreed were set aside at " + root.whenOf(root.kyotoConflict.at) : "" }
-                ColumnLayout {
-                    objectName: "ownPeersPane"
-                    visible: modelData.kind === "kyoto"
+                // Only Kyoto's row lists peers: one pane, not a hidden copy under every source.
+                Loader {
+                    active: modelData.kind === "kyoto"
+                    visible: active
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spacing.tiny
-                    spacing: Theme.spacing.tiny
-                    LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
-                    LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                                font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
-                    LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                text: root.signedListNote() }
-                    LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
-                                color: Theme.palette.textSecondary
-                                text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "
-                                      + "few of Bitcoin Core's built-in onion nodes for more." }
-                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                text: "A peer of your own replaces all of these: Kyoto then connects to your peers alone, "
-                                      + "directly when they are on your network, otherwise through Tor." }
-                    Repeater {
-                        model: root.ownPeers
-                        RowLayout {
-                            Layout.fillWidth: true
-                            LogosText { objectName: "ownPeer_" + modelData; textFormat: Text.PlainText; font.pixelSize: 12; text: modelData }
-                            Item { Layout.fillWidth: true }
-                            LogosButton { objectName: "removeOwnPeer_" + modelData; visible: !root.networkLocked; text: "Remove"
-                                          enabled: root.ready
-                                          onClicked: root.setOwnPeers(root.ownPeers.filter(function (p) { return p !== modelData })) }
+                    sourceComponent: ColumnLayout {
+                        objectName: "ownPeersPane"
+                        spacing: Theme.spacing.tiny
+                        LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
+                        LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
+                        LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: root.signedListNote() }
+                        LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
+                                    color: Theme.palette.textSecondary
+                                    text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "
+                                          + "few of Bitcoin Core's built-in onion nodes for more." }
+                        LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: "A peer of your own replaces all of these: Kyoto then connects to your peers alone, "
+                                          + "directly when they are on your network, otherwise through Tor." }
+                        Repeater {
+                            model: root.ownPeers
+                            RowLayout {
+                                Layout.fillWidth: true
+                                LogosText { objectName: "ownPeer_" + modelData; textFormat: Text.PlainText; font.pixelSize: 12; text: modelData }
+                                Item { Layout.fillWidth: true }
+                                LogosButton { objectName: "removeOwnPeer_" + modelData; visible: !root.networkLocked; text: "Remove"
+                                              enabled: root.ready
+                                              onClicked: root.setOwnPeers(root.ownPeers.filter(function (p) { return p !== modelData })) }
+                            }
                         }
+                        LogosText { objectName: "ownPeersRoute"; visible: root.ownPeers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    // Direct also when Kyoto's Tor is off, whatever the peers.
+                                    text: root.peerList.route !== "direct" ? "Kyoto reaches them through Tor."
+                                          : (root.peerList.kyotoTor === false ? "Kyoto reaches them directly: its Tor is off."
+                                                                              : "Kyoto reaches them directly, on your network.") }
+                        RowLayout {
+                            visible: !root.networkLocked
+                            Layout.fillWidth: true
+                            LogosTextField { id: ownPeerField; objectName: "ownPeerField"; Layout.fillWidth: true
+                                             placeholderText: "host:port, such as 192.168.1.20:8333" }
+                            LogosButton { objectName: "addOwnPeerButton"; text: "Add"
+                                          enabled: root.ready && ownPeerField.text.trim() !== "" && root.ownPeers.length < 64
+                                          onClicked: root.setOwnPeers(root.ownPeers.concat([ownPeerField.text.trim()]),
+                                                                      function () { ownPeerField.text = "" }) }
+                        }
+                        LogosButton { objectName: "useCuratedButton"; visible: !root.networkLocked && root.ownPeers.length > 0
+                                      text: "Use the known peers again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
+                        LogosText { objectName: "ownPeersLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: "Kyoto's peers change only while no wallet is open, like the other source settings." }
+                        LogosText { objectName: "ownPeersNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning; text: root.ownPeersNote }
                     }
-                    LogosText { objectName: "ownPeersRoute"; visible: root.ownPeers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                font.pixelSize: 12; color: Theme.palette.textSecondary
-                                // Direct also when Kyoto's Tor is off, whatever the peers.
-                                text: root.peerList.route !== "direct" ? "Kyoto reaches them through Tor."
-                                      : (root.peerList.kyotoTor === false ? "Kyoto reaches them directly: its Tor is off."
-                                                                          : "Kyoto reaches them directly, on your network.") }
-                    RowLayout {
-                        visible: !root.networkLocked
-                        Layout.fillWidth: true
-                        LogosTextField { id: ownPeerField; objectName: "ownPeerField"; Layout.fillWidth: true
-                                         placeholderText: "host:port, such as 192.168.1.20:8333" }
-                        LogosButton { objectName: "addOwnPeerButton"; text: "Add"
-                                      enabled: root.ready && ownPeerField.text.trim() !== "" && root.ownPeers.length < 64
-                                      onClicked: root.setOwnPeers(root.ownPeers.concat([ownPeerField.text.trim()]),
-                                                                  function () { ownPeerField.text = "" }) }
-                    }
-                    LogosButton { objectName: "useCuratedButton"; visible: !root.networkLocked && root.ownPeers.length > 0
-                                  text: "Use the known peers again"; enabled: root.ready; onClicked: root.setOwnPeers([]) }
-                    LogosText { objectName: "ownPeersLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                font.pixelSize: 12; color: Theme.palette.textSecondary
-                                text: "Kyoto's peers change only while no wallet is open, like the other source settings." }
-                    LogosText { objectName: "ownPeersNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning; text: root.ownPeersNote }
                 }
                 // A pinned certificate, or one to look at before trusting it: untrusted, or just probed.
                 ColumnLayout {

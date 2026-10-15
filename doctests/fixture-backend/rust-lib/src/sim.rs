@@ -932,7 +932,8 @@ impl Sim {
         let group = p["group"].as_str().map(String::from);
         let family = p["family"].as_str().map(String::from).or_else(|| {
             group.as_ref().and_then(|g| self.wallets.iter().find(|w| w["group"] == g.as_str())).and_then(|w| w["family"].as_str().map(String::from))
-        });
+        // The app names a group from the signer's roster and no family: the doctest's are native segwit.
+        }).or_else(|| group.as_ref().filter(|g| g.starts_with("g_")).map(|_| "bitcoin".to_string()));
         let Some(family) = family.filter(|f| f == "bitcoin" || f == "bitcoin_taproot") else {
             return json!({"ok": false, "error": "name a group to reopen, or a family to pick, create or restore one"});
         };

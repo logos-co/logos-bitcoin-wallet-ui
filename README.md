@@ -180,14 +180,15 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
 
 - `wallet-ui-app.test.yaml` runs against `doctests/fixture-backend`, a scripted
   `bitcoin_wallet_backend` with the real backend's contract (its trait is copied verbatim) and
-  nothing behind it: every flow, to every send outcome, a birthday refused and set, change added
-  to the fee, a reorg, Kyoto as the authority and a chain it names that is refused, a TLS
-  server's certificate pinned, a Kyoto peer of your own, a network switch queued behind a close
-  with an open waiting for it, a payment reported below the chain's start until an earlier
-  birthday checks it (with a wider pass), one peer deciding the chain on testnet4, and a coin
-  past the 20-address gap limit that a small send spends and a gap limit of 30 takes into the
-  balance. A send's fate is picked by its amount; the header of `sim.rs`
-  says how.
+  nothing behind it, and `doctests/fixture-manager`, a `signer_manager_module` whose `accounts`
+  answers a keystore wallet on each chain and a Keycard account with no card inserted: every flow,
+  to every send outcome, a birthday refused and set, change added to the fee, a reorg, Kyoto as the
+  authority and a chain it names that is refused, a TLS server's certificate pinned, a Kyoto peer of
+  your own, a network switch queued behind a close with an open refused until it applies, a payment
+  reported below the chain's start until an earlier birthday checks it (with a wider pass), one peer
+  deciding the chain on testnet4, and a coin past the 20-address gap limit that a small send spends
+  and a gap limit of 30 takes into the balance. A send's fate is picked by its amount; the header of
+  `sim.rs` says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
   manager and keystore: the node module's sources, certificate pin and curated Kyoto list with a
   peer of your own, and an open up to the keys app's handle, withdrawn. Nothing can approve an open there, so sends are not reached.
