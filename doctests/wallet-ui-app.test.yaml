@@ -1488,7 +1488,7 @@ sections:
               action: expect_property
               find_value: "bitcoinWalletRoot"
               property: "selectedAccountId"
-              value: "g_fixture_card"
+              value: "shell-cdcdcdcd-84-1-0"
               timeout: 5000
             - name: "Named by its seed wallet, not by a module"
               action: expect_property

@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 
 pub const KEYSTORE_TEST: &str = "g_fixture_keystore";
 pub const KEYSTORE_MAIN: &str = "g_fixture_mainnet";
-pub const CARD: &str = "g_fixture_card";
+/// A routed Keycard row keeps the id its Shell lists it under, as `shell-f0150787-84-0-0` in Basecamp.
+pub const CARD: &str = "shell-cdcdcdcd-84-1-0";
 
 pub fn accounts() -> Value {
     let card_seed = format!("seed:{}", "cd".repeat(32));
