@@ -38,7 +38,10 @@ is approved in the signer app.
     "Kyoto · N peers", "Your node" or "Servers' headers". It never says "Synchronized" when no
     source agrees with the wallet's chain, nor when the tip is older than an hour; it says "No
     source agrees" or "Stalled" instead. Regtest reads "Local chain". A pruned node's gap reads
-    "Older blocks via <source>", or a notice while nothing can scan it.
+    "Older blocks via <source>", or a notice while nothing can scan it. Until the open's first
+    round of asking the chain's sources ends (`authority.asked` false), last session's chain reads
+    "Connecting to the chain's sources… · last known block N", never "No source agrees": the chip,
+    the authority line and the sources badge wait for that answer too.
   - A wallet restored without a birthday (`needsBirthday`) asks for one: a day, or "I don't know"
     (`set_birthday`, a job; `{ height: 0 }` scans from where the wallet's kind of address began).
     A refusal, such as a day after its first payment, shows with the core's reason; while
@@ -64,7 +67,10 @@ is approved in the signer app.
     part.
 - **Send:** an address or a BIP21 URI, checked as you type with `address_valid`; the amount in BTC
   or sats (a URI's amount fills it); fast, normal or slow from `fee_rates`, or a custom sat/vB
-  rate; and Send max, which takes coins found beyond the gap limit too. A review whose inputs
+  rate; and Send max, which takes coins found beyond the gap limit too. The presets need an
+  estimate: while `fee_rates` has none (regtest, Kyoto alone) Send says "Fee estimate not available
+  yet" and takes a rate of your own. Every level the same reads "The network is quiet: every speed
+  costs N sat/vB", with the source the estimate came from. A review whose inputs
   include such coins (the `beyond_gap_inputs` warning) says so in one line.
   - Review shows what the form says. Approve in Signer calls `request_send`; once `send_status`
     carries an `approvalHandle` the app raises `evm.signing.approve` with `{ handle }`. The review
@@ -79,7 +85,10 @@ is approved in the signer app.
   - Done on a settled send is local: the backend refuses to cancel a final send, and such a
     refusal must not leave the form wedged.
 - **Receive:** a fresh address per request, with a BIP21 QR (an optional amount goes in the URI)
-  drawn as rectangles. Copy the address or the payment request.
+  drawn as rectangles. Copy the address or the payment request. An open shows the first unused
+  address (`current_address`) and reveals none. New address at the gap limit (`fresh` false) keeps
+  showing the first unused one and says so: "You already have N unused addresses…", with the gap
+  limit setting as the way to more.
 - **Activity:** one row per transaction saying what it was for: "−X · fee F", "X to yourself ·
   fee F", "N coins combined · fee F", "Fee raised to F" and "+X". Each shows its state, and an
   unconfirmed send has Speed up (`request_fee_bump`). Details list the addresses paid, what it
@@ -150,7 +159,7 @@ are a SLOT's return value, shown on Settings and dropped when it is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend 966277c.
+interface changes; this copy is from logos-bitcoin-wallet-backend 70172f8.
 `contracts/signer_manager_module.lidl` supplies the account-read API and `accounts_changed` event;
 only public identity fields are copied into the view's account roster.
 
@@ -187,8 +196,10 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   your own, a network switch queued behind a close with an open refused until it applies, a payment
   reported below the chain's start until an earlier birthday checks it (with a wider pass), one peer
   deciding the chain on testnet4, and a coin past the 20-address gap limit that a small send spends
-  and a gap limit of 30 takes into the balance. A send's fate is picked by its amount; the header of
-  `sim.rs` says how.
+  and a gap limit of 30 takes into the balance. Each open shows last session's chain as connecting for
+  its first 4 s; reopens show the first unused address again; testnet4's wallet already holds 20 unused
+  ones, so New address there says so; Kyoto on testnet4 has no fee estimate and Esplora's under Kyoto
+  on signet is a quiet network's. A send's fate is picked by its amount; the header of `sim.rs` says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
   manager and keystore: the node module's sources, certificate pin and curated Kyoto list with a
   peer of your own, and an open up to the keys app's handle, withdrawn. Nothing can approve an open there, so sends are not reached.

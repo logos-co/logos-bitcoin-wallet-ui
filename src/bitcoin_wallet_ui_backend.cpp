@@ -231,8 +231,8 @@ void BitcoinWalletUiBackend::walletBecameReady() {
     readHistory(false);
     loadFeeRates();
     loadExposure();
-    // Receive starts with a fresh address; the core hands back an unused one past the gap limit.
-    newAddress();
+    // Receive starts on the first unused address: an open reveals none.
+    showCurrentAddress();
 }
 
 // Nothing of a closed wallet may stay on screen for the next one.
@@ -243,6 +243,7 @@ void BitcoinWalletUiBackend::clearWalletReads() {
     m_historyTip = -1;
     m_historyUnsettled = false;
     m_historyAge.invalidate();
+    m_receiveGap = {};
     setReceive({}, -1, {});
     setFeeRatesJson({});
     m_feeAge.invalidate();
@@ -725,6 +726,18 @@ void BitcoinWalletUiBackend::newAddress() {
     const QString r = modules().bitcoin_wallet_backend.receive_address();
     if (!ok(r, QStringLiteral("receive address"))) return;
     const QJsonObject o = parse(r);
+    // At the gap limit the core hands back the first unused address instead, and the view says so.
+    m_receiveGap = o.value("fresh").toBool(true) ? QJsonObject{}
+                                                 : QJsonObject{{"unused", o.value("unused")}, {"gapLimit", o.value("gapLimit")}};
+    setReceive(o.value("address").toString(), o.value("index").toInteger(-1), m_receiveAmount);
+}
+
+void BitcoinWalletUiBackend::showCurrentAddress() {
+    if (!walletReady()) return;
+    const QString r = modules().bitcoin_wallet_backend.current_address();
+    if (!ok(r, QStringLiteral("receive address"))) return;
+    const QJsonObject o = parse(r);
+    m_receiveGap = {};
     setReceive(o.value("address").toString(), o.value("index").toInteger(-1), m_receiveAmount);
 }
 
@@ -749,7 +762,9 @@ void BitcoinWalletUiBackend::setReceive(const QString &address, qint64 index, co
     // BIP21 in capitals when it can be: a bech32 address then fits the QR's compact alphanumeric mode.
     static const QRegularExpression bech32(QStringLiteral("^(bc|tb|bcrt)1"), QRegularExpression::CaseInsensitiveOption);
     const QString qrText = amount.isEmpty() && bech32.match(address).hasMatch() ? uri.toUpper() : uri;
-    setReceiveJson(compact(QJsonObject{{"address", address}, {"index", index}, {"uri", uri}, {"amount", amount}}));
+    QJsonObject o{{"address", address}, {"index", index}, {"uri", uri}, {"amount", amount}};
+    if (!m_receiveGap.isEmpty()) o.insert("gap", m_receiveGap);
+    setReceiveJson(compact(o));
     setReceiveQrJson(qrModulesJson(qrText));
 }
 

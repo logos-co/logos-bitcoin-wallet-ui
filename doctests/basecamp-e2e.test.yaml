@@ -4,7 +4,7 @@ project_name: logos-bitcoin-wallet-ui-e2e
 intro: |
   The wallet app in the full Basecamp bundle, not standalone mode, beside the real keys app
   (evm_keystore_ui f3fdc18) and signer app (evm_signer_ui 05cf10b), with keystore_module 1f3d62f,
-  signer_manager_module 80bc40c, bitcoin_wallet_backend 966277c, bitcoin_wallet_core_module d8d3d7d
+  signer_manager_module 80bc40c, bitcoin_wallet_backend 70172f8, bitcoin_wallet_core_module 6e11546
   and bitcoin_node_module 7462bce. Opens and sends go through Basecamp's intents, and every send
   is approved, rejected or left unapproved in the signer app as a person would. The chain is the
   Electrum servers' headers here; basecamp-e2e-kyoto and basecamp-e2e-node run Kyoto and the
@@ -41,9 +41,9 @@ sections:
           b manager 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install-portable'
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
-          b backend 'github:logos-co/logos-bitcoin-wallet-backend/966277c916b99ca31cae3b648fddd47e6767c287#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/d8d3d7dfb75725ab373002011dc33c19c1405d81#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/d8d3d7dfb75725ab373002011dc33c19c1405d81#regtest-chain'
+          b backend 'github:logos-co/logos-bitcoin-wallet-backend/70172f8f9e210447808df89c7dc72191fa11685d#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/6e11546786df86bd329d53309d9774b1fdb17cd6#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/6e11546786df86bd329d53309d9774b1fdb17cd6#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/7462bce96676bad4be296155117bd6ea6c643a4d#install-portable'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           ls e2e/build

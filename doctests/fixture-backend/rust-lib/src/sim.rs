@@ -6,7 +6,10 @@
 //! set, whose rescan ends with one wider pass. On testnet4 Kyoto is on with one peer, which then
 //! decides the chain. A signet wallet holds a coin past a 20-address gap limit: listed apart and
 //! spendable, small sends spend it, and a gap limit of 30 or more takes it into the balance after
-//! its rescan. No network, no key.
+//! its rescan. Each open shows last session's chain for 4 s before its sources answer. Opens show the
+//! first unused address and reveal none; testnet4's wallet already has 20 unused, so a new one is
+//! refused there. Fee estimates: none on testnet4, a quiet 1 sat/vB under Kyoto on signet. No
+//! network, no key.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -50,6 +53,10 @@ const UNCHECKED_ALERT_AFTER: Duration = Duration::from_secs(1);
 const BEYOND_GAP_SAT: u64 = 70_000;
 const BEYOND_GAP_NEEDS: u64 = 30;
 const GAP_LIMIT_DEFAULT: u64 = 20;
+/// Until the first round of asking the chain's sources ends: no peers, the sources unasked.
+const FIRST_ANSWER: Duration = Duration::from_secs(4);
+/// testnet4's wallet was opened this often by an app that revealed an address at each open.
+const OLD_APP_OPENS: u32 = 20;
 /// The wallet's first payment, a fixed day so a birthday after it is refused the same way every run.
 const FIRST_TX_DAY: &str = "2026-05-31";
 // The core's own refusals.
@@ -171,7 +178,11 @@ pub struct Sim {
     sources: BTreeMap<String, Vec<Source>>,
     proxy: String,
     wallets: Vec<Value>,
-    receive_index: u32,
+    /// Receive addresses revealed, none of them paid, by network and group.
+    revealed: BTreeMap<String, u32>,
+    /// The open's first round of asking the chain's sources has ended, or ends then.
+    asked: bool,
+    answer_at: Option<Instant>,
     history: Vec<Value>,
     confirmed: u64,
     change: u64,
@@ -453,7 +464,9 @@ impl Sim {
             sources: BTreeMap::new(),
             proxy: "socks5h://127.0.0.1:9050".into(),
             wallets: vec![],
-            receive_index: 0,
+            revealed: BTreeMap::new(),
+            asked: false,
+            answer_at: None,
             history: vec![],
             confirmed: 0,
             change: 0,
@@ -568,7 +581,8 @@ impl Sim {
         let kyoto = open && self.kyoto();
         let authority = if open {
             json!({"kind": if kyoto { "kyoto" } else { "electrum_headers" }, "height": tip(&self.network),
-                   "hash": "00000000000000000002f1c4fixture", "tipAgeSecs": TIP_AGE_SECS, "peers": self.peers(), "base": self.chain_base})
+                   "hash": "00000000000000000002f1c4fixture", "tipAgeSecs": TIP_AGE_SECS, "peers": if self.asked { self.peers() } else { 0 },
+                   "asked": self.asked, "base": self.chain_base})
         } else {
             json!({"kind": null, "height": null, "hash": null, "tipAgeSecs": null, "peers": 0})
         };
@@ -609,7 +623,7 @@ impl Sim {
     fn kyoto_status(&self) -> Value {
         let q = quorum(&self.network);
         let conflict = self.conflict_at.map(|at| json!({"at": at, "peers": [format!("peer3{}.onion:38333", "a".repeat(46))]}));
-        json!({"running": true, "phase": "synced", "headers": tip(&self.network), "progress": 1.0, "connected": self.peers(),
+        json!({"running": true, "phase": "synced", "headers": tip(&self.network), "progress": 1.0, "connected": if self.asked { self.peers() } else { 0 },
                "quorum": q, "onePeerDecides": q == 1, "rescans": self.rescans, "window": [26, 25], "lastConflict": conflict})
     }
 
@@ -644,20 +658,48 @@ impl Sim {
         json!({"ok": true, "page": page.max(0), "pageSize": 50, "total": self.history.len(), "rows": rows})
     }
 
+    /// Kyoto estimates nothing, so testnet4 has no estimate; under Kyoto on signet Esplora's is a
+    /// quiet network's.
     pub fn fee_rates(&self) -> Value {
         if !self.open() {
             return json!({"ok": false, "error": "no wallet is open"});
         }
-        json!({"ok": true, "fast": 12.0, "normal": 6.0, "slow": 2.0, "minimum": 1.0, "sources": ["esplora.example"]})
+        if self.network == "testnet4" {
+            return json!({"ok": false, "error": "no fee estimate yet"});
+        }
+        let (fast, normal, slow) = if self.kyoto() { (1.0, 1.0, 1.0) } else { (12.0, 6.0, 2.0) };
+        json!({"ok": true, "fast": fast, "normal": normal, "slow": slow, "minimum": 1.0, "sources": ["esplora.example"], "estimated": true})
     }
 
+    fn revealed_mut(&mut self) -> &mut u32 {
+        let old = if self.network == "testnet4" { OLD_APP_OPENS } else { 0 };
+        self.revealed.entry(format!("{}/{}", self.network, self.group)).or_insert(old)
+    }
+
+    /// A new address, unless as many unused ones as the gap limit stand: then the first, not fresh.
     pub fn receive_address(&mut self) -> Value {
         if !self.open() {
             return json!({"ok": false, "error": "no wallet is open"});
         }
-        let i = self.receive_index;
-        self.receive_index += 1;
-        json!({"ok": true, "address": address(&self.network, 'q', 1000 + i as u64), "index": i})
+        let (net, gap) = (self.network.clone(), self.gap_limit as u32);
+        let n = self.revealed_mut();
+        if *n >= gap {
+            return json!({"ok": true, "address": address(&net, 'q', 1000), "index": 0, "fresh": false, "unused": *n, "gapLimit": gap});
+        }
+        let i = *n;
+        *n += 1;
+        json!({"ok": true, "address": address(&net, 'q', 1000 + u64::from(i)), "index": i, "fresh": true, "unused": i + 1, "gapLimit": gap})
+    }
+
+    /// The first unused address, revealed only when none is; none of the fixture's is ever paid.
+    pub fn current_address(&mut self) -> Value {
+        if !self.open() {
+            return json!({"ok": false, "error": "no wallet is open"});
+        }
+        let net = self.network.clone();
+        let n = self.revealed_mut();
+        *n = (*n).max(1);
+        json!({"ok": true, "address": address(&net, 'q', 1000), "index": 0})
     }
 
     pub fn address_valid(&self, text: &str) -> Value {
@@ -757,7 +799,7 @@ impl Sim {
                 .iter()
                 .filter(|s| s.enabled && s.kind != "kyoto")
                 .map(|s| json!({"id": s.id, "url": s.url, "operator": s.operator, "kind": s.kind,
-                                "state": if s.suspect { "suspect" } else { "ok" }, "suspect": s.suspect,
+                                "state": if s.suspect { "suspect" } else if self.asked { "ok" } else { "unknown" }, "suspect": s.suspect,
                                 "history": s.id == "electrum.example", "encrypted": is_tls(&s.url)}))
                 .collect();
             out["wallet"] = json!({"ok": true, "proxy": self.proxy, "crossCheck": false, "sources": wallet});
@@ -938,7 +980,9 @@ impl Sim {
         let Some(family) = family.filter(|f| f == "bitcoin" || f == "bitcoin_taproot") else {
             return json!({"ok": false, "error": "name a group to reopen, or a family to pick, create or restore one"});
         };
-        let kept = group.as_ref().and_then(|g| self.wallets.iter().find(|w| w["group"] == g.as_str())).and_then(|w| w["gapLimit"].as_u64());
+        // The core keeps a gap limit per wallet, and a group has a wallet per network.
+        let kept = group.as_ref().and_then(|g| self.wallets.iter().find(|w| w["group"] == g.as_str() && w["network"] == self.active.as_str()))
+            .and_then(|w| w["gapLimit"].as_u64());
         let gap = match p.get("gapLimit").filter(|v| !v.is_null()) {
             Some(v) => match gap_limit_of(v) {
                 Some(g) => g,
@@ -1002,13 +1046,13 @@ impl Sim {
         self.family.clear();
         self.label = None;
         self.network.clear();
+        (self.asked, self.answer_at) = (false, None);
     }
 
     fn seed_wallet(&mut self) {
         let net = self.network.clone();
         self.confirmed = 125_000_000;
         self.change = 0;
-        self.receive_index = 0;
         let t = tip(&net);
         let now = now_secs();
         let own = address(&net, 'q', 1001);
@@ -1445,6 +1489,9 @@ impl Sim {
 
     pub fn tick(&mut self, now: Instant) -> Vec<Event> {
         let mut out = vec![];
+        if self.answer_at.is_some_and(|t| now >= t) {
+            (self.asked, self.answer_at) = (true, None);
+        }
         let elapsed = now.saturating_duration_since(self.since);
         let state = self.state;
         match state {
@@ -1460,6 +1507,7 @@ impl Sim {
                 }
                 self.state = WState::Syncing;
                 self.since = now;
+                (self.asked, self.answer_at) = (false, Some(now + FIRST_ANSWER));
                 self.seed_wallet();
                 // Restored without a birthday: the scan starts where its kind of address began.
                 self.birthday_height = activation(&self.network, &self.family);
@@ -1558,7 +1606,7 @@ impl Sim {
         }
         // Change events, as the backend sends them: on what the status says, and on amounts.
         let st = self.status(now);
-        let digest = json!([st["state"], st["openHandle"], st["walletTip"], st["authority"]["peers"], st["openSend"]]).to_string();
+        let digest = json!([st["state"], st["openHandle"], st["walletTip"], st["authority"]["peers"], st["authority"]["asked"], st["openSend"]]).to_string();
         if digest != self.last_status {
             self.last_status = digest;
             out.push(Event::SyncProgress(json!({"state": st["state"], "network": st["network"], "walletTip": st["walletTip"],
@@ -1793,6 +1841,60 @@ mod tests {
         let t = run(&mut sim, t, 10);
         assert_eq!(sim.status(t)["state"], "ready");
         (sim, t)
+    }
+
+    #[test]
+    fn an_open_shows_the_stored_chain_until_its_sources_answer() {
+        let t0 = Instant::now();
+        let mut sim = Sim::new(false, t0);
+        sim.set_active_network("signet");
+        let mut ev = vec![];
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t0, &mut ev);
+        sim.close_wallet(t0, &mut ev);
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t0, &mut ev);
+        // Approved at 4 s, syncing from 5 s: nothing asked for 4 s more.
+        let t = run(&mut sim, t0, 6);
+        let a = sim.status(t)["authority"].clone();
+        assert_eq!((a["height"].clone(), a["peers"].clone(), a["asked"].clone()), (json!(290_123), json!(0), json!(false)), "{a}");
+        assert!(sim.source_health(0)["wallet"]["sources"].as_array().unwrap().iter().all(|w| w["state"] == "unknown"));
+        let t = run(&mut sim, t, 4);
+        let a = sim.status(t)["authority"].clone();
+        assert_eq!((a["peers"].clone(), a["asked"].clone()), (json!(1), json!(true)), "{a}");
+        assert!(sim.source_health(0)["wallet"]["sources"].as_array().unwrap().iter().all(|w| w["state"] == "ok"));
+    }
+
+    #[test]
+    fn opens_reveal_no_address_and_a_gap_stops_new_ones() {
+        let (mut sim, t) = opened("signet");
+        assert_eq!(sim.current_address()["index"], 0);
+        assert_eq!(sim.current_address()["index"], 0, "asking again reveals nothing");
+        let a = sim.receive_address();
+        assert_eq!((a["index"].clone(), a["fresh"].clone()), (json!(1), json!(true)));
+        let mut ev = vec![];
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        sim.open_wallet(r#"{"family":"bitcoin","group":"g_fixture2"}"#, t, &mut ev);
+        let t = run(&mut sim, t, 10);
+        assert_eq!(sim.current_address()["index"], 0, "a reopen shows the first unused address");
+        assert_eq!(sim.receive_address()["index"], 2);
+        let g = sim.set_gap_limit(r#"{"gapLimit":30}"#, t);
+        assert_eq!(g["ok"], true, "{g}");
+        let t = run(&mut sim, t, 6);
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        sim.set_active_network("testnet4");
+        let t = run(&mut sim, t, 1);
+        sim.open_wallet(r#"{"family":"bitcoin","group":"g_fixture2"}"#, t, &mut ev);
+        run(&mut sim, t, 10);
+        assert_eq!(sim.receive_address(), json!({"ok": true, "address": address("testnet4", 'q', 1000), "index": 0, "fresh": false, "unused": 20, "gapLimit": 20}));
+    }
+
+    #[test]
+    fn fee_estimates_by_network() {
+        let (sim, _) = opened("signet");
+        assert_eq!((sim.fee_rates()["normal"].clone(), sim.fee_rates()["estimated"].clone()), (json!(6.0), json!(true)));
+        let (sim, _) = opened("testnet4");
+        assert_eq!(sim.fee_rates(), json!({"ok": false, "error": "no fee estimate yet"}));
     }
 
     #[test]

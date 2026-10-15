@@ -27,10 +27,11 @@ class BitcoinWalletUi
     // history(page): { page, pageSize, total, rows }
     PROP(QString historyJson="" READONLY)
     PROP(int historyPage=0 READONLY)
-    // { address, index, uri, amount } and the URI's QR module matrix { size, bits }.
+    // { address, index, uri, amount, gap? } and the URI's QR module matrix { size, bits }; gap is
+    // { unused, gapLimit } when New address met the gap limit and showed the first unused one.
     PROP(QString receiveJson="" READONLY)
     PROP(QString receiveQrJson="" READONLY)
-    // fee_rates(): { fast, normal, slow, minimum, sources } in sat/vB.
+    // fee_rates(): { fast, normal, slow, minimum, sources, estimated } in sat/vB; empty with no estimate.
     PROP(QString feeRatesJson="" READONLY)
     // peer_list({ network }) without ok: counts, the signed list, ownPeers, usable, route, kyotoTor.
     PROP(QString peerListJson="" READONLY)
