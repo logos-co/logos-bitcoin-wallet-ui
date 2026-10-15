@@ -291,7 +291,6 @@ void BitcoinWalletUiBackend::selectAccount(QString accountId) {
     if (busy() || hasJob("open") || hasJob("close") || hasJob("cancel")) {
         say(QStringLiteral("Wait for the wallet to finish opening or closing.")); return;
     }
-    const auto st = parse(statusJson());
     const auto networks = parse(networksJson());
     const QString network = networks.value("active").toString();
     if (network.isEmpty() || !networks.value("pending").toString().isEmpty()) {
@@ -309,21 +308,7 @@ void BitcoinWalletUiBackend::selectAccount(QString accountId) {
     if (selected.isEmpty() || (!selected.value("available").toBool() && !device) || selected.value("chain").toString() != chain) {
         say(QStringLiteral("That account is unavailable on this network. Refresh or manage it in Keystore.")); return;
     }
-    if (walletReady() && st.value("group").toString() == accountId) return;
-    if (!st.value("openSend").toString().isEmpty() || liveSend(parse(sendStatusJson()).value("state").toString())) {
-        say(QStringLiteral("Finish or cancel the current payment before switching accounts.")); return;
-    }
-    const QString params = compact(QJsonObject{{"group", accountId}, {"network", network}, {"label", selected.value("label").toString()}});
-    if (walletReady()) {
-        // Reuse the backend's close job and queued-open flow. Never overlap two wallet sessions.
-        closeWallet();
-        if (!hasJob("close")) return;
-        m_openQueued = params;
-        m_openTries = 0;
-        setOpenQueuedJson(compact(QJsonObject{{"network", network}, {"error", "switching accounts"}}));
-    } else {
-        openWallet(params);
-    }
+    openWallet(compact(QJsonObject{{"group", accountId}, {"network", network}, {"label", selected.value("label").toString()}}));
 }
 
 void BitcoinWalletUiBackend::loadRegistry() {
@@ -869,6 +854,8 @@ void BitcoinWalletUiBackend::pollJobs() {
 void BitcoinWalletUiBackend::openWallet(QString paramsJson) {
     setLastError({});
     if (hasJob("open") || hasJob("close") || hasJob("cancel")) { say(QStringLiteral("open: a wallet is opening or closing")); return; }
+    // One wallet at a time: the person closes the open one first.
+    if (walletReady()) { say(QStringLiteral("Close the open wallet before opening another.")); return; }
     m_openCancelled = false;
     const QString reply = modules().bitcoin_wallet_backend.open_wallet(paramsJson);
     const QJsonObject o = parse(reply);

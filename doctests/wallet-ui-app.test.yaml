@@ -13,6 +13,8 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain, nor "No
   source agrees" before its sources first answered. Opens show the first unused address, New
   address at the gap limit says why it gives no new one, and the fee presets need an estimate.
+  While a wallet is open the account picker stays on it and Open is off until it is closed; an
+  open asked for past the picker is refused too.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
   (its trait, copied from logos-bitcoin-wallet-backend 70172f8) with a script behind it, and no
@@ -1612,6 +1614,71 @@ sections:
               property: "text"
               value: "Open: Card account · testnet4"
               timeout: 10000
+            # One wallet at a time: the picker stays on the open account until it is closed.
+            - name: "While it is open the account picker is locked"
+              action: expect_property
+              find_value: "accountPicker"
+              property: "enabled"
+              value: false
+              timeout: 5000
+            - name: "...on the open account"
+              action: expect_property
+              find_value: "accountPicker"
+              property: "displayText"
+              value: "Card account · shell-cdcd…d-84-1-0"
+            - name: "Open is off"
+              action: expect_property
+              find_value: "openWalletButton"
+              property: "enabled"
+              value: false
+            - name: "...and the app says why"
+              action: expect_property
+              find_value: "accountLockedNote"
+              property: "visible"
+              value: true
+            - name: "...in a line"
+              action: expect_property
+              find_value: "accountLockedNote"
+              property: "text"
+              value: "Close this wallet to open another."
+              screenshot: "wallet-account-locked.png"
+            - name: "Pick the keystore wallet anyway"
+              action: set_property
+              find_value: "accountPicker"
+              property: "currentIndex"
+              value: 0
+            - name: "...as a person choosing it would"
+              action: call_method
+              find_value: "accountPicker"
+              method: "activated"
+              args: [0]
+            - name: "The open account stays selected"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "selectedAccountId"
+              value: "shell-cdcdcdcd-84-1-0"
+              timeout: 5000
+            - name: "...and shown"
+              action: expect_property
+              find_value: "accountPicker"
+              property: "currentIndex"
+              value: 1
+            - name: "Ask for the keystore wallet's open past the picker"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "openWallet"
+              args: [{"group": "g_fixture_keystore"}]
+            - name: "The app refuses it"
+              action: expect_property
+              find_value: "errorNotice"
+              property: "message"
+              value: "Close the open wallet before opening another."
+              timeout: 5000
+            - name: "...and the Keycard account stays open"
+              action: expect_property
+              find_value: "statusLine"
+              property: "text"
+              value: "Open: Card account · testnet4"
             - name: "Send"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -1638,3 +1705,26 @@ sections:
               property: "walletState"
               value: "no_wallet"
               timeout: 20000
+            - name: "The picker unlocks"
+              action: expect_property
+              find_value: "accountPicker"
+              property: "enabled"
+              value: true
+              timeout: 10000
+            - name: "...with the closed account still selected"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "selectedAccountId"
+              value: "shell-cdcdcdcd-84-1-0"
+            - name: "...and Open on again"
+              action: expect_property
+              find_value: "openWalletButton"
+              property: "enabled"
+              value: true
+              timeout: 5000
+            - name: "...with no note"
+              action: expect_property
+              find_value: "accountLockedNote"
+              property: "visible"
+              value: false
+              screenshot: "wallet-account-unlocked.png"

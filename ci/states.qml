@@ -1154,27 +1154,51 @@ Item {
         function (v) {
             expect("open account identity", v.selectedAccount.id, "g_main")
             expect("picker follows current wallet", prop("accountPicker","currentIndex"), 0)
-            fake.statusJson = JSON.stringify({state:"ready",network:"mainnet",group:"g_main",family:"bitcoin",openSend:"send-1"})
-        },
-        function (v) {
-            expect("unsettled payment blocks account switching", prop("accountPicker","enabled"), false)
-            fake.statusJson = JSON.stringify({state:"ready",network:"mainnet",group:"g_main",family:"bitcoin"})
-        },
-        function (v) {
+            // One wallet at a time: the picker is locked on the open one until it closes.
+            expect("an open wallet locks the picker", prop("accountPicker","enabled"), false)
+            expect("...and Open", prop("openWalletButton","enabled"), false)
+            expect("...and says why", shown("accountLockedNote") && prop("accountLockedNote","text"), "Close this wallet to open another.")
             find(view.item,"accountPicker",0).currentIndex = 1
             find(view.item,"accountPicker",0).activated(1)
-            expect("selection changes without switching", v.selectedAccount.id, "g_other")
-            expect("current wallet stays open", v.status.group, "g_main")
-            expect("no switch requested by selection", fake.last("selectAccount"), ["selectAccount", "g_test"])
+            expect("picking another changes nothing", v.selectedAccount.id, "g_main")
+            expect("...and the picker shows the open one", prop("accountPicker","currentIndex"), 0)
+            v.selectAccount(v.accountsOnNetwork[1])
+            expect("nor does a driver's pick", v.selectedAccount.id, "g_main")
+            v.openSelectedAccount()
+            expect("...nor an open", fake.last("selectAccount"), ["selectAccount", "g_test"])
             fake.accountsJson = JSON.stringify(JSON.parse(fake.accountsJson))
             fake.statusJson = JSON.stringify({state:"syncing",network:"mainnet",group:"g_main",family:"bitcoin"})
-            expect("refresh keeps pending selection", v.selectedAccount.id, "g_other")
-            find(view.item,"openWalletButton",0).clicked()
-            expect("Open requests account switch", fake.last("selectAccount"), ["selectAccount","g_other"])
+            expect("a refresh keeps the open one", v.selectedAccount.id, "g_main")
+            fake.pendingJobKind = "close"
             fake.busy = true
+            fake.statusJson = JSON.stringify({state:"closing",network:"mainnet",group:"g_main",family:"bitcoin"})
         },
         function (v) {
-            expect("switching disables selector", prop("accountPicker","enabled"), false)
+            expect("closing keeps the picker locked", prop("accountPicker","enabled"), false)
+            expect("...on the closing account", v.selectedAccount.id, "g_main")
+            expect("...with Open off", prop("openWalletButton","enabled"), false)
+            fake.pendingJobKind = ""
+            fake.busy = false
+            fake.statusJson = JSON.stringify({state:"no_wallet",activeNetwork:"mainnet"})
+        },
+        function (v) {
+            expect("closed, the picker unlocks", prop("accountPicker","enabled"), true)
+            expect("...with the closed account still selected", v.selectedAccount.id, "g_main")
+            expect("...and Open on", prop("openWalletButton","enabled"), true)
+            expect("...and no hint", shown("accountLockedNote"), false)
+            find(view.item,"accountPicker",0).currentIndex = 1
+            find(view.item,"accountPicker",0).activated(1)
+            expect("another can be picked now", v.selectedAccount.id, "g_other")
+            find(view.item,"openWalletButton",0).clicked()
+            expect("...and opened", fake.last("selectAccount"), ["selectAccount","g_other"])
+            fake.pendingJobKind = "open"
+            fake.busy = true
+            fake.statusJson = JSON.stringify({state:"awaiting_open",network:"mainnet",openHandle:"sma_t2"})
+        },
+        function (v) {
+            expect("opening locks the picker", prop("accountPicker","enabled"), false)
+            expect("...on the account asked for", v.selectedAccount.id, "g_other")
+            fake.pendingJobKind = ""
             fake.busy = false
             fake.statusJson = JSON.stringify({state:"ready",network:"mainnet",group:"g_other",family:"bitcoin_taproot",synced:true})
         },

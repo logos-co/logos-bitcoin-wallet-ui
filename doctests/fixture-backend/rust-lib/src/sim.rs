@@ -1923,6 +1923,20 @@ mod tests {
     }
 
     #[test]
+    fn another_account_opens_only_once_the_open_wallet_has_closed() {
+        let (mut sim, t) = opened("signet");
+        let mut ev = vec![];
+        let other = r#"{"group":"shell-cdcdcdcd-84-1-0"}"#;
+        assert_eq!(sim.open_wallet(other, t, &mut ev)["error"], "a wallet is already open; close it first");
+        sim.close_wallet(t, &mut ev);
+        assert_eq!(sim.open_wallet(other, t, &mut ev)["error"], "a wallet is already open; close it first", "nor while it closes");
+        let t = run(&mut sim, t, 4);
+        assert_eq!(sim.open_wallet(other, t, &mut ev)["ok"], true);
+        let t = run(&mut sim, t, 10);
+        assert_eq!((sim.status(t)["state"].clone(), sim.status(t)["group"].clone()), (json!("ready"), json!("shell-cdcdcdcd-84-1-0")));
+    }
+
+    #[test]
     fn sends_settle_by_amount() {
         for (amount, end) in [(20_000u64, "failed"), (30_000, "failed"), (40_000, "unknown"), (60_000, "sent")] {
             let (mut sim, t) = opened("signet");
