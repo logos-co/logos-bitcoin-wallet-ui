@@ -13,12 +13,13 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain, nor "No
   source agrees" before its sources first answered, and counts the chain's headers while the
   first wallet on a network reads them. Opens show the first unused address, New
-  address at the gap limit says why it gives no new one, and the fee presets need an estimate.
+  address at the gap limit says why it gives no new one, and the fee presets need an estimate. An
+  amount below what the address can receive says so under the amount and keeps Review off.
   While a wallet is open the account picker stays on it and Open is off until it is closed; an
   open asked for past the picker is refused too.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 597ad2c) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend 95b8f0c) with a script behind it, and no
   wallet core, keystore, chain or network. The signer manager is one too, doctests/fixture-manager:
   its `accounts` answers a keystore wallet on each chain and a Keycard account with no card
   inserted, which the account picker names by its seed wallet and still opens: only sending needs
@@ -655,16 +656,46 @@ sections:
               find_by: "objectName"
               find_value: "sendRecipientField"
               value: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"
-            - name: "0.0003 BTC, which nobody acknowledges in time"
+            - name: "5 sats, below what a native segwit address can receive"
               action: set_text
               find_by: "objectName"
               find_value: "sendAmountField"
-              value: "0.0003"
+              value: "0.00000005"
             - name: "The address checks out as typed"
               action: expect_property
               find_value: "recipientBadge"
               property: "text"
               value: "native segwit"
+              timeout: 10000
+            - name: "Under the amount, the least this address can receive"
+              action: expect_property
+              find_value: "dustNote"
+              property: "text"
+              value: "The smallest amount this address can receive is 294 sats."
+              timeout: 10000
+            - name: "...shown"
+              action: expect_property
+              find_value: "dustNote"
+              property: "visible"
+              value: true
+              timeout: 5000
+              screenshot: "wallet-send-below-dust.png"
+            - name: "Review stays off"
+              action: expect_property
+              find_value: "reviewButton"
+              property: "enabled"
+              value: false
+              timeout: 5000
+            - name: "0.0003 BTC, which nobody acknowledges in time"
+              action: set_text
+              find_by: "objectName"
+              find_value: "sendAmountField"
+              value: "0.0003"
+            - name: "Enough: the note goes"
+              action: expect_property
+              find_value: "dustNote"
+              property: "visible"
+              value: false
               timeout: 10000
             - name: "Review is enabled"
               action: expect_property

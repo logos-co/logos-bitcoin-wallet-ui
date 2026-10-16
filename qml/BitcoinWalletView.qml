@@ -679,6 +679,7 @@ Item {
         var code = s && s.errorCode ? s.errorCode : ""
         if (root.deviceFailed(s)) return root.deviceName(root.openedAccount) + " could not sign: it is not connected"
         if (code === "insufficient_funds") return "Not enough confirmed bitcoin for this and its fee"
+        if (root.dustFailed(s)) return "The amount is too small for this address"
         if (code === "no_route") return "No source can broadcast it"
         if (code === "busy") return "The wallet was busy"
         if (code === "refused") return "A source refused the transaction"
@@ -689,6 +690,11 @@ Item {
         if (code === "core_lost") return "The wallet core stopped answering"
         if (code === "backend_restarted") return "The wallet backend restarted"
         return "The send failed"
+    }
+    // Too small for the address: the core's code, or an older core's library text.
+    function dustFailed(s) {
+        var code = s && s.errorCode ? s.errorCode : ""
+        return root.sendOutcome(s) === "failed" && (code === "dust" || ((code === "" || code === "failed") && /dust limit/i.test(String(s.error || ""))))
     }
     // A failure from the open wallet's device while it is unplugged: say to connect it, not that it failed.
     function deviceFailed(s) {
@@ -709,6 +715,7 @@ Item {
         if (code === "core_lost") return "It stopped before the send was approved, so nothing went out: try again."
         if (code === "backend_restarted") return "The wallet core no longer has this send, and nothing went out: try again."
         if (code === "busy") return "Nothing went out: try again in a moment."
+        if (root.dustFailed(s)) return code === "dust" ? String(s.error || "") : "The amount is below the smallest this address can receive."
         return String(s.error || "")
     }
     // A failure worth repeating as it was: the same request, a new approval.
@@ -965,7 +972,22 @@ Item {
     readonly property real chosenRate: feeChoice === "custom" ? Number(feeCustom.text) : Number(feeRates[feeChoice] || 0)
     readonly property bool rateOk: isFinite(chosenRate) && chosenRate > 0 && chosenRate <= 100000
     readonly property bool canReview: ready && walletOpen && !sendLive && sendOutcome(send) !== "unknown"
-                                      && recipientValid && (sendMax || amountSat !== "") && rateOk
+                                      && recipientValid && (sendMax || amountSat !== "") && rateOk && !belowDust
+    // The least the recipient can receive, from its check; "" from a core that doesn't say.
+    readonly property string dustSat: recipientValid && isNum(recipientCheck.dustSat) ? String(recipientCheck.dustSat) : ""
+    // About what Send max pays: the spendable coins less a one-coin fee, a vbyte under the estimate
+    // so that nothing the core would build is refused here. More coins cost more.
+    readonly property real sendMaxLeft: spendableSat === "" || !rateOk ? NaN
+                                        : Number(spendableSat) - chosenRate * (estimateVsize(status.family, recipientCheck.type, true) - 1)
+    readonly property bool belowDust: dustSat !== "" && (sendMax ? Number(spendableSat) > 0 && sendMaxLeft < Number(dustSat)
+                                                                 : amountSat !== "" && Number(amountSat) < Number(dustSat))
+    function dustLine() {
+        if (!root.belowDust) return ""
+        var least = "The smallest amount this address can receive is " + root.satsText(root.dustSat) + "."
+        if (!root.sendMax) return least
+        return (root.sendMaxLeft >= 1 ? "After the fee, about " + root.satsText(Math.floor(root.sendMaxLeft)) + " would be left. "
+                                      : "The fee would take all of it. ") + least
+    }
     function checkRecipient() {
         var t = root.recipientText
         if (t === "" || !root.ready || !root.walletOpen) return
@@ -2206,6 +2228,8 @@ Item {
                               : root.amountSat === "" ? (sendAmount.text.trim() === "" ? "" : "Enter an amount above zero, with at most 8 decimals in BTC.")
                               : (root.amountUnit === "sat" ? "= " + root.btcOf(root.amountSat) + " BTC" : "= " + root.satsText(root.amountSat))
                     }
+                    LogosText { objectName: "dustNote"; visible: root.belowDust; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                textFormat: Text.PlainText; color: Theme.palette.error; text: root.dustLine() }
 
                     LogosText { text: "Fee"; color: Theme.palette.textSecondary }
                     LogosText { objectName: "feeUnknownNote"; visible: !root.feesKnown; Layout.fillWidth: true; wrapMode: Text.Wrap

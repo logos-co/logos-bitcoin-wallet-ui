@@ -80,7 +80,7 @@ Item {
         function newAddress() { note("newAddress", []) }
         function setReceiveAmount(a) { note("setReceiveAmount", [a]) }
         function addressValid(t) {
-            if (t.indexOf("bcrt1q") === 0) return JSON.stringify({ ok: true, valid: true, address: t, type: "p2wpkh" })
+            if (t.indexOf("bcrt1q") === 0) return JSON.stringify({ ok: true, valid: true, address: t, type: "p2wpkh", dustSat: "294" })
             if (t.indexOf("bitcoin:") === 0) return JSON.stringify({ ok: true, valid: true, address: t.slice(8).split("?")[0], type: "p2wpkh", amountSat: "150000" })
             return JSON.stringify({ ok: true, valid: false, reason: "this address is for another network" })
         }
@@ -243,7 +243,9 @@ Item {
             [{ state: "failed", errorCode: "core_lost", error: "x" }, "failed", "The wallet core stopped answering", 0],
             [{ state: "failed", errorCode: "backend_restarted", error: "x" }, "failed", "The wallet backend restarted", 0],
             [{ state: "failed", errorCode: "no_wallet", error: "the wallet closed before the send was approved" }, "failed", "The wallet closed before it was sent", 0],
-            [{ state: "unknown", abandoned: true, offer: [] }, "forgotten", "Forgotten", 2]
+            [{ state: "unknown", abandoned: true, offer: [] }, "forgotten", "Forgotten", 2],
+            [{ state: "failed", errorCode: "dust", error: "The smallest amount this address can receive is 294 sats." }, "failed", "The amount is too small for this address", 0],
+            [{ state: "failed", errorCode: "failed", error: "cannot build the send: Output below the dust limit: 0" }, "failed", "The amount is too small for this address", 0]
         ]
         for (var s = 0; s < sends.length; s++) {
             expect("outcome " + s, v.sendOutcome(sends[s][0]), sends[s][1])
@@ -261,6 +263,9 @@ Item {
         expect("offer nothing once forgotten", v.offers({ state: "unknown", abandoned: true, offer: [] }, "rebroadcast"), false)
         expect("old backend offers", v.offers({ state: "unknown" }, "rebroadcast"), true)
         expect("detail expired", v.sendDetail(sends[8][0]), "The signer app never showed the request, so it expired. Ask again to send it once more.")
+        expect("detail dust: the core's words", v.sendDetail(sends[23][0]), "The smallest amount this address can receive is 294 sats.")
+        expect("detail dust from an older core: never the library's text", v.sendDetail(sends[24][0]), "The amount is below the smallest this address can receive.")
+        expect("no retry dust", v.canRetry(sends[23][0]), false)
 
         var rows = [
             [{ intent: "send", amountSat: "60000", feeSat: "141" }, "−0.0006 BTC · fee 141 sats"],
@@ -525,6 +530,45 @@ Item {
         function (v) {
             expect("recipient badge", prop("recipientBadge", "text"), "native segwit")
             expect("amount note", prop("amountNote", "text"), "= 60,000 sats")
+            expect("no dust note", shown("dustNote"), false)
+            find(view.item, "sendAmountField", 0).text = "0.00000005"
+        },
+        function (v) {
+            expect("below the address's dust limit, said plainly", prop("dustNote", "text"), "The smallest amount this address can receive is 294 sats.")
+            expect("...under the amount", shown("dustNote") && prop("amountNote", "text") === "= 5 sats", true)
+            expect("...and no review", prop("reviewButton", "enabled"), false)
+            find(view.item, "sendAmountField", 0).text = "0.00000294"
+        },
+        function (v) {
+            expect("the limit itself is enough", shown("dustNote"), false)
+            expect("...review again", prop("reviewButton", "enabled"), true)
+            // Send max of 400 sats: at 6 sat/vB the fee takes it all, at 1 sat/vB about 291 are left.
+            scene.keptBalances = fake.balancesJson
+            fake.balancesJson = JSON.stringify({ busy: false, confirmed: "400", waiting: "0", pending: "0", sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" } })
+            v.sendMax = true
+        },
+        function (v) {
+            expect("send max the fee eats", prop("dustNote", "text"), "The fee would take all of it. The smallest amount this address can receive is 294 sats.")
+            expect("...no review", prop("reviewButton", "enabled"), false)
+            v.feeChoice = "custom"
+            find(view.item, "feeCustomField", 0).text = "1"
+        },
+        function (v) {
+            expect("send max left below the limit", prop("dustNote", "text"),
+                   "After the fee, about 291 sats would be left. The smallest amount this address can receive is 294 sats.")
+            expect("...no review", prop("reviewButton", "enabled"), false)
+            fake.balancesJson = JSON.stringify({ busy: false, confirmed: "404", waiting: "0", pending: "0", sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" } })
+        },
+        function (v) {
+            expect("send max a vbyte's worth above: left to the core", shown("dustNote"), false)
+            expect("...review", prop("reviewButton", "enabled"), true)
+            fake.balancesJson = scene.keptBalances
+            v.sendMax = false
+            v.feeChoice = "normal"
+            find(view.item, "feeCustomField", 0).text = ""
+            find(view.item, "sendAmountField", 0).text = "0.0006"
+        },
+        function (v) {
             expect("can review", prop("reviewButton", "enabled"), true)
             v.review()
         },
@@ -1309,6 +1353,7 @@ Item {
     ]
     property int step: 0
     property string keptAlerts: ""
+    property string keptBalances: ""
     Timer {
         id: driver
         interval: 30

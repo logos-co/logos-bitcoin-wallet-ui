@@ -19,7 +19,7 @@ module bitcoin_wallet_backend {
   method receive_address() -> tstr description "`{ ok, address, index, fresh, unused, gapLimit }`: a fresh receive address, or with `fresh` false the\nfirst unused one, when `unused` unused addresses already reach the gap limit."
   method current_address() -> tstr description "`{ ok, address, index }`: the first unused receive address, revealed only when none is."
   method fee_rates() -> tstr description "`{ ok, fast, normal, slow, minimum, sources, estimated }` in sat/vB, or `{ ok: false, error }` until\nevery level has an estimate."
-  method address_valid(text: tstr) -> tstr description "An address or BIP21 URI on the wallet's network: `{ ok, valid, address, type, amountSat?, reason? }`."
+  method address_valid(text: tstr) -> tstr description "An address or BIP21 URI on the wallet's network: `{ ok, valid, address, type, dustSat, amountSat?, reason? }`;\n`dustSat` is the least it can receive, below which a send fails with errorCode `dust`."
   method format_btc(sat: tstr) -> tstr description "Satoshis, a decimal string, as BTC: `{ ok, sat, btc }`."
   method parse_btc(btc: tstr) -> tstr description "BTC as satoshis, exactly; more than 8 decimals is refused. `{ ok, btc, sat }`."
   method sources() -> tstr description "The node module's sources for the wallet's network."
