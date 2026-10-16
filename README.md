@@ -71,9 +71,10 @@ is approved in the signer app.
 - **Send:** an address or a BIP21 URI, checked as you type with `address_valid`; the amount in BTC
   or sats (a URI's amount fills it); fast, normal or slow from `fee_rates`, or a custom sat/vB
   rate; and Send max, which takes coins found beyond the gap limit too. The presets need an
-  estimate: while `fee_rates` has none (regtest, Kyoto alone) Send says "Fee estimate not available
+  estimate: while `fee_rates` has none (Kyoto alone) Send says "Fee estimate not available
   yet" and takes a rate of your own. Every level the same reads "The network is quiet: every speed
-  costs N sat/vB", with the source the estimate came from. A review whose inputs
+  costs N sat/vB", with the source the estimate came from, or "X's mempool" when the core read it
+  off that server's mempool (`basis: "mempool"`). A review whose inputs
   include such coins (the `beyond_gap_inputs` warning) says so in one line.
   - Review shows what the form says. Approve in Signer calls `request_send`; once `send_status`
     carries an `approvalHandle` the app raises `evm.signing.approve` with `{ handle }`. The review

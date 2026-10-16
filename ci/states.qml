@@ -491,6 +491,14 @@ Item {
             expect("a quiet network, said plainly with its source", prop("feeQuietNote", "text"), "The network is quiet: every speed costs 1 sat/vB. Estimate from Example Esplora.")
             expect("...the presets back", shown("feeNormal"), true)
             expect("...no unknown note", shown("feeUnknownNote"), false)
+            fake.feeRatesJson = JSON.stringify({ fast: 1, normal: 1, slow: 1, minimum: 1, sources: ["electrum.example"], estimated: true, basis: "mempool" })
+        },
+        function (v) {
+            expect("a quiet mempool, named as the source", prop("feeQuietNote", "text"), "The network is quiet: every speed costs 1 sat/vB. Estimate from Example Electrum's mempool.")
+            fake.feeRatesJson = JSON.stringify({ fast: 1, normal: 1, slow: 1, minimum: 1, sources: ["electrum.example", "electrum.other"], estimated: true, basis: "mempool" })
+        },
+        function (v) {
+            expect("...two of them", prop("feeQuietNote", "text"), "The network is quiet: every speed costs 1 sat/vB. Estimate from the mempools of Example Electrum, electrum.other.")
             fake.feeRatesJson = JSON.stringify({ fast: 12, normal: 6, slow: 2, minimum: 1, sources: ["esplora.example"], estimated: true })
         },
         function (v) {
