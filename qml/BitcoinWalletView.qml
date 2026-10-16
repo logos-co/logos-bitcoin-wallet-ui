@@ -186,6 +186,9 @@ Item {
     }
     function feeQuietLine() {
         var by = root.feeSourceNames()
+        // Read off the servers' mempools, where their nodes had no estimate.
+        if (by && root.feeRates.basis === "mempool")
+            by = root.feeRates.sources.length > 1 ? "the mempools of " + by : by + "'s mempool"
         return "The network is quiet: every speed costs " + root.feeRates.normal + " sat/vB." + (by ? " Estimate from " + by + "." : "")
     }
     // New address at the gap limit hands back the first unused one: { unused, gapLimit }.
