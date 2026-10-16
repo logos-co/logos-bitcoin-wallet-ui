@@ -32,6 +32,7 @@ Item {
         property string walletsJson: "[]"
         property string accountsJson: ""
         property string accountsError: ""
+        property string accountRosterJson: "[]"
         property string balancesJson: ""
         property string historyJson: ""
         property int historyPage: 0
@@ -1314,6 +1315,32 @@ Item {
             expect("...nor a reason", prop("deviceReasonLine", "text"), "")
             expect("...and a failure is the signer's again", v.sendHeadline({ state: "failed", errorCode: "signer_unavailable", error: "x" }),
                    "The signer could not be reached")
+            // One account the keystore and a Keycard both hold, as the roster lists it: one row.
+            fake.statusJson = JSON.stringify({state:"no_wallet",activeNetwork:"regtest"})
+            fake.accountsJson = JSON.stringify([
+                {id:"g_seg",family:"bitcoin",chain:"test",label:"Savings",signer:"keystore_module",available:true},
+                scene.cardRow(true)])
+            fake.walletsJson = JSON.stringify([{group:"keycard-cdcdcdcd-84-1-0",family:"bitcoin",network:"regtest"}])
+            fake.accountRosterJson = JSON.stringify([{key:"btc_00112233445566778899aabbccddeeff",family:"bitcoin",chain:"test",
+                path:"m/84'/1'/0'",label:"Savings",wallet:{fingerprint:"cdcdcdcd",name:"Black Card"},
+                holders:[{signer:"keystore_module",accountId:"g_seg",kind:"keystore",model:"",transport:"keystore",presence:"local",available:true},
+                         {signer:"keycard_module",accountId:"keycard-cdcdcdcd-84-1-0",kind:"keycard",model:"",transport:"reader",presence:"connected",available:true}]}])
+        },
+        function (v) {
+            expect("one row for an account two signers hold", v.accountEntries.length, 1)
+            find(view.item, "accountPicker", 0).activated(0)
+            expect("...naming both, the keystore first", prop("accountPickerSelectedChip_0", "text") + " / "
+                   + prop("accountPickerSelectedChip_1", "text"), "● This device (Keystore) / ● Keycard · reader")
+            expect("it opens where it already has a wallet", v.selectedAccount ? v.selectedAccount.id : null, "keycard-cdcdcdcd-84-1-0")
+            expect("...and the picker shows it", prop("accountPicker", "currentIndex"), 0)
+            expect("...by its name, type and number", prop("accountPickerSelectedName", "text") + " / " + prop("accountPickerSelectedType", "text")
+                   + " / " + prop("accountPickerSelectedAccount", "text"), "Savings / Native SegWit / account 0")
+            expect("...with its wallet", prop("accountPickerSelectedWallet", "text"), "Wallet “Black Card” · cdcdcdcd")
+            fake.walletsJson = "[]"
+        },
+        function (v) {
+            find(view.item, "accountPicker", 0).activated(0)
+            expect("with no wallet yet, it opens under the keystore's", v.selectedAccount ? v.selectedAccount.id : null, "g_seg")
         }
     ]
     property int step: 0

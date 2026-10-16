@@ -3,6 +3,8 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import Logos.Controls
 import Logos.Theme
+import "accountkit" as Accounts
+import "accountkit/roster.js" as Roster
 
 // The Bitcoin wallet: "Open a wallet", decided in the keys app, then Home, Send, Receive, Activity
 // and Settings. No password field. Strings this view did not author render as PlainText.
@@ -54,6 +56,30 @@ Item {
         return (a.family === "bitcoin" || a.family === "bitcoin_taproot")
                 && a.chain === (root.displayedNetwork === "mainnet" ? "main" : "test")
     })
+    // The picker's rows: signer_manager's roster, each account once with every signer holding it;
+    // from an older manager, one row per account as accounts() lists them.
+    readonly property var roster: ready ? j(backend.accountRosterJson, "[]") : []
+    readonly property var accountEntries: roster.length
+        ? Roster.select(roster, ["bitcoin", "bitcoin_taproot"], root.displayedNetwork === "mainnet" ? "main" : "test")
+        : accountsOnNetwork.map(function (a) { return root.accountEntry(a) })
+    function accountEntry(a) {
+        var phrase = a.origin && a.origin.phrase
+        var transport = { keystore_module: "keystore", keycard_module: "reader", keycard_shell_module: "usb",
+                          qr_signer_module: "qr" }[a.signer] || "other"
+        var presence = a.available !== true ? "absent" : transport === "keystore" ? "local"
+                     : transport === "qr" ? "on_demand" : "connected"
+        var e = { key: a.id, family: a.family, chain: a.chain, label: a.label,
+                  holders: [{ signer: a.signer, accountId: a.id, kind: "", model: "", transport: transport,
+                              presence: presence, available: a.available === true }] }
+        if (phrase && phrase.id) e.wallet = { name: phrase.name || "" }
+        return e
+    }
+    // The account a row opens: a holder's that already has a wallet on this network, else the
+    // first holder's, which is the keystore's when it holds it.
+    function homeAccount(e) {
+        var id = Roster.homeId(e, walletsOnNetwork.map(function (w) { return w.group }))
+        return accountsOnNetwork.filter(function (a) { return a.id === id })[0] || null
+    }
     // One wallet at a time: while one is open, opening or closing, the picker shows it and is locked.
     readonly property bool accountLocked: walletOpen || opening || walletState === "closing" || pendingKind === "close"
     property string selectedAccountId: ""
@@ -1663,64 +1689,23 @@ Item {
             visible: root.ready
             Layout.fillWidth: true
             spacing: Theme.spacing.small
-            LogosComboBox {
+            // The account kit's picker: one row per account, with the wallet it comes from and every
+            // signer holding it. A row opens under its home account; picking only selects.
+            Accounts.AccountPicker {
                 id: accountPicker
                 objectName: "accountPicker"
                 Layout.preferredWidth: 440
                 Layout.maximumWidth: Math.max(200, root.width - 230)
-                implicitHeight: 82
-                model: root.accountsOnNetwork
-                enabled: root.accountsRead && backend.accountsError === "" && model.length > 0
+                entries: root.accountEntries
+                currentKey: root.accountId
+                placeholder: root.walletOpen ? (root.status.label || root.shortId(root.status.group))
+                             : !root.accountsRead ? "Loading accounts…"
+                             : root.accountEntries.length ? "Select an account" : "No Bitcoin accounts on this network"
+                canPick: function (entry) { return root.canOpenAccount(root.homeAccount(entry)) }
+                enabled: root.accountsRead && backend.accountsError === "" && root.accountEntries.length > 0
                          && !root.busy && !root.accountLocked
-                displayText: root.accountTitle(root.selectedAccount)
                 Accessible.name: "Bitcoin account: " + displayText
-                leftPadding: 12; rightPadding: 36
-                function syncIndex() { currentIndex = root.accountIndex() }
-                Component.onCompleted: syncIndex()
-                onActivated: { root.selectAccount(root.accountsOnNetwork[currentIndex]); syncIndex() }
-                contentItem: ColumnLayout {
-                    spacing: 2
-                    LogosText { objectName: "selectedAccountProvider"; Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText
-                                text: root.accountProvider(root.selectedAccount) }
-                    LogosText { Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText
-                                color: Theme.palette.textSecondary
-                                text: root.selectedAccount ? root.accountTitle(root.selectedAccount)
-                                      : root.walletOpen ? (root.status.label || root.shortId(root.status.group))
-                                      : !root.accountsRead ? "Loading accounts…" : root.accountsOnNetwork.length ? "Select an account" : "No Bitcoin accounts on this network" }
-                    LogosText { objectName: "selectedAccountDetail"; Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText; font.pixelSize: 12
-                                color: Theme.palette.textTertiary
-                                text: root.selectedAccount ? root.familyLabel(root.selectedAccount.family) + root.availabilityLine(root.selectedAccount)
-                                      : root.walletOpen ? "Account is no longer listed by the signer" : "Manage accounts in Keystore" }
-                }
-                delegate: ItemDelegate {
-                    id: accountOption
-                    required property var modelData
-                    required property int index
-                    objectName: "accountOption_" + index
-                    width: ListView.view ? ListView.view.width : accountPicker.width
-                    height: root.reasonLine(modelData) ? 98 : 78
-                    hoverEnabled: true
-                    opacity: enabled ? 1 : 0.5
-                    background: Rectangle {
-                        color: accountOption.highlighted || accountOption.hovered ? Theme.palette.surface : "transparent"
-                    }
-                    HoverHandler { cursorShape: parent.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                    enabled: root.canOpenAccount(modelData)
-                    highlighted: accountPicker.highlightedIndex === index
-                    contentItem: ColumnLayout {
-                        spacing: 2
-                        LogosText { Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight
-                                    text: root.accountProvider(modelData) }
-                        LogosText { Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight
-                                    color: Theme.palette.textSecondary; text: root.accountTitle(modelData) }
-                        LogosText { Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight; font.pixelSize: 12
-                                    color: Theme.palette.textTertiary
-                                    text: root.familyLabel(modelData.family) + root.availabilityLine(modelData) }
-                        LogosText { objectName: "accountReason_" + accountOption.index; visible: text !== ""
-                                    Layout.fillWidth: true; textFormat: Text.PlainText; elide: Text.ElideRight; font.pixelSize: 12
-                                    color: Theme.palette.textTertiary; text: root.reasonLine(modelData) }
-                    }
-                }
+                onPicked: function (entry) { root.selectAccount(root.homeAccount(entry)) }
             }
             LogosButton {
                 objectName: "openWalletButton"

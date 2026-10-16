@@ -175,3 +175,15 @@ jobs:
             if grep -qE "Cannot assign|Unable to assign|TypeError|ReferenceError" /tmp/states.log; then
               echo "::error::QML errors while driving the states"; exit 1
             fi'
+
+  accountkit:
+    name: qml/accountkit is logos-account-kit as pinned
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/check.sh at the pinned commit
+        run: |
+          set -euo pipefail
+          git clone -q https://github.com/logos-co/logos-account-kit "$RUNNER_TEMP/accountkit"
+          git -C "$RUNNER_TEMP/accountkit" checkout -q "$(cat qml/accountkit/VERSION)"
+          "$RUNNER_TEMP/accountkit/scripts/check.sh" .

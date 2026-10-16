@@ -1626,14 +1626,14 @@ sections:
               timeout: 5000
             - name: "Named by its seed wallet, not by a module"
               action: expect_property
-              find_value: "selectedAccountProvider"
+              find_value: "accountPickerSelectedWallet"
               property: "text"
-              value: "Keycard · Black Card"
-            - name: "...and not connected"
+              value: "Wallet “Black Card” · cdcdcdcd"
+            - name: "...and held by a Keycard that isn't connected"
               action: expect_property
-              find_value: "selectedAccountDetail"
+              find_value: "accountPickerSelectedChip_0"
               property: "text"
-              value: "Native segwit · Keycard not connected"
+              value: "○ Keycard · reader"
             - name: "What works without the card"
               action: expect_property
               find_value: "deviceAbsentNote"

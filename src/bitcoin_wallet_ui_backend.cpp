@@ -260,6 +260,19 @@ void BitcoinWalletUiBackend::loadAccounts() {
     const quint64 seq = begin(m_accountsRead);
     if (!seq) return;
     m_accountsAge.restart();
+    // The picker's rows. A failed read keeps the previous ones, and an older manager has none.
+    modules().signer_manager_module.rosterAsync([this](QString r) {
+        QTimer::singleShot(0, this, [this, r] {
+            const auto o = parse(r);
+            if (!o.value("ok").toBool() || !o.value("accounts").isArray()) return;
+            QJsonArray rows;
+            for (const auto &v : o.value("accounts").toArray()) {
+                const auto family = v.toObject().value("family").toString();
+                if (family == QLatin1String("bitcoin") || family == QLatin1String("bitcoin_taproot")) rows.append(v);
+            }
+            setAccountRosterJson(compact(rows));
+        });
+    });
     modules().signer_manager_module.accountsAsync([this, seq](QString r) {
         QTimer::singleShot(0, this, [this, seq, r] {
             if (!finish(m_accountsRead, seq)) return;

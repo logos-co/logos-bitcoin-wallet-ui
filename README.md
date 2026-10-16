@@ -6,11 +6,15 @@ from `signer_manager_module`. It takes no signing password and
 holds no key material: wallets are opened, created and restored in the keys app, and every send
 is approved in the signer app.
 
-- **Account selector:** lists Bitcoin and Taproot accounts from `signer_manager.accounts()`,
-  including accounts never opened in this app. Mainnet uses `chain: main`; test networks use
-  `chain: test`. Each row names its source from the manager's `origin`, never a module: "This device
-  (Keystore)", "Keycard" with its seed wallet's name ("Keycard · Black Card"), or "Signer". A device
-  account (any signer but the keystore) opens while its device is unplugged, since a device signs by
+- **Account selector:** [logos-account-kit](https://github.com/logos-co/logos-account-kit)'s
+  picker, vendored in `qml/accountkit`, over `signer_manager.roster()`. It lists each Bitcoin and
+  Taproot account once, never once per signer, including accounts never opened in this app. Mainnet
+  uses `chain: main`; test networks use `chain: test`. A row shows the account's name, script type and
+  number, the wallet it comes from (name and master fingerprint), and every signer holding it, the
+  keystore first, never a module. Picking a row selects the holder that already has a wallet on this
+  network, else the first holder, which is the keystore's when it holds it; the wallet's database
+  follows that holder. From an older manager without `roster()`, the rows are `accounts()`, one per
+  holder, as before. A device account (any signer but the keystore) opens while its device is unplugged, since a device signs by
   itself and only sending needs it: its row says "Keycard not connected", with one line on what
   signing needs (a card in a reader or a Keycard Shell, and applet 4.0 for Taproot), and Send says
   the same. A failure while it is unplugged says to connect it, and can be asked again. An
@@ -168,8 +172,9 @@ are a SLOT's return value, shown on Settings and dropped when it is left.
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
 interface changes; this copy is from logos-bitcoin-wallet-backend 47fa0ad.
-`contracts/signer_manager_module.lidl` supplies the account-read API and `accounts_changed` event;
-only public identity fields are copied into the view's account roster.
+`contracts/signer_manager_module.lidl` supplies the account-read API (`accounts`, `roster`) and
+the `accounts_changed` event; only public identity fields are copied into the view's account roster.
+This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, roster).
 
 ## Intents
 
@@ -198,7 +203,7 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
 - `wallet-ui-app.test.yaml` runs against `doctests/fixture-backend`, a scripted
   `bitcoin_wallet_backend` with the real backend's contract (its trait is copied verbatim) and
   nothing behind it, and `doctests/fixture-manager`, a `signer_manager_module` whose `accounts`
-  answers a keystore wallet on each chain and a Keycard account with no card inserted: every flow,
+  and `roster` answer a keystore wallet on each chain and a Keycard account with no card inserted: every flow,
   to every send outcome, a birthday refused and set, change added to the fee, a reorg, Kyoto as the
   authority and a chain it names that is refused, a TLS server's certificate pinned, a Kyoto peer of
   your own, a network switch queued behind a close with an open refused until it applies, the
