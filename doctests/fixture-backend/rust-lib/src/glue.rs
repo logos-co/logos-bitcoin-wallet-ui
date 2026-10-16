@@ -1,5 +1,5 @@
 //! A stand-in for `bitcoin_wallet_backend` in the wallet app's doctest. The trait is the real
-//! backend's (logos-bitcoin-wallet-backend 597ad2c), so the contract matches; behind it, sim.rs.
+//! backend's (logos-bitcoin-wallet-backend 47fa0ad), so the contract matches; behind it, sim.rs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -63,7 +63,8 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     /// `{ ok, fast, normal, slow, minimum, sources, estimated }` in sat/vB, or `{ ok: false, error }` until
     /// every level has an estimate.
     fn fee_rates(&self) -> String;
-    /// An address or BIP21 URI on the wallet's network: `{ ok, valid, address, type, amountSat?, reason? }`.
+    /// An address or BIP21 URI on the wallet's network: `{ ok, valid, address, type, dustSat, amountSat?, reason? }`;
+    /// `dustSat` is the least it can receive, below which a send fails with errorCode `dust`.
     fn address_valid(&self, text: String) -> String;
     /// Satoshis, a decimal string, as BTC: `{ ok, sat, btc }`.
     fn format_btc(&self, sat: String) -> String;

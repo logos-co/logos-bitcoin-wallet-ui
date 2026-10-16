@@ -75,6 +75,11 @@ is approved in the signer app.
   yet" and takes a rate of your own. Every level the same reads "The network is quiet: every speed
   costs N sat/vB", with the source the estimate came from. A review whose inputs
   include such coins (the `beyond_gap_inputs` warning) says so in one line.
+  - An amount below the address's dust limit (`address_valid`'s `dustSat`: 294 sats native segwit,
+    330 taproot) reads "The smallest amount this address can receive is 294 sats." under the
+    amount, and Review stays off. So does Send max when the spendable coins less a one-coin fee are
+    below it. A send the core refuses as dust (`errorCode` `dust`) says "The amount is too small for
+    this address" with the core's sentence, never the library's text.
   - Review shows what the form says. Approve in Signer calls `request_send`; once `send_status`
     carries an `approvalHandle` the app raises `evm.signing.approve` with `{ handle }`. The review
     then shows the wallet's own summary: recipients, change, fee, what leaves the wallet, and
@@ -162,7 +167,7 @@ are a SLOT's return value, shown on Settings and dropped when it is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend 597ad2c.
+interface changes; this copy is from logos-bitcoin-wallet-backend 47fa0ad.
 `contracts/signer_manager_module.lidl` supplies the account-read API and `accounts_changed` event;
 only public identity fields are copied into the view's account roster.
 
@@ -203,7 +208,8 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   and a gap limit of 30 takes into the balance. Each open shows last session's chain as connecting for
   its first 4 s, and the first open on a network then reads the chain's headers for 4 s; reopens show the first unused address again; testnet4's wallet already holds 20 unused
   ones, so New address there says so; Kyoto on testnet4 has no fee estimate and Esplora's under Kyoto
-  on signet is a quiet network's. A send's fate is picked by its amount; the header of `sim.rs` says how.
+  on signet is a quiet network's. An amount below the address's dust limit keeps Review off. A send's
+  fate is picked by its amount; the header of `sim.rs` says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
   manager and keystore: the node module's sources, certificate pin and curated Kyoto list with a
   peer of your own, and an open up to the keys app's handle, withdrawn. Nothing can approve an open there, so sends are not reached.

@@ -8,8 +8,9 @@
 //! spendable, small sends spend it, and a gap limit of 30 or more takes it into the balance after
 //! its rescan. Each open shows last session's chain for 4 s before its sources answer. Opens show the
 //! first unused address and reveal none; testnet4's wallet already has 20 unused, so a new one is
-//! refused there. Fee estimates: none on testnet4, a quiet 1 sat/vB under Kyoto on signet. No
-//! network, no key.
+//! refused there. Fee estimates: none on testnet4, a quiet 1 sat/vB under Kyoto on signet. An
+//! amount below the address's dust limit (294 sats, taproot and P2WSH 330) fails at build with code
+//! dust, as the core refuses it. No network, no key.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -103,6 +104,8 @@ enum Fate {
     Reject,
     Expire,
     Unknown,
+    /// Below the recipient's dust limit: the core refuses it at build.
+    Dust(u64),
 }
 
 struct Job {
@@ -757,7 +760,8 @@ impl Sim {
             _ if lower.len() > want.len() + 45 => "p2wsh",
             _ => "p2wpkh",
         };
-        let mut v = json!({"ok": true, "valid": true, "address": lower, "type": kind});
+        let dust = if kind == "p2wpkh" { "294" } else { "330" };
+        let mut v = json!({"ok": true, "valid": true, "address": lower, "type": kind, "dustSat": dust});
         match amount {
             Some(Ok(sat)) => v["amountSat"] = json!(sat.to_string()),
             Some(Err(e)) => return json!({"ok": true, "valid": false, "address": addr, "reason": e}),
@@ -1144,14 +1148,14 @@ impl Sim {
         };
         let rate = p["feeRate"].as_f64().filter(|r| *r > 0.0).unwrap_or(6.0);
         let fee = (rate * VSIZE as f64).ceil() as u64;
-        let (recipient, amount, replaces) = if kind == "fee_bump" {
+        let (recipient, amount, replaces, dust) = if kind == "fee_bump" {
             let txid = p["txid"].as_str().unwrap_or_default().to_ascii_lowercase();
             let Some(row) = self.history.iter().find(|r| r["txid"] == txid.as_str() && r["state"] == "sent") else {
                 return json!({"ok": false, "error": "no unconfirmed send of this wallet has that txid"});
             };
             let amount = row["amountSat"].as_str().and_then(|a| a.parse().ok()).unwrap_or(0);
             let to = row["counterparties"][0].as_str().unwrap_or_default().to_string();
-            (to, amount, Some(txid))
+            (to, amount, Some(txid), 0)
         } else {
             let r = &p["recipients"][0];
             let to = r["address"].as_str().unwrap_or_default().to_string();
@@ -1176,13 +1180,15 @@ impl Sim {
                     _ => return json!({"ok": false, "error": "every recipient needs an amount"}),
                 }
             };
-            (check["address"].as_str().unwrap_or_default().to_string(), amount, None)
+            let dust = check["dustSat"].as_str().and_then(|d| d.parse().ok()).unwrap_or(0);
+            (check["address"].as_str().unwrap_or_default().to_string(), amount, None, dust)
         };
         let spare = if self.beyond_gap { BEYOND_GAP_SAT } else { 0 };
         if amount + fee > self.confirmed + spare {
             return json!({"ok": false, "error": "insufficient funds: not enough confirmed coins for this and its fee"});
         }
         let fate = match amount {
+            a if a < dust => Fate::Dust(dust),
             REJECTED_SAT => Fate::Reject,
             EXPIRED_SAT => Fate::Expire,
             UNKNOWN_SAT => Fate::Unknown,
@@ -1701,6 +1707,11 @@ impl Sim {
             } else {
                 let state = s.state.clone();
                 match (state.as_str(), s.fate) {
+                    ("preparing", Fate::Dust(least)) if e >= STEP => {
+                        s.state = "failed".into();
+                        s.code = Some("dust".into());
+                        s.error = Some(format!("The smallest amount this address can receive is {least} sats."));
+                    }
                     ("preparing", _) if e >= STEP => {
                         s.state = "awaiting_approval".into();
                         s.approval = Some("offered".into());
@@ -1987,7 +1998,7 @@ mod tests {
 
     #[test]
     fn sends_settle_by_amount() {
-        for (amount, end) in [(20_000u64, "failed"), (30_000, "failed"), (40_000, "unknown"), (60_000, "sent")] {
+        for (amount, end) in [(20_000u64, "failed"), (30_000, "failed"), (40_000, "unknown"), (60_000, "sent"), (5, "failed")] {
             let (mut sim, t) = opened("signet");
             let to = address("signet", 'q', 5);
             let mut ev = vec![];
@@ -1998,6 +2009,9 @@ mod tests {
             assert_eq!(st["state"], end, "{amount}");
             if amount == 30_000 {
                 assert_eq!(st["errorCode"], "expired");
+            }
+            if amount == 5 {
+                assert_eq!((st["errorCode"].as_str(), st["error"].as_str()), (Some("dust"), Some("The smallest amount this address can receive is 294 sats.")));
             }
             if amount == 40_000 {
                 assert_eq!(st["offer"], json!(["rebroadcast", "request_fee_bump", "abandon_send"]));
@@ -2264,6 +2278,8 @@ mod tests {
     fn addresses_check_their_network() {
         let sim = Sim::new(false, Instant::now());
         assert_eq!(sim.address_valid(&address("mainnet", 'q', 3))["type"], "p2wpkh");
+        assert_eq!(sim.address_valid(&address("mainnet", 'q', 3))["dustSat"], "294");
+        assert_eq!(sim.address_valid(&address("mainnet", 'p', 3))["dustSat"], "330");
         assert_eq!(sim.address_valid(&address("signet", 'q', 3))["reason"], "this address is for another network");
         let uri = format!("bitcoin:{}?amount=0.0015", address("mainnet", 'p', 3));
         let v = sim.address_valid(&uri);

@@ -765,7 +765,7 @@ QString BitcoinWalletUiBackend::qrModulesJson(const QString &text) const {
     return compact(QJsonObject{{"size", n}, {"bits", bits}});
 }
 
-// { ok, valid, address, type, amountSat?, reason? } on the wallet's network.
+// { ok, valid, address, type, dustSat, amountSat?, reason? } on the wallet's network.
 QString BitcoinWalletUiBackend::addressValid(QString text) {
     return modules().bitcoin_wallet_backend.address_valid(text.trimmed());
 }
