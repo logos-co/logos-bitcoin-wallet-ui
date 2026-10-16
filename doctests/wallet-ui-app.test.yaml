@@ -19,7 +19,7 @@ intro: |
   open asked for past the picker is refused too.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 47fa0ad) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend 95b8f0c) with a script behind it, and no
   wallet core, keystore, chain or network. The signer manager is one too, doctests/fixture-manager:
   its `accounts` answers a keystore wallet on each chain and a Keycard account with no card
   inserted, which the account picker names by its seed wallet and still opens: only sending needs

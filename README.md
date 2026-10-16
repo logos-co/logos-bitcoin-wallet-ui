@@ -171,7 +171,7 @@ are a SLOT's return value, shown on Settings and dropped when it is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend 47fa0ad.
+interface changes; this copy is from logos-bitcoin-wallet-backend 95b8f0c.
 `contracts/signer_manager_module.lidl` supplies the account-read API (`accounts`, `roster`) and
 the `accounts_changed` event; only public identity fields are copied into the view's account roster.
 This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, roster).
