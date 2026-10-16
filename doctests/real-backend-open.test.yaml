@@ -6,7 +6,7 @@ project_name: logos-bitcoin-wallet-ui
 
 intro: |
   The app against the modules it ships with: bitcoin_wallet_backend 95b8f0c,
-  bitcoin_wallet_core_module fc6e7b6, bitcoin_node_module 7462bce, signer_manager_module 80bc40c
+  bitcoin_wallet_core_module fc6e7b6, bitcoin_node_module 7462bce, signer_manager_module d2548c6
   and keystore_module 1f3d62f. The node module's own sources for signet, a server of your own
   added and given History through the app, a TLS server of your own whose self-signed certificate
   the node module's probe reads and the app pins and unpins, a Kyoto peer of your own that replaces
@@ -26,7 +26,7 @@ sections:
           nix build 'github:logos-co/logos-bitcoin-wallet-backend/95b8f0c1df5225cc622e5fd40c1a5538c3dcd136#install' -o result-real-backend
           nix build 'github:logos-co/logos-bitcoin-wallet-core-module/fc6e7b69176a87c2b5e643d9d322049d55318bab#install' -o result-real-core
           nix build 'github:logos-co/logos-bitcoin-node-module/7462bce96676bad4be296155117bd6ea6c643a4d#install' -o result-real-node
-          nix build 'github:logos-co/logos-signer-manager-module/80bc40ccbe6c689caadc736b3db2136bfbde1818#install' -o result-real-manager
+          nix build 'github:logos-co/logos-signer-manager-module/d2548c674b88d29769a366e1c818d614b07d6f77#install' -o result-real-manager
           nix build 'github:logos-co/logos-evm-keystore-module/1f3d62f306f0e4dc7e5d96d478f9770ab3713ce6#install' -o result-real-keystore
           nix build "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install" -o result-wallet
           # Its own tree, user dir and HOME: run.sh runs every spec in one output directory.
