@@ -169,7 +169,7 @@ without the backend's repository. Replace it with the backend's `nix build .#lid
 interface changes; this copy is from logos-bitcoin-wallet-backend 597ad2c.
 `contracts/signer_manager_module.lidl` supplies the account-read API (`accounts`, `roster`) and
 the `accounts_changed` event; only public identity fields are copied into the view's account roster.
-This copy is logos-signer-manager-module#11's `nix build .#lidl` (`7d7951d`).
+This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, roster).
 
 ## Intents
 
