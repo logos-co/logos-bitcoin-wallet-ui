@@ -22,9 +22,9 @@ sections:
           b manager 'github:logos-co/logos-signer-manager-module/d2548c674b88d29769a366e1c818d614b07d6f77#install-portable'
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
-          b backend 'github:logos-co/logos-bitcoin-wallet-backend/597ad2c9b69621d0fa4ff15f44d8de9953ab003f#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/7a135139e68154b76765513bd6bfbc7a805de5e5#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/7a135139e68154b76765513bd6bfbc7a805de5e5#regtest-chain'
+          b backend 'github:logos-co/logos-bitcoin-wallet-backend/95b8f0c1df5225cc622e5fd40c1a5538c3dcd136#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/fc6e7b69176a87c2b5e643d9d322049d55318bab#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/fc6e7b69176a87c2b5e643d9d322049d55318bab#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/7462bce96676bad4be296155117bd6ea6c643a4d#install-portable'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           b bitcoind 'github:logos-co/logos-bitcoind-module/1b7ee77707524885ee94d2f3113127ce5a6f4057#install-portable'
