@@ -125,6 +125,9 @@ Item {
     }
     readonly property var openedAccount: walletOpen ? accounts.filter(function (a) { return a.id === root.status.group })[0] || null : null
     readonly property bool openedDeviceAbsent: deviceAbsent(openedAccount)
+    // The open wallet goes by the roster's merged name, as its picker row does, not the opening holder's label.
+    readonly property var openedEntry: walletOpen ? Roster.find(root.roster, root.status.group) : null
+    readonly property string openedName: (openedEntry ? Roster.name(openedEntry) : "") || root.status.label || root.familyLabel(root.status.family)
     function accountTitle(a) { return a ? (a.label || "Wallet") + " · " + shortId(a.id) : "Select an account" }
     function selectAccount(a) {
         if (!root.canOpenAccount(a) || root.busy || root.accountLocked) return
@@ -1701,7 +1704,7 @@ Item {
                 Layout.maximumWidth: Math.max(200, root.width - 230)
                 entries: root.accountEntries
                 currentKey: root.accountId
-                placeholder: root.walletOpen ? (root.status.label || root.shortId(root.status.group))
+                placeholder: root.walletOpen ? root.openedName
                              : !root.accountsRead ? "Loading accounts…"
                              : root.accountEntries.length ? "Select an account" : "No Bitcoin accounts on this network"
                 canPick: function (entry) { return root.canOpenAccount(root.homeAccount(entry)) }
@@ -1739,7 +1742,7 @@ Item {
             textFormat: Text.PlainText
             color: Theme.palette.textSecondary
             text: !root.ready ? "" : root.walletOpen
-                  ? "Open: " + (root.status.label || root.familyLabel(root.status.family)) + " · " + (root.status.network || "")
+                  ? "Open: " + root.openedName + " · " + (root.status.network || "")
                   : (root.opening ? "Opening a wallet on " + (root.displayedNetwork || "this network") : "No wallet open")
         }
         // Under the status on every page: a refused switch can race a wallet another app opens.
@@ -2460,7 +2463,7 @@ Item {
                         columns: 2; columnSpacing: 14; rowSpacing: 3
                         Layout.fillWidth: true
                         LogosText { text: "Name"; color: Theme.palette.textSecondary }
-                        LogosText { textFormat: Text.PlainText; text: root.status.label || "—" }
+                        LogosText { objectName: "walletName"; textFormat: Text.PlainText; text: root.openedName }
                         LogosText { text: "Addresses"; color: Theme.palette.textSecondary }
                         LogosText { objectName: "walletFamily"; textFormat: Text.PlainText; text: root.familyLabel(root.status.family) }
                         LogosText { text: "Network"; color: Theme.palette.textSecondary }

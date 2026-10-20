@@ -1349,6 +1349,18 @@ Item {
         function (v) {
             find(view.item, "accountPicker", 0).activated(0)
             expect("with no wallet yet, it opens under the keystore's", v.selectedAccount ? v.selectedAccount.id : null, "g_seg")
+            // Opened under the Keycard, whose own label is not the roster's name for the account.
+            fake.statusJson = JSON.stringify({state:"ready",network:"regtest",activeNetwork:"regtest",group:"keycard-cdcdcdcd-84-1-0",
+                                              family:"bitcoin",label:"Card account",synced:true})
+        },
+        function (v) {
+            expect("the open wallet goes by the roster's name", prop("statusLine", "text"), "Open: Savings · regtest")
+            expect("...as the picker's placeholder", prop("accountPicker", "placeholder"), "Savings")
+            expect("...and in Settings", prop("walletName", "text"), "Savings")
+            fake.accountRosterJson = "[]"
+        },
+        function (v) {
+            expect("with no roster, it goes by the wallet's own label", prop("statusLine", "text"), "Open: Card account · regtest")
         }
     ]
     property int step: 0
