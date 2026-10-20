@@ -138,12 +138,13 @@ jobs:
       - name: Gate A — static (imports, type and property names)
         working-directory: logos-bitcoin-wallet-ui
         # `-W 0` fails on the first warning. `--unqualified` is off: `logos` is injected by the host.
+        # Qt 6.12 added `block-scope-var-declaration`, a style warning, on by default; it stays off here.
         run: |
           # shellcheck disable=SC2016  # the $(...) below is for the inner bash -c
           nix shell nixpkgs#qt6.qtdeclarative -c bash -c '
             QTQML=$(dirname $(dirname $(readlink -f $(command -v qmllint))))/lib/qt-6/qml
             qmllint -I "$QTQML" -I ../logos-design-system/src/qml \
-                    -W 0 --unqualified disable qml/*.qml'
+                    -W 0 --unqualified disable --block-scope-var-declaration disable qml/*.qml'
 
       - name: Gate B — construct the view, then drive it through its states
         working-directory: logos-bitcoin-wallet-ui
