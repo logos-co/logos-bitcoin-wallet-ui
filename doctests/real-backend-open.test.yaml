@@ -296,7 +296,7 @@ sections:
               property: "text"
               value: "Waiting for the Signer app"
               timeout: 10000
-            - name: "It raised logos.unlock with the core's handle; no Signer app is installed"
+            - name: "It raised wallets.unlock with the core's handle; no Signer app is installed"
               action: expect_property
               find_value: "keysNote"
               property: "text"

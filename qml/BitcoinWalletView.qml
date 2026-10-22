@@ -401,7 +401,7 @@ Item {
         if (h === "") return
         root.keysAskedFor = h
         root.keysNote = ""
-        logos.request("logos.unlock", ({ openHandle: h }), function (res) {
+        logos.request("wallets.unlock", ({ openHandle: h }), function (res) {
             if (res.ok || h !== root.openHandle) return
             root.keysNote = root.keysNoteFor(res.error)
         })
@@ -418,7 +418,7 @@ Item {
     // The wallets still locked: their accounts show once the person unlocks them.
     readonly property var signerWallets: ready ? j(backend.signerWalletsJson, "[]") : []
     function unlockWallets(seeds) {
-        logos.request("logos.unlock", ({ seeds: seeds }), function (res) {
+        logos.request("wallets.unlock", ({ seeds: seeds }), function (res) {
             if (res.ok) backend.refresh()
         })
     }

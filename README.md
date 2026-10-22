@@ -28,12 +28,12 @@ and each open allowed in the Signer app, and every send is approved there.
   choice; nothing opens until **Open** is pressed. Dropdown entries have consistent hover highlights.
 - **Open an account:** select it in the picker, then press **Open**. The backend's
   `open_wallet` answers a job, and while `wallet_status` carries an `openHandle` the app raises
-  `logos.unlock` with `{ openHandle }` and shows "Waiting for the Signer app", with Ask again and
+  `wallets.unlock` with `{ openHandle }` and shows "Waiting for the Signer app", with Ask again and
   Cancel. The Signer app unlocks the wallet first if it is locked, then asks to allow the open.
   Cancel closes the wallet, which withdraws the open.
 - **Locked wallets:** a wallet still locked in the Signer app offers no accounts. The app reads the
   signer manager's `wallets()` and shows the account kit's `LockedBanner` above the picker; its
-  Unlock raises `logos.unlock` with `{ seeds }`. The manager's `wallets_changed` and `wallets_locked`
+  Unlock raises `wallets.unlock` with `{ seeds }`. The manager's `wallets_changed` and `wallets_locked`
   read the accounts and the wallets again.
 - **An unplugged device** says "sending needs the device" only when no other holder of the account
   (the keystore, a connected device, a QR wallet) can sign.
@@ -186,7 +186,7 @@ This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, rost
 
 ## Intents
 
-The app **uses** `evm.accounts.manage` (Keystore account management), `logos.unlock` (the Signer
+The app **uses** `evm.accounts.manage` (Keystore account management), `wallets.unlock` (the Signer
 app: unlock a wallet, allow an open) and `evm.signing.approve` (the signer app). Their answers are advisory: `wallet_status` and
 `send_status` settle what happened. `unavailable` is shown with what to do by hand.
 

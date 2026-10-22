@@ -414,13 +414,13 @@ Item {
             expect("keys panel", shown("keysWaitPanel"), true)
             expect("keys title", prop("keysWaitTitle", "text"), "Waiting for the Signer app")
             expect("form hidden", shown("openForm"), false)
-            var asked = logos.requests.filter(function (q) { return q.intent === "logos.unlock" })
+            var asked = logos.requests.filter(function (q) { return q.intent === "wallets.unlock" })
             expect("the Signer app is asked to allow the open", asked.length === 1 ? asked[0].params.openHandle : asked.length, "sma_t1")
             logos.lastCallback({ ok: false, error: "unavailable" })
             fake.statusJson = JSON.stringify({ state: "awaiting_open", network: "regtest", activeNetwork: "regtest", openHandle: "sma_t1", authority: {} })
         },
         function (v) {
-            expect("keys asked once", logos.requests.filter(function (q) { return q.intent === "logos.unlock" }).length, 1)
+            expect("keys asked once", logos.requests.filter(function (q) { return q.intent === "wallets.unlock" }).length, 1)
             expect("keys note", String(prop("keysNote", "text")).indexOf("The Signer app is not installed") === 0, true)
             find(view.item, "cancelOpenButton", 0).clicked()
             expect("cancel closes", fake.count("closeWallet"), 1)
@@ -1382,7 +1382,7 @@ Item {
             expect("...names the wallet", prop("accountsLockedBanner", "title"), "Wallet “Main phrase” is locked")
             find(view.item, "accountsUnlockButton", 0).clicked()
             var asked = logos.requests[logos.requests.length - 1]
-            expect("Unlock asks the Signer app for it", asked.intent + " " + JSON.stringify(asked.params.seeds), "logos.unlock [\"s_1\"]")
+            expect("Unlock asks the Signer app for it", asked.intent + " " + JSON.stringify(asked.params.seeds), "wallets.unlock [\"s_1\"]")
             fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:false}])
         },
         function (v) {

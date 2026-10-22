@@ -24,7 +24,7 @@
   },
   "uses": [
     {
-      "intent": "logos.unlock",
+      "intent": "wallets.unlock",
       "cardinality": "single"
     },
     {
