@@ -136,6 +136,13 @@ void BitcoinWalletUiBackend::onContextReady() {
     modules().signer_manager_module.onAccounts_changed([this](int) {
         QTimer::singleShot(0, this, [this] { loadAccounts(); });
     });
+    // A wallet unlocked or locked in the Signer app: its accounts, and the wallets listed, change.
+    modules().signer_manager_module.onWallets_changed([this](QString) {
+        QTimer::singleShot(0, this, [this] { loadAccounts(); loadRegistry(); });
+    });
+    modules().signer_manager_module.onWallets_locked([this](int) {
+        QTimer::singleShot(0, this, [this] { loadAccounts(); loadRegistry(); loadStatus(); });
+    });
     m_readPoll.start(kReadPollMs);
     refresh();
     recoverSend();
@@ -260,6 +267,22 @@ void BitcoinWalletUiBackend::loadAccounts() {
     const quint64 seq = begin(m_accountsRead);
     if (!seq) return;
     m_accountsAge.restart();
+    // Which wallets are locked, by their public names only.
+    modules().signer_manager_module.walletsAsync([this](QString r) {
+        QTimer::singleShot(0, this, [this, r] {
+            const auto o = parse(r);
+            if (!o.value("ok").toBool() || !o.value("wallets").isArray()) return;
+            QJsonArray rows;
+            for (const auto &v : o.value("wallets").toArray()) {
+                const auto w = v.toObject();
+                QJsonObject row;
+                for (const auto *key : {"seed", "name", "locked", "kinds"})
+                    if (w.contains(QLatin1String(key))) row.insert(QLatin1String(key), w.value(QLatin1String(key)));
+                rows.append(row);
+            }
+            setSignerWalletsJson(compact(rows));
+        });
+    });
     // The picker's rows. A failed read keeps the previous ones, and an older manager has none.
     modules().signer_manager_module.rosterAsync([this](QString r) {
         QTimer::singleShot(0, this, [this, r] {

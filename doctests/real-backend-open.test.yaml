@@ -290,17 +290,17 @@ sections:
               property: "walletState"
               value: "awaiting_open"
               timeout: 30000
-            - name: "The app waits for the keys app"
+            - name: "The app waits for the Signer app"
               action: expect_property
               find_value: "keysWaitTitle"
               property: "text"
-              value: "Waiting for the keys app"
+              value: "Waiting for the Signer app"
               timeout: 10000
-            - name: "It raised keystore.accounts.open with the core's handle; no keys app is installed"
+            - name: "It raised wallets.unlock with the core's handle; no Signer app is installed"
               action: expect_property
               find_value: "keysNote"
               property: "text"
-              value: "The keys app is not installed here. Install it, open it, and approve the request under Requests from apps."
+              value: "The Signer app is not installed here. Install it, open it, and allow the request in its Wallets tab."
               timeout: 20000
               screenshot: "real-waiting-keys.png"
             - name: "Cancel"

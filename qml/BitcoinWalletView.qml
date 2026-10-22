@@ -6,7 +6,7 @@ import Logos.Theme
 import "accountkit" as Accounts
 import "accountkit/roster.js" as Roster
 
-// The Bitcoin wallet: "Open a wallet", decided in the keys app, then Home, Send, Receive, Activity
+// The Bitcoin wallet: "Open a wallet", allowed in the Signer app, then Home, Send, Receive, Activity
 // and Settings. No password field. Strings this view did not author render as PlainText.
 Item {
     id: root
@@ -107,7 +107,14 @@ Item {
     function isDevice(a) { return !!a && !!a.signer && a.signer !== "keystore_module" }
     function deviceName(a) { return root.isKeycard(a) ? "Keycard" : "The device" }
     function canOpenAccount(a) { return !!a && (a.available === true || root.isDevice(a)) }
-    function deviceAbsent(a) { return root.isDevice(a) && a.available !== true }
+    // Another holder of the same account that can sign now: then sending needs no particular device.
+    function heldElsewhere(a) {
+        var e = a ? root.roster[Roster.indexOf(root.roster, a.id)] : null
+        return !!e && (e.holders || []).some(function (h) {
+            return h.accountId !== a.id && (h.available === true || h.presence === "on_demand")
+        })
+    }
+    function deviceAbsent(a) { return root.isDevice(a) && a.available !== true && !root.heldElsewhere(a) }
     function availabilityLine(a) {
         return !a || a.available === true ? "" : root.isDevice(a) ? " · " + root.deviceName(a) + " not connected" : " · unavailable"
     }
@@ -383,29 +390,37 @@ Item {
         root.lastSendState = root.sendState
     }
 
-    // ---- the keys app ----
+    // ---- the Signer app ----
     property string keysAskedFor: ""
     property string keysNote: ""
     onOpenHandleChanged: if (root.openHandle !== "" && root.openHandle !== root.keysAskedFor) root.askKeys()
-    // The person picks, creates or restores a wallet there; this app never sees a password.
+    // The person allows the open there, unlocking its wallet first if it is locked; this app
+    // never sees a password.
     function askKeys() {
         var h = root.openHandle
         if (h === "") return
         root.keysAskedFor = h
         root.keysNote = ""
-        logos.request("keystore.accounts.open", ({ handle: h }), function (res) {
+        logos.request("wallets.unlock", ({ openHandle: h }), function (res) {
             if (res.ok || h !== root.openHandle) return
             root.keysNote = root.keysNoteFor(res.error)
         })
     }
     function keysNoteFor(error) {
-        if (error === "unavailable") return "The keys app is not installed here. Install it, open it, and approve the request under Requests from apps."
-        // Basecamp's prompt declined, or the keys app left without deciding: both answer cancelled.
-        if (error === "cancelled") return "The keys app was not opened, or was left without a decision. Ask again, or cancel."
-        if (error === "rejected") return "You declined in the keys app."
-        if (error === "bad_request") return "The keys app no longer holds this request. Cancel, and open the wallet again."
-        if (error === "timeout") return "The keys app did not answer. Ask again, or cancel."
+        if (error === "unavailable") return "The Signer app is not installed here. Install it, open it, and allow the request in its Wallets tab."
+        // Basecamp's prompt declined, or the Signer app left without deciding: both answer cancelled.
+        if (error === "cancelled") return "The Signer app was not opened, or was left without a decision. Ask again, or cancel."
+        if (error === "rejected") return "You declined in the Signer app."
+        if (error === "bad_request") return "The Signer app no longer holds this request. Cancel, and open the wallet again."
+        if (error === "timeout") return "The Signer app did not answer. Ask again, or cancel."
         return "That request did not go through (" + error + ")."
+    }
+    // The wallets still locked: their accounts show once the person unlocks them.
+    readonly property var signerWallets: ready ? j(backend.signerWalletsJson, "[]") : []
+    function unlockWallets(seeds) {
+        logos.request("wallets.unlock", ({ seeds: seeds }), function (res) {
+            if (res.ok) backend.refresh()
+        })
     }
     // Advisory: send_status settles the send, whatever the signer app answers here.
     function askSigner() {
@@ -440,7 +455,7 @@ Item {
         if (!lastJob.jobId || lastJob.jobId === root.handledJobId) return
         root.handledJobId = lastJob.jobId
         if (lastJob.kind === "open" && lastJob.state === "done") root.notify("Wallet open", "Its balance fills in as it syncs.")
-        if (lastJob.kind === "cancel") root.notify("Not opened", "The request to the keys app was withdrawn.")
+        if (lastJob.kind === "cancel") root.notify("Not opened", "The request to the Signer app was withdrawn.")
     }
 
     // 0 Home, 1 Send, 2 Receive, 3 Activity, 4 Settings. selectTab is the driver entry point.
@@ -582,7 +597,7 @@ Item {
         var h = root.group(a.height)
         switch (root.syncState(st)) {
         case "unavailable": return "The wallet backend is not answering"
-        case "keys": return "Waiting for the keys app"
+        case "keys": return "Waiting for the Signer app"
         case "opening": return "Opening the wallet…"
         case "closing": return "Closing…"
         case "failed": return "Failed" + (st.lastError ? ": " + st.lastError : "")
@@ -1690,6 +1705,14 @@ Item {
             }
         }
 
+        Accounts.LockedBanner {
+            namePrefix: "accounts"
+            Layout.fillWidth: true
+            visible: root.ready && shown
+            wallets: root.signerWallets
+            onUnlock: function (seeds) { root.unlockWallets(seeds) }
+        }
+
         RowLayout {
             objectName: "accountSelectorRow"
             visible: root.ready
@@ -1880,7 +1903,7 @@ Item {
                 }
             }
 
-            // While the person decides in the keys app.
+            // While the person decides in the Signer app.
             LogosFrame {
                 objectName: "keysWaitPanel"
                 visible: root.opening
@@ -1892,10 +1915,10 @@ Item {
                         LogosText { objectName: "keysWaitTitle"; font.pixelSize: 16; textFormat: Text.PlainText
                                     text: root.pendingKind === "cancel" ? "Withdrawing the request…"
                                           : root.walletState === "opening" ? "Opening the wallet…"
-                                          : (root.awaitingKeys ? "Waiting for the keys app" : "Asking the keys app…") }
+                                          : (root.awaitingKeys ? "Waiting for the Signer app" : "Asking the Signer app…") }
                     }
                     LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                                text: "Approve opening the selected account in Keystore. Passwords and recovery phrases stay there." }
+                                text: "Allow opening the selected account in the Signer app; it unlocks the wallet first if it is locked. Passwords and recovery phrases stay there." }
                     LogosText { objectName: "keysNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                                 textFormat: Text.PlainText; color: Theme.palette.warning; text: root.keysNote }
                     RowLayout {
@@ -2508,7 +2531,7 @@ Item {
                         objectName: "needsBirthdayNotice"
                         Layout.fillWidth: true
                         shown: root.needsBirthday
-                        message: "The keys app did not say when this wallet was first used, so it scans from the block where its "
+                        message: "Nothing said when this wallet was first used, so it scans from the block where its "
                                  + "kind of address began. Nothing is missed, but the first sync takes longer."
                         actions: [ LogosButton { objectName: "setBirthdaySettingsButton"; text: "Set the wallet's birthday"
                                                  enabled: root.ready && !root.busy; onClicked: birthdaySheet.open() } ]
