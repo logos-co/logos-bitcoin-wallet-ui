@@ -33,6 +33,7 @@ Item {
         property string accountsJson: ""
         property string accountsError: ""
         property string accountRosterJson: "[]"
+        property string signerWalletsJson: "[]"
         property string balancesJson: ""
         property string historyJson: ""
         property int historyPage: 0
@@ -167,7 +168,7 @@ Item {
         }
         var sync = [
             [{ state: "no_wallet" }, ""],
-            [{ state: "awaiting_open", openHandle: "sma_1" }, "Waiting for the keys app"],
+            [{ state: "awaiting_open", openHandle: "sma_1" }, "Waiting for the Signer app"],
             [{ state: "opening" }, "Opening the wallet…"],
             [{ state: "closing" }, "Closing…"],
             [{ state: "failed", lastError: "the keystore opened a wallet of another family" }, "Failed: the keystore opened a wallet of another family"],
@@ -411,16 +412,16 @@ Item {
         },
         function (v) {
             expect("keys panel", shown("keysWaitPanel"), true)
-            expect("keys title", prop("keysWaitTitle", "text"), "Waiting for the keys app")
+            expect("keys title", prop("keysWaitTitle", "text"), "Waiting for the Signer app")
             expect("form hidden", shown("openForm"), false)
-            var asked = logos.requests.filter(function (q) { return q.intent === "keystore.accounts.open" })
-            expect("keys intent", asked.length === 1 ? asked[0].params.handle : asked.length, "sma_t1")
+            var asked = logos.requests.filter(function (q) { return q.intent === "logos.unlock" })
+            expect("the Signer app is asked to allow the open", asked.length === 1 ? asked[0].params.openHandle : asked.length, "sma_t1")
             logos.lastCallback({ ok: false, error: "unavailable" })
             fake.statusJson = JSON.stringify({ state: "awaiting_open", network: "regtest", activeNetwork: "regtest", openHandle: "sma_t1", authority: {} })
         },
         function (v) {
-            expect("keys asked once", logos.requests.filter(function (q) { return q.intent === "keystore.accounts.open" }).length, 1)
-            expect("keys note", String(prop("keysNote", "text")).indexOf("The keys app is not installed") === 0, true)
+            expect("keys asked once", logos.requests.filter(function (q) { return q.intent === "logos.unlock" }).length, 1)
+            expect("keys note", String(prop("keysNote", "text")).indexOf("The Signer app is not installed") === 0, true)
             find(view.item, "cancelOpenButton", 0).clicked()
             expect("cancel closes", fake.count("closeWallet"), 1)
             fake.pendingJobKind = ""
@@ -1361,6 +1362,31 @@ Item {
         },
         function (v) {
             expect("with no roster, it goes by the wallet's own label", prop("statusLine", "text"), "Open: Card account · regtest")
+            // Hand-test fix 7: the Keycard is out, but the keystore holds the same account and signs.
+            fake.accountsJson = JSON.stringify([scene.cardRow(false)])
+            fake.accountRosterJson = JSON.stringify([{key:"btc_00112233445566778899aabbccddeeff",family:"bitcoin",chain:"test",
+                path:"m/84'/1'/0'",label:"Savings",wallet:{fingerprint:"cdcdcdcd",name:"Black Card"},
+                holders:[{signer:"keystore_module",accountId:"g_seg",kind:"keystore",model:"",transport:"keystore",presence:"local",available:true},
+                         {signer:"keycard_module",accountId:"keycard-cdcdcdcd-84-1-0",kind:"keycard",model:"",transport:"reader",presence:"absent",available:false}]}])
+        },
+        function (v) {
+            expect("another holder signs: sending needs no device", prop("deviceAbsentNote", "text"), "")
+            expect("...and Send says nothing of it", prop("sendDeviceNote", "text"), "")
+            fake.accountRosterJson = "[]"
+            fake.statusJson = JSON.stringify({state:"no_wallet",activeNetwork:"regtest"})
+            // A wallet still locked in the Signer app: its accounts aren't offered, and the banner says why.
+            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:true},{seed:"s_2",name:"Card",locked:false}])
+        },
+        function (v) {
+            expect("the locked banner", shown("accountsLockedBanner"), true)
+            expect("...names the wallet", prop("accountsLockedBanner", "title"), "Wallet “Main phrase” is locked")
+            find(view.item, "accountsUnlockButton", 0).clicked()
+            var asked = logos.requests[logos.requests.length - 1]
+            expect("Unlock asks the Signer app for it", asked.intent + " " + JSON.stringify(asked.params.seeds), "logos.unlock [\"s_1\"]")
+            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:false}])
+        },
+        function (v) {
+            expect("gone once it unlocks", shown("accountsLockedBanner"), false)
         }
     ]
     property int step: 0

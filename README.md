@@ -3,8 +3,8 @@
 `bitcoin_wallet_ui`: the Bitcoin wallet app for Logos Basecamp, built on the Logos Design System.
 It talks to `bitcoin_wallet_backend`, whose default custodian it is, and reads the account roster
 from `signer_manager_module`. It takes no signing password and
-holds no key material: wallets are opened, created and restored in the keys app, and every send
-is approved in the signer app.
+holds no key material: wallets are created and restored in the keys app, each wallet is unlocked
+and each open allowed in the Signer app, and every send is approved there.
 
 - **Account selector:** [logos-account-kit](https://github.com/logos-co/logos-account-kit)'s
   picker, vendored in `qml/accountkit`, over `signer_manager.roster()`. It lists each Bitcoin and
@@ -28,8 +28,15 @@ is approved in the signer app.
   choice; nothing opens until **Open** is pressed. Dropdown entries have consistent hover highlights.
 - **Open an account:** select it in the picker, then press **Open**. The backend's
   `open_wallet` answers a job, and while `wallet_status` carries an `openHandle` the app raises
-  `keystore.accounts.open` with `{ handle }` and shows "Waiting for the keys app", with Ask again and
-  Cancel. Cancel closes the wallet, which withdraws the open.
+  `logos.unlock` with `{ openHandle }` and shows "Waiting for the Signer app", with Ask again and
+  Cancel. The Signer app unlocks the wallet first if it is locked, then asks to allow the open.
+  Cancel closes the wallet, which withdraws the open.
+- **Locked wallets:** a wallet still locked in the Signer app offers no accounts. The app reads the
+  signer manager's `wallets()` and shows the account kit's `LockedBanner` above the picker; its
+  Unlock raises `logos.unlock` with `{ seeds }`. The manager's `wallets_changed` and `wallets_locked`
+  read the accounts and the wallets again.
+- **An unplugged device** says "sending needs the device" only when no other holder of the account
+  (the keystore, a connected device, a QR wallet) can sign.
   - A network picked while the wallet closes waits for the close: "Switching to X when the wallet
     has closed" (`set_active_network`'s `pending`, also in `list_networks`). A refusal says why
     (`wallet_open`, `send_open` or `busy`). An open the backend answers `busy` meanwhile is asked
@@ -179,8 +186,8 @@ This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, rost
 
 ## Intents
 
-The app **uses** `evm.accounts.manage` (Keystore account management), `keystore.accounts.open`
-(Keystore opening approval) and `evm.signing.approve` (the signer app). Their answers are advisory: `wallet_status` and
+The app **uses** `evm.accounts.manage` (Keystore account management), `logos.unlock` (the Signer
+app: unlock a wallet, allow an open) and `evm.signing.approve` (the signer app). Their answers are advisory: `wallet_status` and
 `send_status` settle what happened. `unavailable` is shown with what to do by hand.
 
 ## Checks

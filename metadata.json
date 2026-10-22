@@ -24,7 +24,7 @@
   },
   "uses": [
     {
-      "intent": "keystore.accounts.open",
+      "intent": "logos.unlock",
       "cardinality": "single"
     },
     {

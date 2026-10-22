@@ -22,6 +22,9 @@ class BitcoinWalletUi
     // Public account identities only, read directly from signer_manager.accounts().
     PROP(QString accountsJson="" READONLY)
     PROP(QString accountsError="" READONLY)
+    // signer_manager.wallets().wallets: [{ seed, name, locked, kinds }]. A locked wallet's accounts
+    // aren't offered until the person unlocks it in the Signer app; the banner says so.
+    PROP(QString signerWalletsJson="[]" READONLY)
     // signer_manager.roster()'s Bitcoin entries: each account once, with the wallet it comes from
     // and every signer holding it. What the account picker shows; empty from an older manager.
     PROP(QString accountRosterJson="[]" READONLY)
