@@ -19,12 +19,12 @@ sections:
           b() { nix build "$2" --no-write-lock-file -o "e2e/build/$1"; }
           b basecamp 'github:logos-co/logos-basecamp/0b5cd2ee6c6dd83c6a5022fbb30e1778e6a61da9#bin-bundle-dir-inspector'
           b keystore 'github:logos-co/logos-evm-keystore-module/1f3d62f306f0e4dc7e5d96d478f9770ab3713ce6#install-portable'
-          b manager 'github:logos-co/logos-signer-manager-module/d2548c674b88d29769a366e1c818d614b07d6f77#install-portable'
+          b manager 'github:logos-co/logos-signer-manager-module/9be21c3aeaa68ba915d36bfb67b5ed563585b9b7#install-portable'
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
           b backend 'github:logos-co/logos-bitcoin-wallet-backend/95b8f0c1df5225cc622e5fd40c1a5538c3dcd136#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/fc6e7b69176a87c2b5e643d9d322049d55318bab#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/fc6e7b69176a87c2b5e643d9d322049d55318bab#regtest-chain'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/1df7a08dff4dee413ebf1f1ef00b26802a623557#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/1df7a08dff4dee413ebf1f1ef00b26802a623557#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/7462bce96676bad4be296155117bd6ea6c643a4d#install-portable'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           b bitcoind 'github:logos-co/logos-bitcoind-module/1b7ee77707524885ee94d2f3113127ce5a6f4057#install-portable'
