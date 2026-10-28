@@ -112,7 +112,7 @@ jobs:
           path: logos-bitcoin-wallet-ui
 
       # The design system's source decides whether `import Logos.Controls` resolves.
-      - name: Find the design-system revision the builder pins
+      - name: Find the design-system and logos-nix revisions the builder pins
         id: ds
         working-directory: logos-bitcoin-wallet-ui
         shell: bash
@@ -122,6 +122,11 @@ jobs:
                        | $n[$n[$b].inputs["logos-design-system"]].locked.rev' flake.lock)
           [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no design-system pin in flake.lock ($rev)"; exit 1; }
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          # Qt comes from the logos-nix the builder pins, as in the build; never the runner's nixpkgs.
+          nix=$(jq -r '.nodes as $n | ($n[.root].inputs["logos-module-builder"]) as $b
+                       | $n[$n[$b].inputs["logos-nix"]].locked.rev' flake.lock)
+          [[ "$nix" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no logos-nix pin in flake.lock ($nix)"; exit 1; }
+          echo "QT=github:logos-co/logos-nix/$nix" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:
@@ -138,19 +143,18 @@ jobs:
       - name: Gate A — static (imports, type and property names)
         working-directory: logos-bitcoin-wallet-ui
         # `-W 0` fails on the first warning. `--unqualified` is off: `logos` is injected by the host.
-        # Qt 6.12 added `block-scope-var-declaration`, a style warning, on by default; it stays off here.
         run: |
           # shellcheck disable=SC2016  # the $(...) below is for the inner bash -c
-          nix shell nixpkgs#qt6.qtdeclarative -c bash -c '
+          nix shell "$QT#qt6.qtdeclarative" -c bash -c '
             QTQML=$(dirname $(dirname $(readlink -f $(command -v qmllint))))/lib/qt-6/qml
             qmllint -I "$QTQML" -I ../logos-design-system/src/qml \
-                    -W 0 --unqualified disable --block-scope-var-declaration disable qml/*.qml'
+                    -W 0 --unqualified disable qml/*.qml'
 
       - name: Gate B — construct the view, then drive it through its states
         working-directory: logos-bitcoin-wallet-ui
         run: |
           # shellcheck disable=SC2016  # the $(...) below is for the inner bash -c
-          nix shell nixpkgs#qt6.qtdeclarative nixpkgs#qt6.qtsvg -c bash -c '
+          nix shell "$QT#qt6.qtdeclarative" "$QT#qt6.qtsvg" -c bash -c '
             d=$(dirname $(dirname $(readlink -f $(command -v qml))))
             # Basic: under a platform style the design system'"'"'s contentItem overrides are
             # rejected. QT_LOGGING_TO_CONSOLE: without it a runner sends every message to journald.
