@@ -176,7 +176,10 @@ void BitcoinWalletUiBackend::poll() {
     const bool configured = parse(sourcesJson()).value("configured").toBool(true);
     if (due(m_sourcesAge, configured ? kSourcesPollMs : kReadPollMs)) loadSources();
     const bool fresh = walletReady() && m_readySince.isValid() && m_readySince.elapsed() < kFreshHealthMs;
-    if (due(m_healthAge, fresh ? kReadPollMs : kHealthPollMs)) loadHealth();
+    // While the built-in Tor joins, its progress is read every tick.
+    const QJsonValue tor = parse(healthJson()).value("tor");
+    const bool torJoining = tor.isObject() && tor.toObject().value("state").toString() != "ready";
+    if (due(m_healthAge, fresh || torJoining ? kReadPollMs : kHealthPollMs)) loadHealth();
     // A switch queued behind a close, or an open waiting for it, is read every tick until it applies.
     if (!parse(networksJson()).value("pending").toString().isEmpty() || !m_openQueued.isEmpty()) loadRegistry();
     // A rebroadcast, or the history after a restart, can still turn an unknown outcome into sent.

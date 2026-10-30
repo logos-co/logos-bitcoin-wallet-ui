@@ -62,6 +62,10 @@ and each open allowed in the Signer app, and every send is approved there.
     `rescanFrom` holds, Home reads "Rescanning from block H", with a share only under Kyoto.
   - Source alerts show as a banner above the tabs; Kyoto naming a chain the checks refuse
     (`authority_suspect`) has a banner of its own.
+  - While the Tor that comes with Logos joins (`source_health.tor`), a peerless chain routed
+    through Tor reads "Connecting to Tor… 40%" (chip "Tor 40%"), and health is read every 3 s. When
+    its SOCKS port is off, Tor is blocked, or tor_module does not answer, Home says which, with
+    Manage Tor… (`tor.manage`).
   - An enabled source reporting `Proxy server unreachable` shows a Tor setup notice with the
     configured SOCKS address and a connection-check button. A peerless chain routed entirely
     through Tor reads "Tor unavailable" instead of "Connecting". Working peers and direct/local
@@ -126,6 +130,11 @@ and each open allowed in the Signer app, and every send is approved there.
     rescans from its birthday and downloads more, and an enabled history server is asked about
     more addresses. The rescan shows on Home as a birthday's does; refusals (`invalid`, `busy`)
     are said in plain words.
+  - **Network privacy**, above the sources: the Tor that comes with Logos (the node module's
+    default, `set_proxy("tor")`), with its state badge, join progress, what stops it, Manage
+    Tor…, and "Use my own Tor instead", which opens a `socks5h://` field ("Use it"); turning the
+    switch off goes back to the built-in Tor. The info button says what Tor, its absence and a
+    server on your own network each reveal.
   - Sources groups **Public service** by **Bitcoin Core RPC**, **Electrum** and **Esplora**,
     followed by **Your own node**. Public RPC endpoints appear in the RPC group; local-network
     endpoints appear with the bundled node. PublicNode is built in for mainnet, disabled until
@@ -143,8 +152,8 @@ and each open allowed in the Signer app, and every send is approved there.
   - **Use without Tor**, under Electrum, selects a regular TLS server. `useDirectSource` enables
     it with History on and Tor off and disables every other source in one `set_sources` call
     against a freshly read list. Pins and credentials remain intact; a wallet must be closed.
-  - **Advanced settings** holds the Tor proxy, custom-server form, Kyoto peers, operator
-    diagnostics and connection record. Tor must run separately; onion addresses require it.
+  - **Advanced settings** holds the custom-server form, Kyoto peers, operator diagnostics and
+    connection record. Onion addresses require Tor.
     Kyoto does not automatically hand the chain to Electrum when it cannot connect. Enabled
     sources are summarized above the groups, including Kyoto when Advanced is collapsed.
   - No-chain, unreachable-proxy and source-health errors remain visible. A server reached in
@@ -187,7 +196,8 @@ This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, rost
 ## Intents
 
 The app **uses** `evm.accounts.manage` (Keystore account management), `wallets.unlock` (the Signer
-app: unlock a wallet, allow an open) and `evm.signing.approve` (the signer app). Their answers are advisory: `wallet_status` and
+app: unlock a wallet, allow an open), `evm.signing.approve` (the signer app) and `tor.manage` (the
+Tor app). Their answers are advisory: `wallet_status` and
 `send_status` settle what happened. `unavailable` is shown with what to do by hand.
 
 ## Checks
