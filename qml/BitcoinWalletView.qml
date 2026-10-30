@@ -239,7 +239,19 @@ Item {
     readonly property var chainSources: root.chainSourcesOf(sourceList)
     readonly property var chainOperators: root.operatorsOf(chainSources)
     readonly property bool serversDecideChain: chainSources.length > 0 && chainSources.every(function (s) { return s.kind === "electrum" })
-    readonly property string defaultProxy: "socks5h://127.0.0.1:9050"
+    // The proxy setting: "tor" for the Tor that comes with Logos, a socks5h URL for the user's own.
+    readonly property string proxySetting: sourcesInfo.proxy || ""
+    readonly property bool ownTor: proxySetting.indexOf("socks5h://") === 0
+    // The built-in Tor's { state, progress, detail, socks, answered } while it is the proxy, else null.
+    readonly property var tor: health.tor || null
+    readonly property bool torWaiting: tor !== null && tor.state !== "ready"
+    // tor_module answered with its SOCKS port off: Bitcoin's connections have no way through Tor.
+    readonly property bool torSocksOff: tor !== null && tor.answered === true && !tor.socks
+    // Tor routes are down until the user acts: the port is off, Tor is blocked, or it did not start.
+    readonly property bool torUnusable: tor !== null && (torSocksOff || (torWaiting && tor.state !== "connecting"))
+    // "Use my own Tor" opened, before an address is saved.
+    property bool ownTorOpen: false
+    property string torNote: ""
     // A failed server probe can explain why Kyoto is peerless too: both use this proxy.
     // Match a proxy connection failure, not a remote server refusing or timing out over Tor.
     readonly property var torFailureSource: sourceList.find(function (s) {
@@ -247,8 +259,9 @@ Item {
         return s.use === true && root.usesTor(s) && h && h.state === "unreachable"
                && /proxy server unreachable/i.test(String(h.error || ""))
     }) || null
-    readonly property string torHelp: "Cannot reach " + (sourcesInfo.proxy || defaultProxy)
-                                      + ". Start Tor, update the proxy in Advanced, or close the wallet and choose Use without Tor under Electrum."
+    readonly property string torHelp: (ownTor ? "Cannot reach your Tor at " + proxySetting + ". Start it, change it under Network privacy"
+                                              : "Cannot reach the Tor that comes with Logos. Open the Tor app, use your own Tor under Network privacy")
+                                      + ", or close the wallet and choose Use without Tor under Electrum."
     readonly property var directServers: sourceList.filter(function (s) {
         return s.kind === "electrum" && /^ssl:\/\//i.test(String(s.url || "")) && !root.isOnion(s) && s.suspect !== true
     })
@@ -257,7 +270,7 @@ Item {
     // What a settings call refused, shown where it was made ("proxy" or "sources").
     property string networkNote: ""
     property string networkNoteAt: ""
-    onNetworkLockedChanged: networkNote = ""
+    onNetworkLockedChanged: { networkNote = ""; ownTorOpen = false }
 
     // ---- the birthday, a reorg, and the local node's pruned gap ----
     readonly property var birthdayJob: ready && backend.birthdayJson !== "" ? j(backend.birthdayJson, "{}") : ({})
@@ -559,9 +572,12 @@ Item {
         if (s !== "syncing" && s !== "ready") return ""
         var a = st.authority || {}
         var peers = root.isNum(a.peers) ? Number(a.peers) : 0
-        if (peers <= 0 && root.torFailureSource && root.chainSources.length > 0
+        if (peers <= 0 && root.chainSources.length > 0
                 && root.chainSources.every(function (source) { return root.usesTor(source) })
-                && (a.kind === "kyoto" || a.kind === "electrum_headers")) return "tor_blocked"
+                && (a.kind === "kyoto" || a.kind === "electrum_headers")) {
+            if (root.torFailureSource || root.torUnusable) return "tor_blocked"
+            if (root.torWaiting) return "tor_connecting"
+        }
         // A header download: how far it read, not "no source agrees" or a stale tip.
         if (a.headers && typeof a.headers === "object") return "headers"
         if (!root.isNum(a.height)) return peers > 0 ? "headers" : "connecting"
@@ -601,7 +617,8 @@ Item {
         case "opening": return "Opening the wallet…"
         case "closing": return "Closing…"
         case "failed": return "Failed" + (st.lastError ? ": " + st.lastError : "")
-        case "tor_blocked": return "Cannot reach Tor · the wallet cannot connect to its chain sources"
+        case "tor_blocked": return (root.torUnusable ? root.torLine() : "Cannot reach Tor") + " · the wallet cannot connect to its chain sources"
+        case "tor_connecting": return root.torLine() + " · the wallet reaches its chain sources once Tor is ready"
         case "connecting": return "Connecting to the chain's sources…" + (root.isNum(a.height) ? " · last known block " + h : "")
         case "headers": return "Reading the chain's headers…" + root.headersRead(a.headers)
         case "isolated": return "No source agrees · block " + h + (age ? ", tip " + age + " old" : "")
@@ -630,6 +647,7 @@ Item {
         case "closing": return "Closing…"
         case "failed": return "Failed"
         case "tor_blocked": return "Tor unavailable"
+        case "tor_connecting": return "Tor " + (root.tor.progress || 0) + "%"
         case "headers": return share !== null ? "Headers " + share + "%" : (st.authority.headers ? "Reading headers…" : "Connecting…")
         case "connecting": return "Connecting…"
         case "isolated": return "No sources"
@@ -644,6 +662,7 @@ Item {
         var s = root.syncState(st)
         if (s === "synced" || s === "local") return Theme.palette.success
         if (s === "isolated" || s === "stalled" || s === "failed" || s === "unavailable" || s === "tor_blocked") return Theme.palette.error
+        if (s === "tor_connecting") return Theme.palette.warning
         return Theme.palette.textSecondary
     }
     // What decides the chain, and how many sources agree on it.
@@ -917,13 +936,53 @@ Item {
         return parts.join(" · ")
     }
     function overallLabel(o) {
+        // Every source reads offline while the built-in Tor joins or its port is off: say so instead.
+        if (o === "offline" && (root.torWaiting || root.torSocksOff)) return root.torLine()
         if (o === "ok") return "Sources OK"
         if (o === "degraded") return "Sources degraded"
         if (o === "disagreement") return "Sources disagree"
         if (o === "offline") return "Sources offline"
         return o
     }
-    function overallColor(o) { return o === "ok" ? Theme.palette.success : (o === "degraded" ? Theme.palette.warning : Theme.palette.error) }
+    function overallColor(o) {
+        if (o === "offline" && (root.torWaiting || root.torSocksOff)) return root.torColor()
+        return o === "ok" ? Theme.palette.success : (o === "degraded" ? Theme.palette.warning : Theme.palette.error)
+    }
+    function torLine() {
+        var t = root.tor
+        if (!t) return ""
+        if (root.torSocksOff) return "Tor's SOCKS port is off"
+        if (t.state === "ready") return "Connected to Tor"
+        if (t.state === "connecting") return "Connecting to Tor… " + (t.progress || 0) + "%"
+        if (t.answered !== true) return "Tor is not available"
+        return t.state === "blocked" ? "Tor can't connect" : "Tor could not start"
+    }
+    function torColor() {
+        if (root.torSocksOff) return Theme.palette.error
+        if (!root.torWaiting) return Theme.palette.success
+        return root.tor.state === "connecting" ? Theme.palette.warning : Theme.palette.error
+    }
+    // What stops the built-in Tor, and what the user can do about it.
+    function torTrouble() {
+        var t = root.tor
+        if (!t) return ""
+        if (root.torSocksOff)
+            return "Bitcoin's connections go through Tor's SOCKS port, which is turned off. Turn it on in the Tor app, "
+                   + "or use your own Tor under Network privacy."
+        if (t.answered !== true)
+            return "The Tor that comes with Logos is not answering. Sources that need Tor are not reached until it does."
+        return (t.detail ? t.detail + ". " : "") + "Sources that need Tor are not reached until it can. The app keeps trying. "
+               + "If Tor is blocked on this network, use your own Tor with a bridge, or choose Use without Tor under Electrum."
+    }
+    // The built-in Tor has its own app.
+    function manageTor() {
+        root.torNote = ""
+        logos.request("tor.manage", ({}), function (res) {
+            if (res.ok || res.error === "cancelled") return
+            root.torNote = res.error === "unavailable" ? "The Tor app is not installed."
+                                                        : "That request did not go through (" + res.error + ")."
+        })
+    }
     function alertTitle(a) {
         if (a.kind === "suspect") return "A source is suspect"
         if (a.kind === "stale") return "A source is behind"
@@ -1411,9 +1470,110 @@ Item {
                 message: "These settings apply when a wallet opens. Close the wallet to change them."
             }
 
+            RowLayout {
+                Layout.fillWidth: true
+                LogosText { text: "Network privacy"; font.pixelSize: 16; font.weight: Theme.typography.weightBold }
+                LogosInfoButton {
+                    objectName: "privacyInfo"
+                    title: "What each choice reveals"
+                    text: "Through Tor, built in or your own: sources see a Tor address, never this computer's, and your "
+                          + "internet provider sees Tor, not Bitcoin. Each server gets its own circuit, so servers cannot tie "
+                          + "their requests together by your address. It is slower: joining Tor takes a moment when the app "
+                          + "starts, and every request takes longer.\n\n"
+                          + "Tor hides where requests come from, not what they ask: a server with History on still learns "
+                          + "this wallet's addresses. Kyoto's block filters and your own node learn none.\n\n"
+                          + "Without Tor, for a server you choose: that server sees this computer's IP address. It can tie it "
+                          + "to the wallet's addresses, to the transactions it sends, and to when you are online. Your "
+                          + "internet provider sees that you use Bitcoin.\n\n"
+                          + "A server on your own network is reached directly, so no one outside your network sees the requests."
+                }
+                LogosBadge { objectName: "torBadge"; visible: root.tor !== null; text: root.torLine(); color: root.torColor() }
+                Item { Layout.fillWidth: true }
+                LogosLink {
+                    objectName: "manageTorLink"
+                    visible: root.proxySetting === "tor"
+                    text: "Manage Tor…"
+                    underline: false
+                    onActivated: root.manageTor()
+                }
+            }
+            LogosText { objectName: "torNote"; visible: text !== ""; Layout.fillWidth: true; textFormat: Text.PlainText
+                        wrapMode: Text.Wrap; color: Theme.palette.error; text: root.torNote }
+            LogosText {
+                objectName: "privacyLine"
+                visible: root.sourcesRead
+                Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; color: Theme.palette.textSecondary
+                text: (root.ownTor ? "Sources are reached through your own Tor at " + root.proxySetting + ". "
+                       : root.proxySetting === "tor" ? "Sources are reached through Tor, which comes with Logos: there is nothing "
+                                                       + "to install or run. They see a Tor address instead of this computer's. "
+                       : "No Tor is set: only sources on your own network, and those set to skip Tor, are reached. ")
+                      + "Sources on your own network are always reached directly, since Tor cannot reach them."
+            }
+            LogosProgressBar {
+                objectName: "torProgress"
+                Layout.fillWidth: true
+                visible: root.tor !== null && root.tor.state === "connecting" && !root.torSocksOff
+                value: root.tor ? (root.tor.progress || 0) / 100 : 0
+            }
+            LogosNotice {
+                objectName: "torTroubleNotice"
+                Layout.fillWidth: true
+                severity: LogosNotice.Warning
+                shown: root.torUnusable
+                title: shown ? root.torLine() : ""
+                message: shown ? root.torTrouble() : ""
+            }
+            LogosButton {
+                objectName: "useBuiltInTorButton"
+                visible: root.sourcesRead && root.proxySetting === "" && !root.networkLocked
+                text: "Use the Tor that comes with Logos"
+                enabled: root.ready
+                onClicked: root.networkCall(backend.setProxy("tor"), "proxy")
+            }
+            LogosSwitch {
+                objectName: "ownTorSwitch"
+                visible: !root.networkLocked && (root.proxySetting === "tor" || root.ownTor)
+                text: "Use my own Tor instead"
+                checkable: false
+                checked: root.ownTor || root.ownTorOpen
+                enabled: root.ready
+                onClicked: {
+                    if (root.ownTor) root.networkCall(backend.setProxy("tor"), "proxy")
+                    root.ownTorOpen = !root.ownTor && !root.ownTorOpen
+                }
+            }
+            ColumnLayout {
+                objectName: "ownTorPane"
+                Layout.fillWidth: true
+                visible: root.ownTor || root.ownTorOpen
+                spacing: Theme.spacing.tiny
+                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                            text: "For a Tor you already run: a system Tor listens at socks5h://127.0.0.1:9050, Tor Browser at "
+                                  + "socks5h://127.0.0.1:9150. It protects you the same way, with your Tor's own settings, such "
+                                  + "as bridges. Give its IP address, not a name: Kyoto needs one. While it is not running, "
+                                  + "sources set to Tor are not reached; they never fall back to a direct connection." }
+                RowLayout {
+                    Layout.fillWidth: true
+                    LogosTextField { id: proxyField; objectName: "proxyField"; Layout.fillWidth: true; readOnly: root.networkLocked
+                                     placeholderText: "socks5h://127.0.0.1:9050"; text: root.ownTor ? root.proxySetting : "" }
+                    LogosButton {
+                        objectName: "saveProxyButton"; text: "Use it"
+                        visible: !root.networkLocked
+                        enabled: root.ready && proxyField.text.trim() !== "" && proxyField.text.trim() !== root.proxySetting
+                        onClicked: root.networkCall(backend.setProxy(proxyField.text.trim()), "proxy")
+                    }
+                }
+            }
+            LogosNotice {
+                Layout.fillWidth: true
+                severity: LogosNotice.Error
+                shown: root.networkNote !== "" && root.networkNoteAt === "proxy"
+                message: shown ? root.networkNote : ""
+            }
 
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: Theme.spacing.small
                 LogosText { text: "Connection"; font.pixelSize: 16; font.weight: Theme.typography.weightBold }
                 LogosBadge { visible: root.overall !== ""; text: root.overallLabel(root.overall); color: root.overallColor(root.overall) }
                 Item { Layout.fillWidth: true }
@@ -1456,8 +1616,8 @@ Item {
                 objectName: "torSettingsNotice"
                 Layout.fillWidth: true
                 severity: LogosNotice.Error
-                shown: root.torFailureSource !== null
-                title: "Cannot reach the Tor proxy"
+                shown: root.torFailureSource !== null && !root.torUnusable
+                title: root.ownTor ? "Cannot reach your Tor" : "Cannot reach Tor"
                 message: root.torHelp
             }
             LogosNotice {
@@ -1593,31 +1753,9 @@ Item {
                 Layout.fillWidth: true
                 visible: advancedToggle.expanded
                 spacing: Theme.spacing.small
-                LogosText { text: "Tor proxy (optional)"; font.pixelSize: 15 }
-                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            text: "Tor hides your IP from the provider, but not your queries. Run Tor separately and enter its SOCKS proxy below. Onion addresses require Tor; connections set to Tor never fall back to direct." }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    LogosTextField { id: proxyField; objectName: "proxyField"; Layout.fillWidth: true; readOnly: root.networkLocked
-                                     placeholderText: root.defaultProxy; text: root.sourcesInfo.proxy || "" }
-                    LogosButton {
-                        objectName: "saveProxyButton"; text: "Save proxy"
-                        visible: !root.networkLocked
-                        enabled: root.ready && proxyField.text.trim() !== "" && proxyField.text.trim() !== (root.sourcesInfo.proxy || "")
-                        onClicked: root.networkCall(backend.setProxy(proxyField.text.trim()), "proxy")
-                    }
-                }
-                LogosNotice {
-                    Layout.fillWidth: true
-                    severity: LogosNotice.Error
-                    shown: root.networkNote !== "" && root.networkNoteAt === "proxy"
-                    message: shown ? root.networkNote : ""
-                }
                 ColumnLayout {
                     objectName: "addSourcePane"
                     Layout.fillWidth: true
-                    Layout.topMargin: Theme.spacing.small
                     visible: !root.networkLocked
                     spacing: Theme.spacing.tiny
                     LogosText { text: "Add a custom server"; font.weight: Theme.typography.weightMedium }
@@ -1792,10 +1930,16 @@ Item {
             objectName: "torConnectionNotice"
             Layout.fillWidth: true
             severity: LogosNotice.Error
-            shown: root.torFailureSource !== null
-            title: "Cannot reach the Tor proxy"
-            message: root.torHelp
+            shown: root.torFailureSource !== null || root.torUnusable
+            title: root.torUnusable ? root.torLine() : (root.ownTor ? "Cannot reach your Tor" : "Cannot reach Tor")
+            message: root.torUnusable ? root.torTrouble() : root.torHelp
             actions: [
+                LogosButton {
+                    objectName: "manageTorButton"
+                    visible: root.proxySetting === "tor"
+                    text: "Manage Tor…"
+                    onClicked: root.manageTor()
+                },
                 LogosButton {
                     objectName: "torSourcesButton"
                     text: "Sources"
@@ -1803,6 +1947,7 @@ Item {
                 },
                 LogosButton {
                     objectName: "retryTorButton"
+                    visible: root.torFailureSource !== null
                     text: root.probe.state === "probing" ? "Checking…" : "Check connection"
                     enabled: root.ready && root.probe.state !== "probing"
                     onClicked: { if (root.torFailureSource) backend.probeSource(root.torFailureSource.id) }

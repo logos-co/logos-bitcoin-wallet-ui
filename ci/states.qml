@@ -102,6 +102,9 @@ Item {
     }
 
     property var bad: []
+    // What a detour leaves in the fake, put back after it.
+    property string keptSources: ""
+    property string keptHealth: ""
     function expect(name, got, want) {
         if (JSON.stringify(got) !== JSON.stringify(want)) bad.push(name + ": got " + JSON.stringify(got) + ", want " + JSON.stringify(want))
     }
@@ -1221,6 +1224,70 @@ Item {
             find(view.item, "useRpc_rpc-public", 0).clicked()
             expect("RPC selection is atomic", fake.last("useRpcSource"), ["useRpcSource", "rpc-public"])
             expect("RPC correctly names chain authority", v.authorityName({authority:{kind:"rpc_node"}}), "Bitcoin Core RPC")
+            // The Tor that comes with Logos, joining: the badge, Home and the sync chip follow it.
+            scene.keptSources = fake.sourcesJson
+            scene.keptHealth = fake.healthJson
+            fake.sourcesJson = JSON.stringify({ network: "mainnet", proxy: "tor", sources: [
+                { id: "kyoto", kind: "kyoto", use: true, route: "tor" },
+                { id: "fee", kind: "esplora", use: true, route: "onion" }] })
+            fake.healthJson = JSON.stringify({ overall: "offline", sources: [],
+                tor: { state: "connecting", progress: 40, detail: "", socks: "socks5h://127.0.0.1:9250", answered: true } })
+        },
+        function (v) {
+            var peerless = { state: "syncing", authority: { kind: "kyoto", peers: 0 } }
+            expect("built-in Tor badge", prop("torBadge", "text"), "Connecting to Tor… 40%")
+            expect("...its progress", shownAny("torProgress"), true)
+            expect("...offline sources say why", v.overallLabel("offline"), "Connecting to Tor… 40%")
+            expect("...joining is no trouble", shownAny("torTroubleNotice") || v.torUnusable, false)
+            expect("a peerless Kyoto waits for Tor", v.syncChip(peerless), "Tor 40%")
+            expect("...and says so", v.syncStateLabel(peerless).indexOf("Connecting to Tor… 40%"), 0)
+            expect("Manage Tor for the built-in one", shownAny("manageTorLink"), true)
+            expect("own Tor offered, closed", shownAny("ownTorSwitch") && !shownAny("ownTorPane"), true)
+            find(view.item, "manageTorLink", 0).activated("")
+            expect("Manage Tor raises tor.manage", logos.requests[logos.requests.length - 1].intent, "tor.manage")
+            logos.lastCallback({ ok: false, error: "unavailable" })
+            expect("...and says when the Tor app is missing", prop("torNote", "text"), "The Tor app is not installed.")
+            fake.healthJson = JSON.stringify({ overall: "offline", sources: [],
+                tor: { state: "ready", progress: 100, detail: "", socks: null, answered: true } })
+        },
+        function (v) {
+            expect("a SOCKS port turned off is named", prop("torBadge", "text"), "Tor's SOCKS port is off")
+            expect("...with what to do", shownAny("torTroubleNotice")
+                   && prop("torTroubleNotice", "message").indexOf("Turn it on in the Tor app") >= 0, true)
+            expect("...and Kyoto cannot connect", v.syncChip({ state: "syncing", authority: { kind: "kyoto", peers: 0 } }), "Tor unavailable")
+            expect("...not the own-proxy notice", shownAny("torSettingsNotice"), false)
+            fake.healthJson = JSON.stringify({ overall: "offline", sources: [],
+                tor: { state: "failed", progress: 0, detail: "object_unavailable", socks: null, answered: false } })
+        },
+        function (v) {
+            expect("tor_module not answering", prop("torBadge", "text"), "Tor is not available")
+            expect("...without its raw error", prop("torTroubleNotice", "message").indexOf("object_unavailable"), -1)
+            fake.healthJson = JSON.stringify({ overall: "ok", sources: [],
+                tor: { state: "ready", progress: 100, detail: "", socks: "socks5h://127.0.0.1:9250", answered: true } })
+        },
+        function (v) {
+            expect("connected", prop("torBadge", "text"), "Connected to Tor")
+            expect("...no trouble", shownAny("torTroubleNotice"), false)
+            find(view.item, "ownTorSwitch", 0).clicked()
+        },
+        function (v) {
+            expect("own Tor opens its field first", shownAny("ownTorPane"), true)
+            expect("...saving nothing yet", fake.count("setProxy"), 0)
+            find(view.item, "proxyField", 0).text = "socks5h://127.0.0.1:9150"
+            find(view.item, "saveProxyButton", 0).clicked()
+            expect("Use it saves the user's Tor", fake.last("setProxy"), ["setProxy", "socks5h://127.0.0.1:9150"])
+            fake.sourcesJson = JSON.stringify({ network: "mainnet", proxy: "socks5h://127.0.0.1:9150", sources: [
+                { id: "kyoto", kind: "kyoto", use: true, route: "tor" }] })
+            fake.healthJson = JSON.stringify({ overall: "ok", sources: [], tor: null })
+        },
+        function (v) {
+            expect("own Tor: no built-in badge", shownAny("torBadge"), false)
+            expect("...nor Manage Tor", shownAny("manageTorLink"), false)
+            expect("...the line names it", prop("privacyLine", "text").indexOf("your own Tor at socks5h://127.0.0.1:9150") >= 0, true)
+            find(view.item, "ownTorSwitch", 0).clicked()
+            expect("switching back uses the built-in Tor", fake.last("setProxy"), ["setProxy", "tor"])
+            fake.sourcesJson = scene.keptSources
+            fake.healthJson = scene.keptHealth
         },
         function (v) {
             v.closeSheets()
