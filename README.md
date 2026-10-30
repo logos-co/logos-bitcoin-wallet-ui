@@ -20,8 +20,8 @@ and each open allowed in the Signer app, and every send is approved there.
   the same. A failure while it is unplugged says to connect it, and can be asked again. An
   unavailable keystore account stays visible but cannot be selected. Names and availability refresh
   on `accounts_changed`, manual refresh and periodic reconciliation. A failed roster read keeps the
-  current identity visible and disables selection until a successful refresh. **Manage in Keystore**
-  raises `evm.accounts.manage` for creation, restoration and management. One wallet is open at a
+  current identity visible and disables selection until a successful refresh. The **Accounts** icon
+  (the EVM wallet's) raises `evm.accounts.manage` for creation, restoration and management. One wallet is open at a
   time: while one is open, opening or closing, the picker is locked on it and **Open** is disabled
   ("Close this wallet to open another."), and the backend refuses an open as well. Once it has
   closed the picker unlocks with that account still selected. Selecting an entry only changes the

@@ -2,6 +2,7 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import Logos.Controls
+import Logos.Icons
 import Logos.Theme
 import "accountkit" as Accounts
 import "accountkit/roster.js" as Roster
@@ -1880,7 +1881,20 @@ Item {
                 enabled: root.canOpenSelectedAccount
                 onClicked: root.openSelectedAccount()
             }
-            LogosButton { objectName: "manageAccountsButton"; text: "Manage in Keystore"; onClicked: root.manageAccounts() }
+            // The EVM wallet's accounts button: an icon, its name in the tooltip.
+            LogosIconButton {
+                objectName: "manageAccountsButton"
+                flat: true
+                size: 32
+                iconSize: 16
+                iconSource: LogosIcons.grid
+                iconColor: isActive ? Theme.palette.text : Theme.palette.textTertiary
+                Accessible.name: "Accounts"
+                ToolTip.text: "Accounts"
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                onClicked: root.manageAccounts()
+            }
             Item { Layout.fillWidth: true }
         }
         LogosText { objectName: "deviceAbsentNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
