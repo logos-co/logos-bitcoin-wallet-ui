@@ -204,6 +204,24 @@ Item {
             [mainnet({ state: "syncing", synced: false, authority: { kind: "kyoto", height: null, peers: 3, asked: true, base: 481823,
                        headers: { have: 973823, target: null } }, kyoto: { estimatedTip: 973830, progress: 0.42 } }),
              "Checking block filters… 42%"],
+            // Kyoto's scan behind its headers, which the wallet's chain follows: the scan's own height,
+            // never "Synchronized". Without `scanned` (an older core) the rule above holds.
+            [mainnet({ state: "syncing", synced: false, walletTip: 973920, syncPercent: 100, birthday: 481824,
+                       authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 501959, phase: "filters" } }),
+             "Checking block filters… block 501,959 of 973,920 · 4% · Kyoto · 3 peers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
+                       authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 501959, phase: "filter_headers" } }),
+             "Checking block filters… block 501,959 of 973,920 · 4% · fetching filter headers · Kyoto · 3 peers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824, rescanFrom: 973700,
+                       authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: null, phase: "syncing" } }),
+             "Checking block filters from block 973,700… · Kyoto · 3 peers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
+                       authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973917, phase: "filters" } }),
+             "Checking block filters… block 973,917 of 973,920 · 99% · Kyoto · 3 peers"],
+            // The newest block or two still being checked is caught up.
+            [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
+                       authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973918, phase: "synced" } }),
+             "Synchronized · block 973,920, tip 25 min old · Kyoto · 3 peers"],
             // At the tip the core says null: the usual states.
             [mainnet({ authority: { kind: "electrum_headers", height: 935500, tipAgeSecs: 240, peers: 2, headers: null } }), "Synchronized · block 935,500, tip 4 min old · Servers' headers"],
             // A tip older than an hour is never synchronized.
@@ -231,6 +249,11 @@ Item {
         firstSync.kyoto = { estimatedTip: 973830, progress: 0.42 }
         expect("chip: then its block filters", v.syncChip(firstSync), "Filters 42%")
         expect("...its bar", v.headerPhaseShare(firstSync), 42)
+        var scanning = mainnet({ state: "syncing", synced: false, birthday: 481824, authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 },
+                                 kyoto: { scanned: 501959, phase: "filters" } })
+        expect("chip: Kyoto's scan", v.syncChip(scanning), "Filters 4%")
+        scanning.kyoto.scanned = null
+        expect("...before its first block", v.syncChip(scanning), "Checking filters…")
         expect("an estimate behind the chain: no share", v.headersShare({ have: 900000, target: null }, 935424, 935000), null)
         expect("chip without a height, as before", v.syncChip(mainnet({ state: "syncing", authority: { height: null, peers: 2 } })), "Connecting…")
         expect("authority not asked yet", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: false } })),
@@ -503,6 +526,20 @@ Item {
             expect("...the chip", prop("syncChip", "text"), "Headers 53%")
             expect("...the server sending them agrees", prop("authorityLine", "text"), "The chain: headers from Electrum servers, checked here · 1 server agrees")
             expect("...with a bar for the header phase", shown("headersProgress") && !prop("headersProgress", "indeterminate"), true)
+            var scan = JSON.parse(scene.syncedMainnet)
+            scan.state = "syncing"
+            scan.synced = false
+            scan.walletTip = 973920
+            scan.birthday = 481824
+            scan.authority = { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3, asked: true }
+            scan.kyoto = { scanned: 501959, phase: "filters", progress: 0.3 }
+            fake.statusJson = JSON.stringify(scan)
+        },
+        function (v) {
+            expect("rendered: Kyoto's scan behind its headers", prop("syncLine", "text"), "Checking block filters… block 501,959 of 973,920 · 4% · Kyoto · 3 peers")
+            expect("...the chip", prop("syncChip", "text"), "Filters 4%")
+            expect("...its bar, not the backend's 100%", shown("syncProgress") && !prop("syncProgress", "indeterminate")
+                   && Math.abs(prop("syncProgress", "value") - 0.04) < 1e-9, true)
             fake.statusJson = scene.syncedMainnet
             fake.feeRatesJson = ""
             v.selectTab(1)
