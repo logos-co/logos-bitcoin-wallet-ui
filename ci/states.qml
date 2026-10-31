@@ -196,6 +196,14 @@ Item {
             // Kyoto's peers' tip is unknown: only how far it read.
             [mainnet({ state: "syncing", synced: false, authority: { kind: "kyoto", height: 0, tipAgeSecs: 50000000, peers: 2, asked: true, headers: { have: 6000, target: null } } }),
              "Reading the chain's headers… block 6,000"],
+            // A first sync from peers: its best header against the core's estimate of the tip, counted
+            // from where the chain starts; then Kyoto's own share once it checks block filters.
+            [mainnet({ state: "syncing", synced: false, authority: { kind: "kyoto", height: null, peers: 1, asked: true, base: 481823,
+                       headers: { have: 727000, target: null } }, kyoto: { estimatedTip: 973823, progress: 0 } }),
+             "Reading the chain's headers… block 727,000 of about 973,823 · about 49%"],
+            [mainnet({ state: "syncing", synced: false, authority: { kind: "kyoto", height: null, peers: 3, asked: true, base: 481823,
+                       headers: { have: 973823, target: null } }, kyoto: { estimatedTip: 973830, progress: 0.42 } }),
+             "Checking block filters… 42%"],
             // At the tip the core says null: the usual states.
             [mainnet({ authority: { kind: "electrum_headers", height: 935500, tipAgeSecs: 240, peers: 2, headers: null } }), "Synchronized · block 935,500, tip 4 min old · Servers' headers"],
             // A tip older than an hour is never synchronized.
@@ -216,6 +224,14 @@ Item {
         expect("chip reading headers", v.syncChip(mainnet({ authority: { height: 84000, tipAgeSecs: 50000000, peers: 1, headers: { have: 84000, target: 157000 } } })), "Headers 53%")
         expect("chip never says done before the tip", v.syncChip(mainnet({ authority: { height: 156999, peers: 1, headers: { have: 156999, target: 157000 } } })), "Headers 99%")
         expect("chip reading Kyoto's headers", v.syncChip(mainnet({ authority: { kind: "kyoto", height: 0, peers: 2, headers: { have: 6000, target: null } } })), "Reading headers…")
+        var firstSync = mainnet({ state: "syncing", authority: { kind: "kyoto", height: null, peers: 1, base: 481823, headers: { have: 727000, target: null } },
+                                  kyoto: { estimatedTip: 973823, progress: 0 } })
+        expect("chip: a first sync's headers, estimated", v.syncChip(firstSync), "Headers ~49%")
+        expect("...its bar", v.headerPhaseShare(firstSync), 49)
+        firstSync.kyoto = { estimatedTip: 973830, progress: 0.42 }
+        expect("chip: then its block filters", v.syncChip(firstSync), "Filters 42%")
+        expect("...its bar", v.headerPhaseShare(firstSync), 42)
+        expect("an estimate behind the chain: no share", v.headersShare({ have: 900000, target: null }, 935424, 935000), null)
         expect("chip without a height, as before", v.syncChip(mainnet({ state: "syncing", authority: { height: null, peers: 2 } })), "Connecting…")
         expect("authority not asked yet", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: false } })),
                "The chain: headers from Electrum servers, checked here · waiting for their first answer")
@@ -486,6 +502,7 @@ Item {
             expect("rendered: a header download", prop("syncLine", "text"), "Reading the chain's headers… 84,000 of 157,000")
             expect("...the chip", prop("syncChip", "text"), "Headers 53%")
             expect("...the server sending them agrees", prop("authorityLine", "text"), "The chain: headers from Electrum servers, checked here · 1 server agrees")
+            expect("...with a bar for the header phase", shown("headersProgress") && !prop("headersProgress", "indeterminate"), true)
             fake.statusJson = scene.syncedMainnet
             fake.feeRatesJson = ""
             v.selectTab(1)
