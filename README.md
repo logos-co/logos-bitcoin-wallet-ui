@@ -55,7 +55,14 @@ and each open allowed in the Signer app, and every send is approved there.
     the authority line and the sources badge wait for that answer too. While the chain's headers
     come in (`authority.headers`), it reads "Reading the chain's headers… 84,000 of 157,000", or
     "… block 6,000" under Kyoto, whose peers' tip isn't known, and the chip "Headers 53%"; the
-    server sending them counts as agreeing.
+    server sending them counts as agreeing. A first sync from Kyoto's peers reads "… block 727,000
+    of about 973,823 · about 49%" against the core's estimate of the tip (`kyoto.estimatedTip`),
+    then "Checking block filters… 42%".
+  - Under Kyoto, "Synchronized" waits for its scan of block filters (`kyoto.scanned`), not the
+    headers the wallet's chain (`walletTip`) follows: until the scan is within two blocks of the
+    tip, the line reads "Checking block filters… block 501,959 of 973,920 · 4%" (with "· fetching
+    filter headers" while a start fetches them first), the chip "Filters 4%", with a bar. A core
+    without `kyoto.scanned` keeps the old rule.
   - A wallet restored without a birthday (`needsBirthday`) asks for one: a day, or "I don't know"
     (`set_birthday`, a job; `{ height: 0 }` scans from where the wallet's kind of address began).
     A refusal, such as a day after its first payment, shows with the core's reason; while

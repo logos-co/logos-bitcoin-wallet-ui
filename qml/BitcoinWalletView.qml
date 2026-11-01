@@ -585,8 +585,12 @@ Item {
         // Last session's chain before any source answered this open: no news, not "none agrees".
         if (peers <= 0 && a.asked === false) return "connecting"
         if (peers <= 0) return "isolated"
+        // The wallet's chain follows the headers; under Kyoto, its scan of filters says whether
+        // payments were checked, a block or two behind the tip being the newest block's catch-up.
+        var scan = root.kyotoScan(st)
         var tip = st.walletTip
-        var caughtUp = root.isNum(tip) ? Number(tip) >= Number(a.height) : st.synced === true
+        var caughtUp = scan !== null ? scan.at !== null && scan.at + 2 >= scan.tip
+                     : root.isNum(tip) ? Number(tip) >= Number(a.height) : st.synced === true
         // Regtest's blocks come when someone mines one: its tip age says nothing.
         if (st.network === "regtest") return caughtUp ? "local" : "syncing"
         if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600) return "stalled"
@@ -621,39 +625,99 @@ Item {
         case "tor_blocked": return (root.torUnusable ? root.torLine() : "Cannot reach Tor") + " · the wallet cannot connect to its chain sources"
         case "tor_connecting": return root.torLine() + " · the wallet reaches its chain sources once Tor is ready"
         case "connecting": return "Connecting to the chain's sources…" + (root.isNum(a.height) ? " · last known block " + h : "")
-        case "headers": return "Reading the chain's headers…" + root.headersRead(a.headers)
+        case "headers": {
+            var filters = root.kyotoFilterShare(st)
+            if (filters !== null) return "Checking block filters… " + filters + "%"
+            var est = root.estimatedTip(st)
+            var about = root.isNum((a.headers || {}).target) ? null : root.headersShare(a.headers, a.base, est)
+            return "Reading the chain's headers…" + root.headersRead(a.headers, est) + (about !== null ? " · about " + about + "%" : "")
+        }
         case "isolated": return "No source agrees · block " + h + (age ? ", tip " + age + " old" : "")
         case "stalled": return "Stalled · block " + h + ", tip " + age + " old"
-        case "syncing": return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
-                               + (root.isNum(st.walletTip) ? " · block " + root.group(st.walletTip) + " of " + h
-                                                           : " · the chain is at block " + h)
+        case "syncing": {
+            var scan = root.kyotoScan(st)
+            if (scan !== null) return root.scanLine(scan)
+            return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
+                   + (root.isNum(st.walletTip) ? " · block " + root.group(st.walletTip) + " of " + h
+                                               : " · the chain is at block " + h)
+        }
         case "local": return "Local chain · block " + h
         case "synced": return "Synchronized · block " + h + ", tip " + age + " old"
         }
         return ""
     }
-    // A header download's progress: "84,000 of 157,000", or Kyoto's own height, its peers' tip unknown.
-    function headersRead(p) {
+    // A header download's progress: "84,000 of 157,000", or Kyoto's own height against the core's
+    // estimate of the tip ("block 712,000 of about 973,900"), its peers' tips being unknown.
+    function headersRead(p, est) {
         if (!p || typeof p !== "object" || !root.isNum(p.have)) return ""
-        return root.isNum(p.target) ? " " + root.group(p.have) + " of " + root.group(p.target) : " block " + root.group(p.have)
+        if (root.isNum(p.target)) return " " + root.group(p.have) + " of " + root.group(p.target)
+        return root.isNum(est) && Number(est) > Number(p.have) ? " block " + root.group(p.have) + " of about " + root.group(est)
+                                                               : " block " + root.group(p.have)
     }
-    function headersShare(p) {
-        if (!p || typeof p !== "object" || !root.isNum(p.have) || !root.isNum(p.target) || Number(p.target) <= 0) return null
-        return Math.min(99, Math.floor(Number(p.have) * 100 / Number(p.target)))
+    // A target's share counts from genesis, as before; an estimate's from where the chain starts.
+    function headersShare(p, base, est) {
+        if (!p || typeof p !== "object" || !root.isNum(p.have)) return null
+        if (root.isNum(p.target) && Number(p.target) > 0) return Math.min(99, Math.floor(Number(p.have) * 100 / Number(p.target)))
+        if (!root.isNum(est) || !root.isNum(base) || Number(est) <= Number(base)) return null
+        return Math.max(0, Math.min(99, Math.floor((Number(p.have) - Number(base)) * 100 / (Number(est) - Number(base)))))
+    }
+    // Kyoto's scan of block filters for the wallet: the last block checked, as the core stored it,
+    // and its share from the scan's start. Null unless Kyoto feeds the history and says how far.
+    function kyotoScan(st) {
+        var a = st && st.authority ? st.authority : {}
+        var k = st && st.kyoto && typeof st.kyoto === "object" ? st.kyoto : null
+        if (a.kind !== "kyoto" || !k || !("scanned" in k) || !root.isNum(a.height)) return null
+        var tip = Number(a.height)
+        var from = root.isNum(st.rescanFrom) ? Number(st.rescanFrom) : root.isNum(st.birthday) ? Number(st.birthday) : 0
+        var at = root.isNum(k.scanned) ? Number(k.scanned) : null
+        var share = at === null || tip <= from ? null : Math.max(0, Math.min(99, Math.floor((at - from) * 100 / (tip - from))))
+        return { at: at, from: from, tip: tip, share: share, filterHeaders: k.phase === "filter_headers" }
+    }
+    // A start fetches every filter header first: a long while on the same block, said so.
+    function scanLine(scan) {
+        var line = scan.at === null ? "Checking block filters from block " + root.group(scan.from) + "…"
+                 : "Checking block filters… block " + root.group(scan.at) + " of " + root.group(scan.tip)
+                   + (scan.share !== null ? " · " + scan.share + "%" : "")
+        return line + (scan.filterHeaders ? " · fetching filter headers" : "")
+    }
+    function estimatedTip(st) {
+        var k = st && st.kyoto && typeof st.kyoto === "object" ? st.kyoto : {}
+        return root.isNum(k.estimatedTip) ? Number(k.estimatedTip) : null
+    }
+    // Kyoto's first sync checking block filters before the chain has a tip: its own share of them.
+    function kyotoFilterShare(st) {
+        var k = st && st.kyoto && typeof st.kyoto === "object" ? st.kyoto : {}
+        return root.isNum(k.progress) && Number(k.progress) > 0 ? Math.min(99, Math.floor(Number(k.progress) * 100)) : null
+    }
+    // The header phase's bar: filters once Kyoto checks them, else headers; null = indeterminate.
+    function headerPhaseShare(st) {
+        var filters = root.kyotoFilterShare(st)
+        if (filters !== null) return filters
+        var a = st && st.authority ? st.authority : {}
+        return root.headersShare(a.headers, a.base, root.estimatedTip(st))
     }
     function syncChip(st) {
-        var share = root.headersShare(st && st.authority ? st.authority.headers : null)
+        var a = st && st.authority ? st.authority : {}
+        var estimated = !root.isNum((a.headers || {}).target)
+        var share = root.headersShare(a.headers, a.base, root.estimatedTip(st))
+        var filters = root.kyotoFilterShare(st)
         switch (root.syncState(st)) {
         case "unavailable": return "Not answering"
         case "closing": return "Closing…"
         case "failed": return "Failed"
         case "tor_blocked": return "Tor unavailable"
         case "tor_connecting": return "Tor " + (root.tor.progress || 0) + "%"
-        case "headers": return share !== null ? "Headers " + share + "%" : (st.authority.headers ? "Reading headers…" : "Connecting…")
+        case "headers": return filters !== null ? "Filters " + filters + "%"
+                             : share !== null ? "Headers " + (estimated ? "~" : "") + share + "%"
+                             : (st.authority.headers ? "Reading headers…" : "Connecting…")
         case "connecting": return "Connecting…"
         case "isolated": return "No sources"
         case "stalled": return "Stalled"
-        case "syncing": return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
+        case "syncing": {
+            var scan = root.kyotoScan(st)
+            if (scan !== null) return scan.share !== null ? "Filters " + scan.share + "%" : "Checking filters…"
+            return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
+        }
         case "local": return "Local · " + root.group(st.authority.height)
         case "synced": return "Synced · " + root.group(st.authority.height)
         }
@@ -2253,11 +2317,22 @@ Item {
                                          text: root.overallLabel(root.overall); color: root.overallColor(root.overall) }
                         }
                         LogosProgressBar {
+                            objectName: "headersProgress"
+                            Layout.fillWidth: true
+                            readonly property var share: root.headerPhaseShare(root.status)
+                            visible: root.syncState(root.status) === "headers"
+                            indeterminate: share === null
+                            value: share === null ? 0 : share / 100
+                        }
+                        LogosProgressBar {
                             objectName: "syncProgress"
                             Layout.fillWidth: true
+                            readonly property var scan: root.kyotoScan(root.status)
+                            readonly property var share: scan !== null ? scan.share
+                                                         : root.isNum(root.status.syncPercent) ? Number(root.status.syncPercent) : null
                             visible: root.syncState(root.status) === "syncing"
-                            indeterminate: !root.isNum(root.status.syncPercent)
-                            value: root.isNum(root.status.syncPercent) ? Number(root.status.syncPercent) / 100 : 0
+                            indeterminate: share === null
+                            value: share === null ? 0 : share / 100
                         }
                         LogosText { objectName: "authorityLine"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
