@@ -143,9 +143,14 @@ Item {
     }
     readonly property bool canOpenSelectedAccount: ready && statusRead && !busy && !accountLocked
         && status.unavailable !== true && backend.accountsError === "" && canOpenAccount(selectedAccount)
+    // The wallet keeps each account's birthday itself: an account's first open on a network asks for it.
+    function openedBefore(id) { return root.walletsOnNetwork.some(function (w) { return w.group === id }) }
     function openSelectedAccount() {
-        if (canOpenSelectedAccount) backend.selectAccount(selectedAccount.id)
+        if (!canOpenSelectedAccount) return
+        if (root.openedBefore(selectedAccount.id)) backend.selectAccount(selectedAccount.id, "")
+        else birthdaySheet.askFirst(selectedAccount.id)
     }
+    function todayUtc() { return new Date().toISOString().slice(0, 10) }
     function manageAccounts() {
         logos.request("evm.accounts.manage", ({}), function (res) {
             if (!res.ok && res.error !== "cancelled") root.notify("Keystore", "Open the Keystore app to create, restore or manage Bitcoin accounts.")
@@ -2384,10 +2389,10 @@ Item {
                         objectName: "needsBirthdayHomeNotice"
                         Layout.fillWidth: true
                         shown: root.needsBirthday && !root.rescanning
-                        title: "When was this wallet first used?"
-                        message: "It was restored without a birthday, so it looks for payments from the block where its kind of "
+                        title: "When was this account first used?"
+                        message: "It has no birthday, so it looks for payments from the block where its kind of "
                                  + "address began. That finds every payment but takes longer; a birthday lets it start later."
-                        actions: [ LogosButton { objectName: "setBirthdayButton"; text: "Set the wallet's birthday"
+                        actions: [ LogosButton { objectName: "setBirthdayButton"; text: "Set the account's birthday"
                                                  enabled: root.ready && !root.busy; onClicked: birthdaySheet.open() } ]
                     }
                 }
@@ -2765,13 +2770,15 @@ Item {
                         objectName: "needsBirthdayNotice"
                         Layout.fillWidth: true
                         shown: root.needsBirthday
-                        message: "Nothing said when this wallet was first used, so it scans from the block where its "
+                        message: "Nothing said when this account was first used, so it scans from the block where its "
                                  + "kind of address began. Nothing is missed, but the first sync takes longer."
-                        actions: [ LogosButton { objectName: "setBirthdaySettingsButton"; text: "Set the wallet's birthday"
+                        actions: [ LogosButton { objectName: "setBirthdaySettingsButton"; text: "Set the account's birthday"
                                                  enabled: root.ready && !root.busy; onClicked: birthdaySheet.open() } ]
                     }
                     RowLayout {
                         spacing: Theme.spacing.small
+                        LogosButton { objectName: "changeBirthdayButton"; text: "Change the birthday…"; visible: !root.needsBirthday
+                                      enabled: root.ready && !root.busy && !root.rescanning; onClicked: birthdaySheet.open() }
                         LogosButton { objectName: "showDescriptorsButton"; text: "Show descriptors…"; enabled: root.ready
                                       onClicked: descriptorsSheet.open() }
                         LogosButton { objectName: "settingsCloseWalletButton"; text: "Close wallet"; enabled: root.ready && !root.busy
@@ -3154,26 +3161,38 @@ Item {
     LogosDialog {
         id: birthdaySheet
         objectName: "birthdaySheet"
-        title: "The wallet's birthday"
+        // The account a first open asks about, or "" to set the open wallet's.
+        property string opening: ""
+        function askFirst(id) { birthdaySheet.opening = id; birthdaySheet.open() }
+        title: opening ? "When was this account first used?" : "The account's birthday"
         property bool unknown: false
+        property bool isNew: false
         readonly property bool dateOk: /^\d{4}-\d{2}-\d{2}$/.test(birthdayDate.text.trim())
-        readonly property bool pending: root.birthdayJob.state === "pending"
-        onOpened: { birthdaySheet.unknown = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false }
+        readonly property bool pending: !opening && root.birthdayJob.state === "pending"
+        onOpened: { birthdaySheet.unknown = false; birthdaySheet.isNew = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false }
+        onClosed: birthdaySheet.opening = ""
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 560)
         contentItem: ColumnLayout {
             spacing: Theme.spacing.small
-            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                        text: "The day this wallet was first used. It looks for payments from about two days before it. "
-                              + "A day after its first payment would hide the ones before, so the wallet refuses it." }
+            LogosText { objectName: "birthdayIntro"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                        text: birthdaySheet.opening
+                              ? "It looks for payments from about two days before that day, so its first sync skips the years "
+                                + "before. A day after its first payment would hide the ones before it."
+                              : "The day this account was first used. It looks for payments from about two days before it. "
+                                + "A day after its first payment would hide the ones before, so the wallet refuses it." }
             ButtonGroup { id: birthdayGroup }
             LogosRadioButton { id: birthdayOnDay; objectName: "birthdayOnDay"; ButtonGroup.group: birthdayGroup; checked: true
-                               text: "It was first used on"; onCheckedChanged: if (checked) birthdaySheet.unknown = false }
+                               text: "It was first used on"
+                               onCheckedChanged: if (checked) { birthdaySheet.unknown = false; birthdaySheet.isNew = false } }
             LogosTextField { id: birthdayDate; objectName: "birthdayDateField"; Layout.preferredWidth: 200
-                             enabled: !birthdaySheet.unknown; placeholderText: "YYYY-MM-DD" }
+                             enabled: !birthdaySheet.unknown && !birthdaySheet.isNew; placeholderText: "YYYY-MM-DD" }
+            LogosRadioButton { objectName: "birthdayNew"; ButtonGroup.group: birthdayGroup; visible: birthdaySheet.opening !== ""
+                               text: "It's new: nothing was sent to it before today"
+                               onCheckedChanged: if (checked) { birthdaySheet.isNew = true; birthdaySheet.unknown = false } }
             LogosRadioButton { objectName: "birthdayUnknown"; ButtonGroup.group: birthdayGroup
                                text: "I don't know: look from where this kind of address began, which takes longer"
-                               onCheckedChanged: if (checked) birthdaySheet.unknown = true }
+                               onCheckedChanged: if (checked) { birthdaySheet.unknown = true; birthdaySheet.isNew = false } }
             LogosText { objectName: "birthdayError"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                         textFormat: Text.PlainText; color: Theme.palette.error
                         text: root.birthdayAsked && root.birthdayJob.state === "failed" ? "Not set: " + (root.birthdayJob.error || "") : "" }
@@ -3182,11 +3201,19 @@ Item {
         rightActions: [
             LogosButton {
                 objectName: "confirmBirthdayButton"
-                text: birthdaySheet.pending ? "Setting…" : "Set"
+                text: birthdaySheet.opening ? "Open" : birthdaySheet.pending ? "Setting…" : "Set"
                 variant: LogosButton.Variant.Primary
-                enabled: root.ready && root.walletOpen && !birthdaySheet.pending && (birthdaySheet.unknown || birthdaySheet.dateOk)
+                enabled: root.ready && (birthdaySheet.opening ? root.canOpenSelectedAccount : root.walletOpen && !birthdaySheet.pending)
+                         && (birthdaySheet.unknown || birthdaySheet.isNew || birthdaySheet.dateOk)
                 // Height 0 is "from the start": the core scans from where the wallet's kind of address began.
+                // Not knowing at a first open gives none, so the wallet asks again once it is open.
                 onClicked: {
+                    if (birthdaySheet.opening) {
+                        backend.selectAccount(birthdaySheet.opening, birthdaySheet.unknown ? ""
+                                              : birthdaySheet.isNew ? root.todayUtc() : birthdayDate.text.trim())
+                        birthdaySheet.close()
+                        return
+                    }
                     root.birthdayAsked = true
                     backend.setBirthday(JSON.stringify(birthdaySheet.unknown ? { height: 0 } : { date: birthdayDate.text.trim() }))
                 }

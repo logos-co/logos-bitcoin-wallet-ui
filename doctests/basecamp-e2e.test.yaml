@@ -42,8 +42,8 @@ sections:
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
           b backend 'github:logos-co/logos-bitcoin-wallet-backend/95b8f0c1df5225cc622e5fd40c1a5538c3dcd136#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/1df7a08dff4dee413ebf1f1ef00b26802a623557#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/1df7a08dff4dee413ebf1f1ef00b26802a623557#regtest-chain'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/08126e7c414eb04a4cf996a92179fa3a08614a46#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/08126e7c414eb04a4cf996a92179fa3a08614a46#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/7462bce96676bad4be296155117bd6ea6c643a4d#install-portable'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           ls e2e/build
@@ -137,8 +137,8 @@ sections:
     text: |
       The wallet closes and Basecamp stops. A second user dir and HOME start empty: no keystore,
       no wallet database. The keys app restores the wallet from the written-down phrase with a
-      birthday and a new test password; the balance and the history must match what the first
-      user dir showed.
+      new test password, and the open gives its birthday; the balance and the history must match
+      what the first user dir showed.
     steps:
       - title: "Note the balance and history, then close the wallet"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" close

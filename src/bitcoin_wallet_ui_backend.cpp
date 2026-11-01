@@ -325,7 +325,7 @@ void BitcoinWalletUiBackend::loadAccounts() {
     });
 }
 
-void BitcoinWalletUiBackend::selectAccount(QString accountId) {
+void BitcoinWalletUiBackend::selectAccount(QString accountId, QString birthday) {
     if (!accountsError().isEmpty()) { say(accountsError()); return; }
     if (busy() || hasJob("open") || hasJob("close") || hasJob("cancel")) {
         say(QStringLiteral("Wait for the wallet to finish opening or closing.")); return;
@@ -347,7 +347,10 @@ void BitcoinWalletUiBackend::selectAccount(QString accountId) {
     if (selected.isEmpty() || (!selected.value("available").toBool() && !device) || selected.value("chain").toString() != chain) {
         say(QStringLiteral("That account is unavailable on this network. Refresh or manage it in Keystore.")); return;
     }
-    openWallet(compact(QJsonObject{{"group", accountId}, {"network", network}, {"label", selected.value("label").toString()}}));
+    QJsonObject params{{"group", accountId}, {"network", network}, {"label", selected.value("label").toString()}};
+    // A first open's answer: a YYYY-MM-DD day, or none.
+    if (!birthday.trimmed().isEmpty()) params["birthday"] = birthday.trimmed();
+    openWallet(compact(params));
 }
 
 void BitcoinWalletUiBackend::loadRegistry() {

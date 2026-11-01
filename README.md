@@ -63,8 +63,10 @@ and each open allowed in the Signer app, and every send is approved there.
     tip, the line reads "Checking block filters… block 501,959 of 973,920 · 4%" (with "· fetching
     filter headers" while a start fetches them first), the chip "Filters 4%", with a bar. A core
     without `kyoto.scanned` keeps the old rule.
-  - A wallet restored without a birthday (`needsBirthday`) asks for one: a day, or "I don't know"
-    (`set_birthday`, a job; `{ height: 0 }` scans from where the wallet's kind of address began).
+  - The core keeps each account's birthday: an account's first open on a network asks when it was
+    first used (a day, "It's new" for today, or "I don't know"), sent as open_wallet's `birthday`.
+    A wallet without one (`needsBirthday`) asks again: a day, or "I don't know" (`set_birthday`,
+    a job; `{ height: 0 }` scans from where the wallet's kind of address began). Settings changes it.
     A refusal, such as a day after its first payment, shows with the core's reason; while
     `rescanFrom` holds, Home reads "Rescanning from block H", with a share only under Kyoto.
   - Source alerts show as a banner above the tabs; Kyoto naming a chain the checks refuse
@@ -258,7 +260,7 @@ started on regtest from the node app) as the chain authority. The core takes the
 routes whenever it routes anything on regtest, so the driver switches off the node module's Kyoto,
 its only regtest default, before each open: the chain's sources then come from the core's
 `regtest.json`. The Kyoto spec then restores twice:
-once with no day in the keys app, so the wallet asks for its birthday and gets it in the wallet
+once opened with no birthday, so the wallet asks for one and gets it in the wallet
 app; once with Blockstream's electrs as the only server and a `regtest.json` checkpoint above the
 first two payments, which it reports below the chain's start. A front that answers no block header
 (`doctests/e2e/esplora_front.py`) keeps the core from linking them there, so they stay unchecked

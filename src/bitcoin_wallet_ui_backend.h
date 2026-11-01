@@ -25,7 +25,7 @@ public:
     void setActiveNetwork(QString network) override;
     void openWallet(QString paramsJson) override;
     void closeWallet() override;
-    void selectAccount(QString accountId) override;
+    void selectAccount(QString accountId, QString birthday) override;
     void setBirthday(QString paramsJson) override;
     void setGapLimit(QString paramsJson) override;
 
