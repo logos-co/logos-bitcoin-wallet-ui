@@ -10,8 +10,8 @@ intro: |
   mempool view, so a payment shows once it is in a block; a send goes out through one of Kyoto's
   peers. Open, receive, send and confirm, then a reorg the peers follow together.
 
-  Then two restores from the written-down phrase. In a fresh user dir the keys app is given no
-  day, so the wallet asks for its birthday, set in the wallet app. In a third, Blockstream's
+  Then two restores from the written-down phrase. In a fresh user dir the wallet is opened with
+  no birthday, so it asks for one, set in the wallet app. In a third, Blockstream's
   electrs (`chain.sh esplora`) is the only server, and a `regtest.json` checkpoint sits just above
   the first two payments: a wallet whose birthday is above it is opened with open_wallet's own
   birthday (the app takes no block height, and a regtest day names none), and Esplora reports those
@@ -108,12 +108,12 @@ sections:
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" reorg
         expect_contains: ["PASS the payment confirms again in the new block", "PASS Activity: re-anchored at height", "PASS details: Moved to a new block", "PASS no alert during the reorg", "PHASE reorg OK"]
 
-  - title: "Close, then restore with no day in the keys app"
+  - title: "Close, then restore with no birthday"
     platform: [linux, macos, windows]
     text: |
       The wallet closes and Basecamp stops. In a second user dir the keys app restores the wallet
-      from the written-down phrase and is given no day, so the core has no birthday: Home asks for
-      one, the person sets it in the wallet app, and the wallet scans again from it under Kyoto.
+      from the written-down phrase and the open gives no birthday, so the core has none: Home asks
+      for one, the person sets it in the wallet app, and the wallet scans again from it under Kyoto.
       The balance and the history must match the first user dir's.
     steps:
       - title: "Note the balance and history, then close the wallet"
@@ -129,7 +129,7 @@ sections:
         expect_contains: ["PASS laid out userB", "PASS Basecamp is up for userB"]
       - title: "Home asks for the birthday; set in the wallet app, it scans again, and the balance and history match"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" restore-birthday
-        expect_contains: ["PASS restored in the keys app with no day given", "PASS Home asks", "PASS birthday", "PASS the restored balance matches", "PHASE restore-birthday OK"]
+        expect_contains: ["PASS restored in the keys app, opened with no birthday", "PASS Home asks", "PASS birthday", "PASS the restored balance matches", "PHASE restore-birthday OK"]
 
   - title: "Unchecked: Esplora reports payments below the chain's start"
     platform: [linux, macos]

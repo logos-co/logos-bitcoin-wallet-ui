@@ -29,8 +29,9 @@ intro: |
   0.0002 BTC is rejected, 0.0003 BTC expires unacknowledged, 0.0004 BTC goes out with an unknown
   outcome, 0.0005 BTC leaves change too small to spend (added to the fee when asked), and the first
   payment sent makes the history server report a confirmation on another chain. The first wallet
-  opened on a network reads the chain's headers for 4 s after its server first answers. A wallet opens
-  without a birthday (one after its first payment, 2026-05-31, is refused), a reorg re-anchors the
+  opened on a network reads the chain's headers for 4 s after its server first answers. An account's
+  first open on a network asks when it was first used; opened with "I don't know" it has no
+  birthday (one after its first payment, 2026-05-31, is refused), a reorg re-anchors the
   transfer to yourself 5 s after the first open is ready, and with Kyoto in use it is the authority
   and names a chain the wallet refuses. A TLS server of your own is probed and pinned, a peer of
   your own replaces Kyoto's curated list, and a switch asked for while the wallet closes waits for
@@ -384,6 +385,19 @@ sections:
             - name: "Open a wallet"
               action: click_object
               find_value: "openWalletButton"
+            - name: "The wallet keeps each account's birthday, so a first open asks when it was first used"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "opening"
+              value: "g_fixture_keystore"
+              timeout: 5000
+              screenshot: "wallet-first-open-birthday.png"
+            - name: "Not known: it opens with none, scanning from where its kind of address began"
+              action: click_object
+              find_value: "birthdayUnknown"
+            - name: "Open it"
+              action: click_object
+              find_value: "confirmBirthdayButton"
             - name: "The app waits for the keys app, under the open's handle"
               action: expect_property
               find_value: "bitcoinWalletRoot"
@@ -427,6 +441,18 @@ sections:
             - name: "Open again; this time the person approves in the keys app"
               action: click_object
               find_value: "openWalletButton"
+            - name: "The withdrawn open never reached the wallet, so it asks again"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "opening"
+              value: "g_fixture_keystore"
+              timeout: 5000
+            - name: "Not known: it opens with none, scanning from where its kind of address began"
+              action: click_object
+              find_value: "birthdayUnknown"
+            - name: "Open it"
+              action: click_object
+              find_value: "confirmBirthdayButton"
             - name: "The wallet opens"
               action: expect_property
               find_value: "bitcoinWalletRoot"
@@ -1530,6 +1556,20 @@ sections:
             - name: "Open, on testnet4"
               action: click_object
               find_value: "openWalletButton"
+            - name: "Its first open on testnet4 asks too"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "opening"
+              value: "g_fixture_keystore"
+              timeout: 5000
+            - name: "It was first used on 2026-01-02"
+              action: set_property
+              find_value: "birthdayDateField"
+              property: "text"
+              value: "2026-01-02"
+            - name: "Open it"
+              action: click_object
+              find_value: "confirmBirthdayButton"
             - name: "The wallet opens there"
               action: expect_property
               find_value: "bitcoinWalletRoot"
@@ -1541,6 +1581,11 @@ sections:
               find_value: "bitcoinWalletRoot"
               property: "displayedNetwork"
               value: "testnet4"
+            - name: "Opened with a day, it asks for no birthday"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "needsBirthday"
+              value: false
             - name: "Receive on testnet4, where an older app's opens left 20 unused addresses"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -1654,6 +1699,18 @@ sections:
             - name: "Open it"
               action: click_object
               find_value: "openWalletButton"
+            - name: "The Keycard account's first open asks when it was first used"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "opening"
+              value: "shell-cdcdcdcd-84-1-0"
+              timeout: 5000
+            - name: "It's new"
+              action: click_object
+              find_value: "birthdayNew"
+            - name: "...and open it"
+              action: click_object
+              find_value: "confirmBirthdayButton"
             - name: "It opens without the card"
               action: expect_property
               find_value: "bitcoinWalletRoot"

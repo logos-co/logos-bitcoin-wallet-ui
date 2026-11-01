@@ -1,6 +1,6 @@
 //! The scripted wallet behind the fixture: states move on a clock, a send's fate is its amount, and
-//! the first send that goes out turns the history server suspect. A wallet opens without a birthday,
-//! a reorg re-anchors one payment 5 s after the first open is ready, and Kyoto in use is the
+//! the first send that goes out turns the history server suspect. A wallet takes the birthday its
+//! open gives, else scans from where its kind of address began; a reorg re-anchors one payment 5 s after the first open is ready, and Kyoto in use is the
 //! authority and names a refused chain 3 s after it is. On signet under Kyoto, Esplora reports a
 //! payment below the chain's start (signet's checkpoint): unchecked until a birthday below it is
 //! set, whose rescan ends with one wider pass. On testnet4 Kyoto is on with one peer, which then
@@ -196,6 +196,7 @@ pub struct Sim {
     alerted: bool,
     birthday_height: u64,
     birthday_source: String,
+    open_birthday: Option<Value>,
     rescan_from: Option<u64>,
     rescan_until: Option<Instant>,
     /// A first open's header download: from the first answer until then.
@@ -484,6 +485,7 @@ impl Sim {
             alerted: false,
             birthday_height: 0,
             birthday_source: String::new(),
+            open_birthday: None,
             rescan_from: None,
             rescan_until: None,
             headers_until: None,
@@ -1029,6 +1031,7 @@ impl Sim {
         self.family = family;
         self.group = group.unwrap_or_default();
         self.label = p["label"].as_str().map(String::from);
+        self.open_birthday = p.get("birthday").filter(|v| !v.is_null()).cloned();
         self.handle = Some(format!("sma_fixture{}", self.opens));
         self.approve_at = (self.opens > 1).then(|| now + OPEN_APPROVE);
         let j = self.job("open_wallet", now, None);
@@ -1545,9 +1548,12 @@ impl Sim {
                 let first = self.headers_read.insert(self.network.clone());
                 self.headers_until = first.then(|| now + FIRST_ANSWER + HEADERS_TIME);
                 self.seed_wallet();
-                // Restored without a birthday: the scan starts where its kind of address began.
-                self.birthday_height = activation(&self.network, &self.family);
-                self.birthday_source = "activation".into();
+                // The open's birthday, a height or a day (any day reads as this network's fixed one).
+                let floor = activation(&self.network, &self.family);
+                (self.birthday_height, self.birthday_source) = match self.open_birthday.take() {
+                    Some(b) => (b.as_u64().unwrap_or_else(|| birthday(&self.network)).max(floor), "override".into()),
+                    None => (floor, "activation".into()),
+                };
                 let entry = json!({"group": self.group, "family": self.family, "network": self.network, "label": self.label,
                                    "birthday": birthday(&self.network), "gapLimit": self.gap_limit,
                                    "firstOpened": now_secs(), "lastOpened": now_secs()});
@@ -1555,7 +1561,7 @@ impl Sim {
                 self.wallets.insert(0, entry);
                 if let Some(j) = self.open_job.take() {
                     let result = json!({"group": self.group, "family": self.family, "network": self.network, "created": self.opens == 2,
-                                        "reset": false, "birthday": {"height": birthday(&self.network), "source": "keystore"}});
+                                        "reset": false, "birthday": {"height": self.birthday_height, "source": self.birthday_source}});
                     self.finish(&j, "done", None, result, &mut out);
                 }
             }
@@ -2060,6 +2066,22 @@ mod tests {
         let mut ev = vec![];
         sim.open_wallet(r#"{"family":"bitcoin"}"#, t0, &mut ev);
         assert_eq!(sim.set_source("electrum.example", r#"{"use":false}"#)["error"], LOCKED);
+    }
+
+    #[test]
+    fn an_open_takes_the_birthday_it_brings() {
+        let t0 = Instant::now();
+        let mut sim = Sim::new(false, t0);
+        sim.set_active_network("signet");
+        let mut ev = vec![];
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t0, &mut ev);
+        let t = run(&mut sim, t0, 10);
+        sim.close_wallet(t, &mut ev);
+        sim.open_wallet(r#"{"family":"bitcoin","birthday":"2024-04-20"}"#, t, &mut ev);
+        let t = run(&mut sim, t, 14);
+        let st = sim.status(t);
+        assert_eq!((st["needsBirthday"].clone(), st["birthdaySource"].clone(), st["birthday"].clone()),
+                   (json!(false), json!("override"), json!(birthday("signet"))));
     }
 
     #[test]

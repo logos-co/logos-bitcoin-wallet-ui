@@ -284,6 +284,18 @@ sections:
             - name: "Open a wallet"
               action: click_object
               find_value: "openWalletButton"
+            - name: "The core keeps each account's birthday, so the account's first open asks for it"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "visible"
+              value: true
+              timeout: 5000
+            - name: "Not known: it opens with none"
+              action: click_object
+              find_value: "birthdayUnknown"
+            - name: "Open it"
+              action: click_object
+              find_value: "confirmBirthdayButton"
             - name: "The wallet core asked the signer manager, and waits for the person"
               action: expect_property
               find_value: "bitcoinWalletRoot"

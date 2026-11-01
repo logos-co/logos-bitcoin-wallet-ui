@@ -137,8 +137,8 @@ sections:
     text: |
       The wallet closes and Basecamp stops. A second user dir and HOME start empty: no keystore,
       no wallet database. The keys app restores the wallet from the written-down phrase with a
-      birthday and a new test password; the balance and the history must match what the first
-      user dir showed.
+      new test password, and the open gives its birthday; the balance and the history must match
+      what the first user dir showed.
     steps:
       - title: "Note the balance and history, then close the wallet"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" close

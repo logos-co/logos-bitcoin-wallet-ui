@@ -70,7 +70,8 @@ class BitcoinWalletUi
     // Also withdraws an open still waiting in the keys app.
     SLOT(void closeWallet())
     // Opens a roster account on the active network; refused, as openWallet is, while one is open.
-    SLOT(void selectAccount(QString accountId))
+    // birthday: the day it was first used, asked at its first open, or empty.
+    SLOT(void selectAccount(QString accountId, QString birthday))
     // { date: "YYYY-MM-DD" } or { height }, for an open wallet; the core scans again from it.
     SLOT(void setBirthday(QString paramsJson))
     // { gapLimit }, 20 to 1000: the wallet scans again from its birthday.

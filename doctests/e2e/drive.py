@@ -1205,16 +1205,14 @@ def yesterday():
     return (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
 
 
-# The open's request in the keys app: the written-down phrase restored, a day given or left empty.
-def restore_in_keys(ins, name, birthday=None):
+# The open's request in the keys app: the written-down phrase restored.
+def restore_in_keys(ins, name):
     chooser(ins, KEYS)
     ins.wait("accessSheet", "opened", True, 120)
     ins.press("accessAddWallet")
     ins.wait("bitcoinImportSheet", "opened", True, 20)
     ins.check("btcSourceType")
     ins.set_text("btcPhraseField", secret("phrase"))
-    if birthday:
-        ins.set_text("btcBirthdayField", birthday)
     ins.set_text("btcWalletPasswordField", secret("password-restore"))
     ins.set_text("btcWalletNameField", name)
     ins.press("btcConfirm")
@@ -1259,10 +1257,10 @@ def phase_restore():
     ins = Inspector()
     show_app(ins, APP)
     open_for_restore(ins)
-    ins.call(ROOT, "openWallet", {"family": "bitcoin"})
     birthday = yesterday()
-    restore_in_keys(ins, "E2E restored", birthday)
-    passed("restored in the keys app from the written-down phrase, birthday %s" % birthday)
+    ins.call(ROOT, "openWallet", {"family": "bitcoin", "birthday": birthday})
+    restore_in_keys(ins, "E2E restored")
+    passed("restored in the keys app from the written-down phrase, opened with birthday %s" % birthday)
     wait_synced(ins, 180)
     got = matches_snapshot(ins, "restored")
     ins.shot("restored")
@@ -1270,14 +1268,14 @@ def phase_restore():
     log("PHASE restore OK")
 
 
-# No day in the keys app: the wallet asks for its birthday, and one is set in the wallet app.
+# Opened with no birthday: the wallet asks for one, and it is set in the wallet app.
 def phase_restore_birthday():
     ins = Inspector()
     show_app(ins, APP)
     open_for_restore(ins)
     ins.call(ROOT, "openWallet", {"family": "bitcoin"})
     restore_in_keys(ins, "E2E restored, no day")
-    passed("restored in the keys app with no day given")
+    passed("restored in the keys app, opened with no birthday")
     ins.wait("needsBirthdayHomeNotice", "visible", True, 120, "restored without a birthday: Home asks for one")
     passed("Home asks: %s" % ins.get("needsBirthdayHomeNotice", "title"))
     ins.shot("needs-birthday")
