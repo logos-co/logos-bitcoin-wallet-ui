@@ -1456,9 +1456,9 @@ impl Sim {
     fn curated(net: &str) -> Value {
         let n = if net == "testnet4" { 1 } else { 11 };
         let peers: Vec<String> = (0..n).map(|i| format!("peer{i}{}.onion:38333", "a".repeat(46))).collect();
-        json!({"format": 1, "network": net, "version": "202610110405", "created": "2026-10-11T04:05:49Z", "date": "2026-10-11",
+        json!({"format": 2, "network": net, "version": "202610110405", "created": "2026-10-11T04:05:49Z", "date": "2026-10-11",
                "note": "PROVISIONAL: from 1 run (2026-10-11), not the plan's 6 of 7 days.",
-               "refreshUrl": null, "peers": peers})
+               "peers": peers})
     }
 
     /// The node module's peer_list: the curated list, your own peers, and how Kyoto reaches them.

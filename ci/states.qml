@@ -1021,7 +1021,7 @@ Item {
             for (var i = 0; i < 11; i++) peers.push("p" + i + ".onion:38333")
             fake.peerListJson = JSON.stringify({ network: "regtest", ownPeers: [], usable: peers, route: "onion", kyotoTor: true,
                 counts: { list: 11, learned: 3, seed: 8, usable: 14, okLast30d: 6 },
-                list: { format: 1, network: "regtest", version: "1", peers: peers,
+                list: { format: 2, network: "regtest", version: "1", peers: peers,
                         note: "PROVISIONAL: from 1 run, not the plan's 6 of 7 days." } })
             find(view.item, "networkSettingsButton", 0).clicked()
         },
