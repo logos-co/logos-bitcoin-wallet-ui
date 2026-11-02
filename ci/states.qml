@@ -53,6 +53,8 @@ Item {
         property string openQueuedJson: ""
         property string peerListJson: ""
         property string gapLimitJson: ""
+        // What setTorUse answers: "" takes the mode, as the backend's reply patches the sources.
+        property string torUseReply: ""
         property var calls: []
         function note(name, args) { calls = calls.concat([[name].concat(args)]) }
         function last(name) {
@@ -95,6 +97,15 @@ Item {
         function addSource(a, k, n) { note("addSource", [a, k, n]); return "" }
         function removeSource(id) { note("removeSource", [id]); return "" }
         function setProxy(p) { note("setProxy", [p]); return "" }
+        function setTorUse(m) {
+            note("setTorUse", [m])
+            if (torUseReply !== "") return torUseReply
+            var o = JSON.parse(sourcesJson || "{}")
+            o.torUse = m
+            o.torUseChosen = true
+            sourcesJson = JSON.stringify(o)
+            return ""
+        }
         function setOwnPeers(p) { note("setOwnPeers", [p]); return "" }
         function clearSuspect(id) { note("clearSuspect", [id]); return "" }
         function refreshSources() {}
@@ -385,6 +396,13 @@ Item {
         expect("via kyoto", v.viaName("kyoto"), "Kyoto's peers")
         expect("via a server", v.viaName("electrum-0"), "electrum-0")
         expect("tls", v.isTls({ url: "ssl://h:50002" }) && v.isTls({ url: "https://h/api" }) && !v.isTls({ url: "tcp://h:50001" }), true)
+
+        // Kyoto's matched blocks over Tor: nothing goes direct while Tor is down.
+        expect("tor waits", v.kyotoTorLine({ kyoto: { tor: { pending: 3, waiting: true } } }), "Waiting for Tor: 3 blocks with your payments not fetched yet")
+        expect("tor waits, nothing pending", v.kyotoTorLine({ kyoto: { tor: { pending: 0, waiting: true } } }), "Waiting for Tor")
+        expect("tor fetching", v.kyotoTorLine({ kyoto: { tor: { pending: 1, waiting: false } } }), "Fetching 1 block with your payments over Tor")
+        expect("tor idle", v.kyotoTorLine({ kyoto: { tor: { pending: 0, waiting: false } } }), "")
+        expect("no split", v.kyotoTorLine({ kyoto: { tor: null } }), "")
     }
 
     // What renders, against the fake backend; each step runs after the previous one settled.
@@ -1539,6 +1557,135 @@ Item {
         },
         function (v) {
             expect("gone once it unlocks", shown("accountsLockedBanner"), false)
+            // "Use Tor for", asked once. A fresh node store: identifying, not chosen yet.
+            fake.signerWalletsJson = "[]"
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "identifying", torUseChosen: false, sources: [
+                { id: "kyoto", kind: "kyoto", use: true, route: "tor" }] })
+            fake.healthJson = JSON.stringify({ overall: "ok", sources: [], torUse: "identifying", torUseChosen: false,
+                tor: { state: "ready", progress: 100, detail: "", socks: "socks5h://127.0.0.1:9250", answered: true } })
+        },
+        function (v) {
+            expect("a choice not made yet replaces the account start", shown("torUsePage"), true)
+            expect("...the picker hidden", shown("accountSelectorRow"), false)
+            expect("...and the open page", shown("openPage"), false)
+            expect("the intro", prop("torUseIntro", "text").indexOf("How should this wallet use Tor? Tor hides your IP address"), 0)
+            expect("three options", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "text") }),
+                   ["Only what identifies you", "Everything", "Nothing"])
+            expect("each says what happens, pros and cons", ["identifying", "all", "none"].every(function (m) {
+                return ["happens_", "pros_", "cons_"].every(function (k) { return shown("torUseStart_" + k + m) === true }) }), true)
+            expect("...in the plan's words", prop("torUseStart_happens_none", "text"), "<b>What happens:</b> Every connection is direct; Tor isn't used.")
+            expect("fresh: identifying preselected", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "checked") }),
+                   [true, false, false])
+            expect("...and Recommended", shown("torUseStart_recommended_identifying"), true)
+            expect("...no Current tag", ["all", "none", "identifying"].some(function (m) { return shown("torUseStart_current_" + m) === true }), false)
+            find(view.item, "torUseContinue", 0).clicked()
+            expect("Continue sends the preselected mode", fake.last("setTorUse"), ["setTorUse", "identifying"])
+        },
+        function (v) {
+            expect("answered, the account start shows", shown("torUsePage") + " " + shown("openPage") + " " + shown("accountSelectorRow"), "false true true")
+            expect("...and the node keeps it chosen", v.torUseUnchosen, false)
+            // An existing install: today's all-Tor routing, not chosen yet. A new session, so nothing answered.
+            v.torUseAnswered = false
+            v.torChoice = ""
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "all", torUseChosen: false, sources: [
+                { id: "kyoto", kind: "kyoto", use: true, route: "tor" }] })
+        },
+        function (v) {
+            expect("existing: the screen shows once more", shown("torUsePage"), true)
+            expect("...its routing preselected", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "checked") }),
+                   [false, true, false])
+            expect("...tagged Current", shown("torUseStart_current_all"), true)
+            expect("...identifying still Recommended", shown("torUseStart_recommended_identifying"), true)
+            fake.torUseReply = "invalid parameters: torUse must be all, identifying or none"
+            find(view.item, "torUseContinue", 0).clicked()
+            expect("Continue unchanged keeps all-Tor", fake.last("setTorUse"), ["setTorUse", "all"])
+        },
+        function (v) {
+            expect("a refusal shows inline", prop("torUseStartNote", "text"), "invalid parameters: torUse must be all, identifying or none")
+            expect("...and the screen stays", shown("torUsePage"), true)
+            fake.torUseReply = ""
+            find(view.item, "torUseStart_none", 0).clicked()
+            expect("picking moves the choice", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "checked") }),
+                   [false, false, true])
+            expect("...Current stays on the node's", shown("torUseStart_current_all") + " " + shown("torUseStart_current_none"), "true false")
+            find(view.item, "torUseContinue", 0).clicked()
+            expect("Continue sends the chosen mode", fake.last("setTorUse"), ["setTorUse", "none"])
+            expect("...and clears the refusal", prop("torUseStartNote", "text"), "")
+        },
+        function (v) {
+            expect("chosen: the screen is gone", shown("torUsePage"), false)
+            v.torUseAnswered = false
+            expect("...and never shows again", shown("torUsePage"), false)
+            // Only while not chosen and no wallet is open: an older node without the key never shows it.
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", sources: [] })
+            fake.healthJson = JSON.stringify({ overall: "ok", sources: [] })
+        },
+        function (v) {
+            expect("an older node module: no screen", shown("torUsePage"), false)
+            expect("...and no choice in the sources", v.torUse, "")
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "identifying", torUseChosen: false, sources: [] })
+            fake.statusJson = JSON.stringify({ state: "ready", network: "regtest", activeNetwork: "regtest", group: "g_seg", family: "bitcoin", synced: true })
+        },
+        function (v) {
+            expect("a wallet open: no screen", shown("torUsePage"), false)
+            expect("...its tabs instead", shown("walletTabs"), true)
+            fake.statusJson = JSON.stringify({ state: "closing", network: "regtest", group: "g_seg", family: "bitcoin" })
+        },
+        function (v) {
+            expect("closing: no screen", shown("torUsePage"), false)
+            // Settings, with an account open: the same three options, disabled.
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "identifying", torUseChosen: true, sources: [] })
+            fake.statusJson = JSON.stringify({ state: "ready", network: "regtest", activeNetwork: "regtest", group: "g_seg", family: "bitcoin", synced: true })
+            v.selectTab(4)
+        },
+        function (v) {
+            expect("Settings has the choice", shown("torUseSettings"), true)
+            expect("...the node's mode checked", ["identifying", "all", "none"].map(function (m) { return prop("torUse_" + m, "checked") }),
+                   [true, false, false])
+            expect("...disabled while an account is open", ["identifying", "all", "none"].map(function (m) { return prop("torUse_" + m, "enabled") }),
+                   [false, false, false])
+            expect("...saying why", shown("torUseLocked") && prop("torUseLocked", "text"), "Close your open accounts to change this.")
+            expect("...the text behind What this means", find(view.item, "torUse_happens_all", 0), null)
+            find(view.item, "torUseExplain", 0).activated("")
+            expect("What this means shows each option's text", prop("torUse_happens_all", "text"),
+                   "<b>What happens:</b> Every connection goes through Tor, to Bitcoin nodes reachable only over Tor.")
+            expect("...Recommended there too", shown("torUse_recommended_identifying"), true)
+            // Closed: the sources sheet before an open, where it can change.
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+        },
+        function (v) {
+            find(view.item, "networkSettingsButton", 0).clicked()
+        },
+        function (v) {
+            expect("the sheet", prop("networkSheet", "visible"), true)
+            var all = findAll(view.item, "torUse_all", 0, []).filter(function (o) { return o.visible })[0]
+            expect("closed: enabled", all ? all.enabled : "<none>", true)
+            expect("...no lock line", shownAny("torUseLocked"), false)
+            expect("identifying: which Tor shows", shownAny("ownTorSwitch") && shownAny("manageTorLink"), true)
+            expect("...and what goes where", prop("privacyLine", "text").indexOf("Block headers and filters come straight from Bitcoin nodes; "
+                   + "what identifies you goes through Tor, which comes with Logos"), 0)
+            all.clicked()
+            expect("Settings sends the mode", fake.last("setTorUse"), ["setTorUse", "all"])
+        },
+        function (v) {
+            expect("...and shows it", prop("torUse_all", "checked"), true)
+            expect("all: the line it had", prop("privacyLine", "text").indexOf("Sources are reached through Tor, which comes with Logos"), 0)
+            findAll(view.item, "torUse_none", 0, []).filter(function (o) { return o.visible })[0].clicked()
+        },
+        function (v) {
+            expect("none taken", fake.last("setTorUse"), ["setTorUse", "none"])
+            expect("none: no which-Tor", shownAny("ownTorSwitch") || shownAny("ownTorPane") || shownAny("manageTorLink")
+                   || shownAny("useBuiltInTorButton"), false)
+            expect("...and says so", prop("privacyLine", "text"), "Tor isn't used: every source is reached directly, and onion sources are off.")
+            fake.torUseReply = "Close the wallet to change these settings."
+            findAll(view.item, "torUse_identifying", 0, []).filter(function (o) { return o.visible })[0].clicked()
+        },
+        function (v) {
+            expect("a refusal shows under the choice", shownAny("torUseNote") && prop("torUseNote", "message"), "Close the wallet to change these settings.")
+            expect("...the mode unchanged", prop("torUse_none", "checked"), true)
+            fake.torUseReply = ""
+            v.closeSheets()
         }
     ]
     property int step: 0

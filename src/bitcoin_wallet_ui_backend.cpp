@@ -569,6 +569,26 @@ QString BitcoinWalletUiBackend::setProxy(QString proxy) {
     return settingsReply(modules().bitcoin_wallet_backend.set_proxy(proxy.trimmed()));
 }
 
+QString BitcoinWalletUiBackend::setTorUse(QString mode) {
+    if (settingsLocked()) return kLocked;
+    const QString reply = modules().bitcoin_wallet_backend.set_tor_use(mode.trimmed());
+    adoptTorUse(parse(reply));
+    return settingsReply(reply);
+}
+
+// The choice shows at once: the reads that carry it follow.
+void BitcoinWalletUiBackend::adoptTorUse(const QJsonObject &reply) {
+    if (!reply.value("ok").toBool() || !reply.value("torUse").isString()) return;
+    const auto patch = [&reply](const QString &json) {
+        QJsonObject o = parse(json);
+        o.insert("torUse", reply.value("torUse"));
+        o.insert("torUseChosen", reply.value("torUseChosen").toBool(true));
+        return compact(o);
+    };
+    if (!sourcesJson().isEmpty()) setSourcesJson(patch(sourcesJson()));
+    if (!healthJson().isEmpty()) setHealthJson(patch(healthJson()));
+}
+
 // Answers as peer_list; refused while a wallet is open, like every source setting.
 QString BitcoinWalletUiBackend::setOwnPeers(QString peersJson) {
     if (settingsLocked()) return kLocked;
