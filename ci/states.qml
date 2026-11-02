@@ -1021,15 +1021,15 @@ Item {
             for (var i = 0; i < 11; i++) peers.push("p" + i + ".onion:38333")
             fake.peerListJson = JSON.stringify({ network: "regtest", ownPeers: [], usable: peers, route: "onion", kyotoTor: true,
                 counts: { list: 11, learned: 3, seed: 8, usable: 14, okLast30d: 6 },
-                list: { format: 1, network: "regtest", version: "1", peers: peers, keyId: "test-d680f3cac9837bf9",
-                        note: "PROVISIONAL: from 1 run, not the plan's 6 of 7 days. Signed with a TEST key: not a release." } })
+                list: { format: 1, network: "regtest", version: "1", peers: peers,
+                        note: "PROVISIONAL: from 1 run, not the plan's 6 of 7 days." } })
             find(view.item, "networkSettingsButton", 0).clicked()
         },
         function (v) {
             expandAdvanced()
             expandSources(["kyoto"])
-            expect("the peer book", prop("curatedLine", "text"), "14 known peers: 11 from the signed list, 3 learned · 6 worked in the last 30 days")
-            expect("...the signed list's standing", prop("signedListNote", "text"), "The signed list is provisional, and signed with a test key, not a release.")
+            expect("the peer book", prop("curatedLine", "text"), "14 known peers: 11 from the curated list, 3 learned · 6 worked in the last 30 days")
+            expect("...the curated list's standing", prop("curatedListNote", "text"), "The curated list is provisional.")
             expect("...and how it grows", prop("peerBookLine", "text"), "The wallet learns working peers from the peers it already uses; "
                    + "if too few work, it asks a few of Bitcoin Core's built-in onion nodes for more.")
             expect("no peers of your own yet", shownAny("useCuratedButton"), false)

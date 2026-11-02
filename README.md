@@ -183,8 +183,8 @@ and each open allowed in the Signer app, and every send is approved there.
   - No-chain, unreachable-proxy and source-health errors remain visible. A server reached in
     plain text outside Tor is marked Not encrypted. One-operator diagnostics live in Advanced.
   - Under Kyoto, the install's peer book (`peer_list`'s `counts`): "N known peers: M from the
-    signed list, K learned · L worked in the last 30 days", whether the signed list is provisional
-    or signed with a test key, and how it grows: the wallet learns working peers from the ones it
+    curated list, K learned · L worked in the last 30 days", whether the curated list is
+    provisional, and how it grows: the wallet learns working peers from the ones it
     uses, and asks a few of Bitcoin Core's built-in onion nodes for more if too few work. Your own
     peers (`set_own_peers`, at most 64) replace all of these, so Kyoto connects to them alone,
     directly on your network, otherwise through Tor; "Use the known peers again" sends `[]`.

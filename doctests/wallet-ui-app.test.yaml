@@ -340,17 +340,17 @@ sections:
               find_value: "bitcoinWalletRoot"
               property: "expandedSources"
               value: ["kyoto"]
-            - name: "Under Kyoto, the install's peer book: the signed list, peers learned, and how many worked lately"
+            - name: "Under Kyoto, the install's peer book: the curated list, peers learned, and how many worked lately"
               action: expect_property
               find_value: "curatedLine"
               property: "text"
-              value: "14 known peers: 11 from the signed list, 3 learned · 6 worked in the last 30 days"
+              value: "14 known peers: 11 from the curated list, 3 learned · 6 worked in the last 30 days"
               timeout: 15000
-            - name: "...and that the signed list is provisional and test-signed"
+            - name: "...and that the curated list is provisional"
               action: expect_property
-              find_value: "signedListNote"
+              find_value: "curatedListNote"
               property: "text"
-              value: "The signed list is provisional, and signed with a test key, not a release."
+              value: "The curated list is provisional."
             - name: "A peer of your own"
               action: set_text
               find_by: "objectName"

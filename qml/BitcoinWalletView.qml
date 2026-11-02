@@ -404,7 +404,7 @@ Item {
     readonly property var prunedGap: walletOpen && status.node && status.node.prunedGap && typeof status.node.prunedGap === "object"
                                      ? status.node.prunedGap : null
     readonly property var probe: ready && backend.probeJson !== "" ? j(backend.probeJson, "{}") : ({})
-    // Kyoto's peers: the install's peer book (the signed list and peers learned), and your own, which replace it.
+    // Kyoto's peers: the install's peer book (the curated list and peers learned), and your own, which replace it.
     readonly property var peerList: ready && backend.peerListJson !== "" ? j(backend.peerListJson, "{}") : ({})
     readonly property var ownPeers: Array.isArray(peerList.ownPeers) ? peerList.ownPeers : []
     readonly property var curated: peerList.list && typeof peerList.list === "object" ? peerList.list : ({})
@@ -413,14 +413,11 @@ Item {
         var c = root.peerCounts
         var m = root.isNum(c.list) ? Number(c.list) : (Array.isArray(root.curated.peers) ? root.curated.peers.length : 0)
         var k = root.isNum(c.learned) ? Number(c.learned) : 0
-        return (m + k) + ((m + k) === 1 ? " known peer: " : " known peers: ") + m + " from the signed list, " + k + " learned"
+        return (m + k) + ((m + k) === 1 ? " known peer: " : " known peers: ") + m + " from the curated list, " + k + " learned"
                + (root.isNum(c.okLast30d) ? " · " + c.okLast30d + " worked in the last 30 days" : "")
     }
-    function signedListNote() {
-        var parts = []
-        if (/^\s*provisional/i.test(String(root.curated.note || ""))) parts.push("provisional")
-        if (/^test-/.test(String(root.curated.keyId || ""))) parts.push("signed with a test key, not a release")
-        return parts.length ? "The signed list is " + parts.join(", and ") + "." : ""
+    function curatedListNote() {
+        return /^\s*provisional/i.test(String(root.curated.note || "")) ? "The curated list is provisional." : ""
     }
     property string ownPeersNote: ""
     function setOwnPeers(list, done) {
@@ -1492,9 +1489,9 @@ Item {
                         LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
                         LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                                     font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
-                        LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        LogosText { objectName: "curatedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                    text: root.signedListNote() }
+                                    text: root.curatedListNote() }
                         LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
                                     color: Theme.palette.textSecondary
                                     text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "

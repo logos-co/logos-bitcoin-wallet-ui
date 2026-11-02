@@ -1457,8 +1457,8 @@ impl Sim {
         let n = if net == "testnet4" { 1 } else { 11 };
         let peers: Vec<String> = (0..n).map(|i| format!("peer{i}{}.onion:38333", "a".repeat(46))).collect();
         json!({"format": 1, "network": net, "version": "202610110405", "created": "2026-10-11T04:05:49Z", "date": "2026-10-11",
-               "note": "PROVISIONAL: from 1 run (2026-10-11), not the plan's 6 of 7 days. Signed with a TEST key: not a release.",
-               "refreshUrl": null, "peers": peers, "keyId": "test-d680f3cac9837bf9", "signature": "00"})
+               "note": "PROVISIONAL: from 1 run (2026-10-11), not the plan's 6 of 7 days.",
+               "refreshUrl": null, "peers": peers})
     }
 
     /// The node module's peer_list: the curated list, your own peers, and how Kyoto reaches them.
@@ -1471,7 +1471,7 @@ impl Sim {
         let route = if !own.is_empty() && own.iter().all(|h| is_lan(&host(h))) { "direct" }
                     else if own.iter().all(|h| host(h).ends_with(".onion")) { "onion" } else { "tor" };
         let usable = if own.is_empty() { list["peers"].clone() } else { json!(own) };
-        // The install's peer book: the signed list, peers learned from it, and Core's onion seeds.
+        // The install's peer book: the curated list, peers learned from it, and Core's onion seeds.
         let listed = list["peers"].as_array().map_or(0, Vec::len);
         let learned = if net == "signet" { 3 } else { 0 };
         let usable_n = if own.is_empty() { listed + learned } else { own.len() };
