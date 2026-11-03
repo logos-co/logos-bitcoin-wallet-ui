@@ -289,6 +289,34 @@ Item {
         expect("authority asked, none agrees", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: true } })),
                "The chain: headers from Electrum servers, checked here · 0 servers agree")
         expect("kyoto not asked yet", v.authorityLine({ authority: { kind: "kyoto", peers: 0, asked: false } }), "The chain: Bitcoin peers, through block filters · connecting")
+        // A Kyoto restart still dialling connects; it reads as isolated once its dials failed and it stopped.
+        var servers = [{ id: "fee", state: "ok", tip: 974135, operator: "a" }]
+        var restart = mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 969082, rescanFrom: 969082,
+                                authority: { kind: "kyoto", height: 974135, tipAgeSecs: 300, peers: 0, asked: true },
+                                kyoto: { running: true, scanned: 970000, phase: "syncing", progress: 0 } })
+        expect("a Kyoto start dialling", v.syncLabel(restart), "Connecting to the chain's sources… · last known block 974,135")
+        expect("...its chip", v.syncChip(restart), "Connecting…")
+        expect("...its chain line", v.authorityLine(restart), "The chain: Bitcoin peers, through block filters · connecting")
+        expect("...not degraded", v.walletOverall(servers, restart), "ok")
+        restart.kyoto.running = false
+        expect("its dials failed: none agrees", v.syncLabel(restart), "No source agrees · block 974,135, tip 5 min old · Kyoto · 0 peers")
+        expect("...its chip", v.syncChip(restart), "No sources")
+        expect("...its chain line", v.authorityLine(restart), "The chain: Bitcoin peers, through block filters · 0 peers")
+        expect("...degraded", v.walletOverall(servers, restart), "degraded")
+        restart.kyoto.running = true
+        restart.authority.kind = "electrum_headers"
+        expect("servers' headers with none agreeing: not Kyoto's dials", v.syncChip(restart), "No sources")
+        restart.authority = { kind: "kyoto", height: 974135, tipAgeSecs: 300, peers: 3, asked: true }
+        restart.kyoto = { running: true, scanned: 969582, phase: "filters", progress: 0.34 }
+        restart.syncPercent = 34
+        expect("a rescan the sync line counts", v.syncLabel(restart), "Checking block filters… block 969,582 of 974,135 · 9% · Kyoto · 3 peers")
+        expect("...so the rescan pane gives no figure", v.syncLineCounts(restart), true)
+        restart.kyoto.scanned = 974134
+        expect("a finished scan: the rescan pane counts", v.syncLineCounts(restart), false)
+        expect("history from Kyoto", v.historyName("kyoto"), "Bitcoin peers")
+        expect("...from your node", v.historyName("local_node"), "your own node")
+        expect("...from an RPC node", v.historyName("rpc_node"), "Bitcoin Core RPC")
+        expect("...from a server not listed", v.historyName("gone"), "gone")
         expect("chip stalled", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 4000, peers: 2 } })), "Stalled")
 
         var sends = [
@@ -605,6 +633,15 @@ Item {
             expect("...the chip", prop("syncChip", "text"), "Filters 4%")
             expect("...its bar, not the backend's 100%", shown("syncProgress") && !prop("syncProgress", "indeterminate")
                    && Math.abs(prop("syncProgress", "value") - 0.04) < 1e-9, true)
+            var rescan = JSON.parse(fake.statusJson)
+            rescan.rescanFrom = 481824
+            rescan.syncPercent = 30
+            fake.statusJson = JSON.stringify(rescan)
+        },
+        function (v) {
+            expect("rendered: a Kyoto rescan, one figure", prop("syncLine", "text"), "Checking block filters… block 501,959 of 973,920 · 4% · Kyoto · 3 peers")
+            expect("...the rescan pane names where it starts", prop("rescanLine", "text"), "Rescanning from block 481,824")
+            expect("...one bar", shown("syncProgress") && !shown("rescanProgress"), true)
             fake.statusJson = scene.syncedMainnet
             fake.feeRatesJson = ""
             v.selectTab(1)
@@ -965,6 +1002,7 @@ Item {
         function (v) {
             expandSources(["mine", "plain", "newsrv"])
             expect("LAN servers under your own node", prop("ownNodeSources", "entries").length, 3)
+            expect("history from a server: its label", v.historyName("mine"), "My server")
             expect("untrusted certificate shown", String(prop("certDetails_mine", "text")).indexOf("Subject CN=electrs.lan, issued by CN=electrs.lan") === 0, true)
             expect("trust offered", shown("trustCert_mine"), true)
             expect("plain text marked", shown("notEncryptedBadge_plain"), true)
@@ -1262,6 +1300,7 @@ Item {
         },
         function (v) {
             expect("Kyoto's filters learn no address: no server is named", String(prop("gapLimitSheet", "message")).indexOf("history server"), -1)
+            expect("the history line names Kyoto as the chain line does", prop("historyLine", "text"), "History from Bitcoin peers")
             v.selectTab(0)
             fake.statusJson = JSON.stringify({ state: "syncing", network: "mainnet", authority: { kind: "kyoto", peers: 0 } })
             fake.sourcesJson = JSON.stringify({ network: "mainnet", proxy: "socks5h://127.0.0.1:9050", sources: [

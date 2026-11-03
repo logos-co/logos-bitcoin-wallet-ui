@@ -60,7 +60,9 @@ and each open allowed in the Signer app, and every send is approved there.
     "Older blocks via <source>", or a notice while nothing can scan it. Until the open's first
     round of asking the chain's sources ends (`authority.asked` false), last session's chain reads
     "Connecting to the chain's sources… · last known block N", never "No source agrees": the chip,
-    the authority line and the sources badge wait for that answer too. While the chain's headers
+    the authority line and the sources badge wait for that answer too. So does a Kyoto start still
+    dialling (`kyoto.running`, no peer yet): it reads "No source agrees" once its dials have failed
+    and it stopped. While the chain's headers
     come in (`authority.headers`), it reads "Reading the chain's headers… 84,000 of 157,000", or
     "… block 6,000" under Kyoto, whose peers' tip isn't known, and the chip "Headers 53%"; the
     server sending them counts as agreeing. A first sync from Kyoto's peers reads "… block 727,000
@@ -73,12 +75,15 @@ and each open allowed in the Signer app, and every send is approved there.
     a tip older than an hour is not "Stalled" while Kyoto's best header (`kyoto.headers`) is past it:
     those headers reach the chain with the scan's next update. A core
     without `kyoto.scanned` keeps the old rule.
+  - The history line names its source as the chain line does: "History from Bitcoin peers", "… your
+    own node", "… Bitcoin Core RPC", or a server's label.
   - The core keeps each account's birthday: an account's first open on a network asks when it was
     first used (a day, "It's new" for today, or "I don't know"), sent as open_wallet's `birthday`.
     A wallet without one (`needsBirthday`) asks again: a day, or "I don't know" (`set_birthday`,
     a job; `{ height: 0 }` scans from where the wallet's kind of address began). Settings changes it.
     A refusal, such as a day after its first payment, shows with the core's reason; while
-    `rescanFrom` holds, Home reads "Rescanning from block H", with a share only under Kyoto.
+    `rescanFrom` holds, Home reads "Rescanning from block H", with its share (`syncPercent`) and a bar
+    only while the sync line has no bar of its own: one figure per rescan.
   - While Kyoto's matched blocks are fetched over Tor (`kyoto.tor`), a line under the authority says
     "Fetching N blocks with your payments over Tor", or "Waiting for Tor: N blocks with your
     payments not fetched yet" while Tor can't be reached; nothing goes direct meanwhile.

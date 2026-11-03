@@ -654,7 +654,7 @@ Item {
         if (!root.isNum(a.height)) return peers > 0 ? "headers" : "connecting"
         // Last session's chain before any source answered this open: no news, not "none agrees".
         if (peers <= 0 && a.asked === false) return "connecting"
-        if (peers <= 0) return "isolated"
+        if (peers <= 0) return root.kyotoDialling(st) ? "connecting" : "isolated"
         // The wallet's chain follows the headers; under Kyoto, its scan of filters says whether
         // payments were checked, a block or two behind the tip being the newest block's catch-up.
         var scan = root.kyotoScan(st)
@@ -668,6 +668,24 @@ Item {
         var ahead = scan !== null && !caughtUp && root.isNum((st.kyoto || {}).headers) && Number(st.kyoto.headers) > scan.tip
         if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600 && !ahead) return "stalled"
         return caughtUp ? "synced" : "syncing"
+    }
+    // A Kyoto start whose dials are still out; it stops once they have all failed.
+    function kyotoDialling(st) {
+        var a = st && st.authority ? st.authority : {}
+        return a.kind === "kyoto" && !!st.kyoto && st.kyoto.running === true && !(Number(a.peers) > 0)
+    }
+    // Where the sync line's bar counts a rescan, the rescan pane leaves the figure to it.
+    function syncLineCounts(st) {
+        var s = root.syncState(st)
+        return s === "syncing" || s === "headers"
+    }
+    // The history line's source, named as the chain line names it.
+    function historyName(id) {
+        if (id === "kyoto") return "Bitcoin peers"
+        if (id === "local_node" || id === "local") return "your own node"
+        if (id === "rpc_node") return "Bitcoin Core RPC"
+        var s = root.sourceList.filter(function (x) { return x.id === id })[0]
+        return s && s.label ? s.label : String(id || "")
     }
     // What decides the chain, as the sync line names it.
     function authorityName(st) {
@@ -815,7 +833,7 @@ Item {
     function authorityLine(st) {
         var a = st && st.authority ? st.authority : {}
         var n = root.isNum(a.peers) ? Number(a.peers) : 0
-        var asking = n === 0 && a.asked === false
+        var asking = n === 0 && (a.asked === false || root.kyotoDialling(st))
         if (a.kind === "electrum_headers")
             return "The chain: headers from Electrum servers, checked here · "
                    + (asking ? "waiting for their first answer" : n + (n === 1 ? " server agrees" : " servers agree"))
@@ -2545,9 +2563,9 @@ Item {
                                     textFormat: Text.PlainText; font.pixelSize: 12
                                     color: root.kyotoStatus.tor && root.kyotoStatus.tor.waiting === true ? Theme.palette.warning : Theme.palette.textSecondary
                                     text: root.kyotoTorLine(root.status) }
-                        LogosText { visible: !!root.status.historyServer; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        LogosText { objectName: "historyLine"; visible: !!root.status.historyServer; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                    text: "History from " + (root.status.historyServer || "") }
+                                    text: "History from " + root.historyName(root.status.historyServer) }
                         LogosText { visible: !!root.status.lastError; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning
                                     text: "Last sync error: " + (root.status.lastError || "") }
@@ -2572,9 +2590,11 @@ Item {
                                         text: (root.rescanPass(root.status) > 0
                                                ? "Rescanning with a wider address range (pass " + root.rescanPass(root.status) + ")"
                                                : "Rescanning from block " + root.group(root.status.rescanFrom))
-                                              + (root.isNum(root.status.syncPercent) ? " · " + root.status.syncPercent + "%"
-                                                                                     : (root.rescanPass(root.status) > 0 ? "" : "…")) }
+                                              + (root.syncLineCounts(root.status) ? ""
+                                                 : root.isNum(root.status.syncPercent) ? " · " + root.status.syncPercent + "%"
+                                                 : (root.rescanPass(root.status) > 0 ? "" : "…")) }
                             LogosProgressBar { objectName: "rescanProgress"; Layout.fillWidth: true
+                                               visible: !root.syncLineCounts(root.status)
                                                indeterminate: !root.isNum(root.status.syncPercent)
                                                value: root.isNum(root.status.syncPercent) ? Number(root.status.syncPercent) / 100 : 0 }
                         }
@@ -3451,8 +3471,8 @@ Item {
                  + (root.isNum(root.status.birthday) ? ", block " + root.group(root.status.birthday) : "")
                  + ", watching " + gapLimitSheet.wanted + " unused addresses past the last one used. That downloads more."
                  // Kyoto's filters and your node learn no address; a server does.
-                 + (root.status.historyServer && ["kyoto", "local"].indexOf(root.status.historyServer) < 0
-                    ? " Your history server, " + root.status.historyServer + ", will be asked about more addresses." : "")
+                 + (root.status.historyServer && ["kyoto", "local_node", "rpc_node", "local"].indexOf(root.status.historyServer) < 0
+                    ? " Your history server, " + root.historyName(root.status.historyServer) + ", will be asked about more addresses." : "")
         leftActions: [ LogosButton { objectName: "keepGapLimitButton"; text: "Cancel"; onClicked: gapLimitSheet.close() } ]
         rightActions: [
             LogosButton { objectName: "confirmGapLimitButton"; text: "Raise and rescan"
