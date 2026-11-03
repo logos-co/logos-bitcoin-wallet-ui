@@ -53,6 +53,8 @@ Item {
         property string openQueuedJson: ""
         property string peerListJson: ""
         property string gapLimitJson: ""
+        // What setTorUse answers: "" takes the mode, as the backend's reply patches the sources.
+        property string torUseReply: ""
         property var calls: []
         function note(name, args) { calls = calls.concat([[name].concat(args)]) }
         function last(name) {
@@ -95,6 +97,15 @@ Item {
         function addSource(a, k, n) { note("addSource", [a, k, n]); return "" }
         function removeSource(id) { note("removeSource", [id]); return "" }
         function setProxy(p) { note("setProxy", [p]); return "" }
+        function setTorUse(m) {
+            note("setTorUse", [m])
+            if (torUseReply !== "") return torUseReply
+            var o = JSON.parse(sourcesJson || "{}")
+            o.torUse = m
+            o.torUseChosen = true
+            sourcesJson = JSON.stringify(o)
+            return ""
+        }
         function setOwnPeers(p) { note("setOwnPeers", [p]); return "" }
         function clearSuspect(id) { note("clearSuspect", [id]); return "" }
         function refreshSources() {}
@@ -218,6 +229,20 @@ Item {
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973917, phase: "filters" } }),
              "Checking block filters… block 973,917 of 973,920 · 99% · Kyoto · 3 peers"],
+            // A scan's first update brings Kyoto's newer headers: an old tip until then is no stall.
+            [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
+                       kyoto: { scanned: null, phase: "filter_headers", progress: 0.03, headers: 974330 } }),
+             "Checking block filters from block 481,824… · fetching filter headers 12% · Kyoto · 3 peers"],
+            // Its peers with nothing newer, or the scan done, and the tip still old: stalled.
+            [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
+                       kyoto: { scanned: null, phase: "filter_headers", progress: 0.03, headers: 974135 } }),
+             "Stalled · block 974,135, tip 35 hours old · Kyoto · 3 peers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
+                       kyoto: { scanned: 974134, phase: "synced", headers: 974330 } }),
+             "Stalled · block 974,135, tip 35 hours old · Kyoto · 3 peers"],
             // The newest block or two still being checked is caught up.
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973918, phase: "synced" } }),
@@ -254,6 +279,9 @@ Item {
         expect("chip: Kyoto's scan", v.syncChip(scanning), "Filters 4%")
         scanning.kyoto.scanned = null
         expect("...before its first block", v.syncChip(scanning), "Checking filters…")
+        scanning.authority.tipAgeSecs = 126000
+        scanning.kyoto = { scanned: null, phase: "filter_headers", progress: 0.03, headers: 974330 }
+        expect("...an old tip behind its headers: no stall", v.syncChip(scanning), "Checking filters…")
         expect("an estimate behind the chain: no share", v.headersShare({ have: 900000, target: null }, 935424, 935000), null)
         expect("chip without a height, as before", v.syncChip(mainnet({ state: "syncing", authority: { height: null, peers: 2 } })), "Connecting…")
         expect("authority not asked yet", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: false } })),
@@ -261,6 +289,34 @@ Item {
         expect("authority asked, none agrees", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: true } })),
                "The chain: headers from Electrum servers, checked here · 0 servers agree")
         expect("kyoto not asked yet", v.authorityLine({ authority: { kind: "kyoto", peers: 0, asked: false } }), "The chain: Bitcoin peers, through block filters · connecting")
+        // A Kyoto restart still dialling connects; it reads as isolated once its dials failed and it stopped.
+        var servers = [{ id: "fee", state: "ok", tip: 974135, operator: "a" }]
+        var restart = mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 969082, rescanFrom: 969082,
+                                authority: { kind: "kyoto", height: 974135, tipAgeSecs: 300, peers: 0, asked: true },
+                                kyoto: { running: true, scanned: 970000, phase: "syncing", progress: 0 } })
+        expect("a Kyoto start dialling", v.syncLabel(restart), "Connecting to the chain's sources… · last known block 974,135")
+        expect("...its chip", v.syncChip(restart), "Connecting…")
+        expect("...its chain line", v.authorityLine(restart), "The chain: Bitcoin peers, through block filters · connecting")
+        expect("...not degraded", v.walletOverall(servers, restart), "ok")
+        restart.kyoto.running = false
+        expect("its dials failed: none agrees", v.syncLabel(restart), "No source agrees · block 974,135, tip 5 min old · Kyoto · 0 peers")
+        expect("...its chip", v.syncChip(restart), "No sources")
+        expect("...its chain line", v.authorityLine(restart), "The chain: Bitcoin peers, through block filters · 0 peers")
+        expect("...degraded", v.walletOverall(servers, restart), "degraded")
+        restart.kyoto.running = true
+        restart.authority.kind = "electrum_headers"
+        expect("servers' headers with none agreeing: not Kyoto's dials", v.syncChip(restart), "No sources")
+        restart.authority = { kind: "kyoto", height: 974135, tipAgeSecs: 300, peers: 3, asked: true }
+        restart.kyoto = { running: true, scanned: 969582, phase: "filters", progress: 0.34 }
+        restart.syncPercent = 34
+        expect("a rescan the sync line counts", v.syncLabel(restart), "Checking block filters… block 969,582 of 974,135 · 9% · Kyoto · 3 peers")
+        expect("...so the rescan pane gives no figure", v.syncLineCounts(restart), true)
+        restart.kyoto.scanned = 974134
+        expect("a finished scan: the rescan pane counts", v.syncLineCounts(restart), false)
+        expect("history from Kyoto", v.historyName("kyoto"), "Bitcoin peers")
+        expect("...from your node", v.historyName("local_node"), "your own node")
+        expect("...from an RPC node", v.historyName("rpc_node"), "Bitcoin Core RPC")
+        expect("...from a server not listed", v.historyName("gone"), "gone")
         expect("chip stalled", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 4000, peers: 2 } })), "Stalled")
 
         var sends = [
@@ -288,7 +344,13 @@ Item {
             [{ state: "failed", errorCode: "no_wallet", error: "the wallet closed before the send was approved" }, "failed", "The wallet closed before it was sent", 0],
             [{ state: "unknown", abandoned: true, offer: [] }, "forgotten", "Forgotten", 2],
             [{ state: "failed", errorCode: "dust", error: "The smallest amount this address can receive is 294 sats." }, "failed", "The amount is too small for this address", 0],
-            [{ state: "failed", errorCode: "failed", error: "cannot build the send: Output below the dust limit: 0" }, "failed", "The amount is too small for this address", 0]
+            [{ state: "failed", errorCode: "failed", error: "cannot build the send: Output below the dust limit: 0" }, "failed", "The amount is too small for this address", 0],
+            // Failed after the signer approved it: the lane marks Broadcast, not Approve.
+            [{ state: "failed", errorCode: "not_sent", error: "not sent: no peer reached over Tor took the transaction (timed out)", summary: {},
+               approval: "settled", sawSettled: true, sawBroadcasting: true }, "failed", "Not sent: no peer took it over Tor", 2],
+            [{ state: "failed", errorCode: "no_route", error: "no broadcast source answered", summary: {}, sawSettled: true }, "failed", "No source can broadcast it", 2],
+            [{ state: "failed", errorCode: "not_sent", summary: {}, sawBroadcasting: true,
+               error: "not sent: no peer reached over Tor took the transaction (Tor can't be reached at 127.0.0.1:9050: refused)" }, "failed", "Not sent: no peer took it over Tor", 2]
         ]
         for (var s = 0; s < sends.length; s++) {
             expect("outcome " + s, v.sendOutcome(sends[s][0]), sends[s][1])
@@ -301,6 +363,9 @@ Item {
         expect("retry restarted", v.canRetry(sends[20][0]), true)
         expect("no retry rejected", v.canRetry(sends[10][0]), false)
         expect("no retry refused", v.canRetry(sends[15][0]), false)
+        expect("not sent: nothing went out", v.sendDetail(sends[25][0]), "Nothing went out: the peers tried over Tor didn't take it in time. Try again.")
+        expect("...Tor down says so", v.sendDetail(sends[27][0]), "Nothing went out: Tor can't be reached. Try again once it connects.")
+        expect("...and can be tried again", v.canRetry(sends[25][0]), true)
         var unknownSend = { state: "unknown", offer: ["rebroadcast", "request_fee_bump", "abandon_send"] }
         expect("offer forget", v.offers(unknownSend, "abandon_send"), true)
         expect("offer nothing once forgotten", v.offers({ state: "unknown", abandoned: true, offer: [] }, "rebroadcast"), false)
@@ -385,6 +450,13 @@ Item {
         expect("via kyoto", v.viaName("kyoto"), "Kyoto's peers")
         expect("via a server", v.viaName("electrum-0"), "electrum-0")
         expect("tls", v.isTls({ url: "ssl://h:50002" }) && v.isTls({ url: "https://h/api" }) && !v.isTls({ url: "tcp://h:50001" }), true)
+
+        // Kyoto's matched blocks over Tor: nothing goes direct while Tor is down.
+        expect("tor waits", v.kyotoTorLine({ kyoto: { tor: { pending: 3, waiting: true } } }), "Waiting for Tor: 3 blocks with your payments not fetched yet")
+        expect("tor waits, nothing pending", v.kyotoTorLine({ kyoto: { tor: { pending: 0, waiting: true } } }), "Waiting for Tor")
+        expect("tor fetching", v.kyotoTorLine({ kyoto: { tor: { pending: 1, waiting: false } } }), "Fetching 1 block with your payments over Tor")
+        expect("tor idle", v.kyotoTorLine({ kyoto: { tor: { pending: 0, waiting: false } } }), "")
+        expect("no split", v.kyotoTorLine({ kyoto: { tor: null } }), "")
     }
 
     // What renders, against the fake backend; each step runs after the previous one settled.
@@ -570,6 +642,15 @@ Item {
             expect("...the chip", prop("syncChip", "text"), "Filters 4%")
             expect("...its bar, not the backend's 100%", shown("syncProgress") && !prop("syncProgress", "indeterminate")
                    && Math.abs(prop("syncProgress", "value") - 0.04) < 1e-9, true)
+            var rescan = JSON.parse(fake.statusJson)
+            rescan.rescanFrom = 481824
+            rescan.syncPercent = 30
+            fake.statusJson = JSON.stringify(rescan)
+        },
+        function (v) {
+            expect("rendered: a Kyoto rescan, one figure", prop("syncLine", "text"), "Checking block filters… block 501,959 of 973,920 · 4% · Kyoto · 3 peers")
+            expect("...the rescan pane names where it starts", prop("rescanLine", "text"), "Rescanning from block 481,824")
+            expect("...one bar", shown("syncProgress") && !shown("rescanProgress"), true)
             fake.statusJson = scene.syncedMainnet
             fake.feeRatesJson = ""
             v.selectTab(1)
@@ -930,6 +1011,7 @@ Item {
         function (v) {
             expandSources(["mine", "plain", "newsrv"])
             expect("LAN servers under your own node", prop("ownNodeSources", "entries").length, 3)
+            expect("history from a server: its label", v.historyName("mine"), "My server")
             expect("untrusted certificate shown", String(prop("certDetails_mine", "text")).indexOf("Subject CN=electrs.lan, issued by CN=electrs.lan") === 0, true)
             expect("trust offered", shown("trustCert_mine"), true)
             expect("plain text marked", shown("notEncryptedBadge_plain"), true)
@@ -1003,15 +1085,15 @@ Item {
             for (var i = 0; i < 11; i++) peers.push("p" + i + ".onion:38333")
             fake.peerListJson = JSON.stringify({ network: "regtest", ownPeers: [], usable: peers, route: "onion", kyotoTor: true,
                 counts: { list: 11, learned: 3, seed: 8, usable: 14, okLast30d: 6 },
-                list: { format: 1, network: "regtest", version: "1", peers: peers, keyId: "test-d680f3cac9837bf9",
-                        note: "PROVISIONAL: from 1 run, not the plan's 6 of 7 days. Signed with a TEST key: not a release." } })
+                list: { format: 2, network: "regtest", version: "1", peers: peers,
+                        note: "PROVISIONAL: from 1 run, not the plan's 6 of 7 days." } })
             find(view.item, "networkSettingsButton", 0).clicked()
         },
         function (v) {
             expandAdvanced()
             expandSources(["kyoto"])
-            expect("the peer book", prop("curatedLine", "text"), "14 known peers: 11 from the signed list, 3 learned · 6 worked in the last 30 days")
-            expect("...the signed list's standing", prop("signedListNote", "text"), "The signed list is provisional, and signed with a test key, not a release.")
+            expect("the peer book", prop("curatedLine", "text"), "14 known peers: 11 from the curated list, 3 learned · 6 worked in the last 30 days")
+            expect("...the curated list's standing", prop("curatedListNote", "text"), "The curated list is provisional.")
             expect("...and how it grows", prop("peerBookLine", "text"), "The wallet learns working peers from the peers it already uses; "
                    + "if too few work, it asks a few of Bitcoin Core's built-in onion nodes for more.")
             expect("no peers of your own yet", shownAny("useCuratedButton"), false)
@@ -1227,6 +1309,7 @@ Item {
         },
         function (v) {
             expect("Kyoto's filters learn no address: no server is named", String(prop("gapLimitSheet", "message")).indexOf("history server"), -1)
+            expect("the history line names Kyoto as the chain line does", prop("historyLine", "text"), "History from Bitcoin peers")
             v.selectTab(0)
             fake.statusJson = JSON.stringify({ state: "syncing", network: "mainnet", authority: { kind: "kyoto", peers: 0 } })
             fake.sourcesJson = JSON.stringify({ network: "mainnet", proxy: "socks5h://127.0.0.1:9050", sources: [
@@ -1539,6 +1622,135 @@ Item {
         },
         function (v) {
             expect("gone once it unlocks", shown("accountsLockedBanner"), false)
+            // "Use Tor for", asked once. A fresh node store: identifying, not chosen yet.
+            fake.signerWalletsJson = "[]"
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "identifying", torUseChosen: false, sources: [
+                { id: "kyoto", kind: "kyoto", use: true, route: "tor" }] })
+            fake.healthJson = JSON.stringify({ overall: "ok", sources: [], torUse: "identifying", torUseChosen: false,
+                tor: { state: "ready", progress: 100, detail: "", socks: "socks5h://127.0.0.1:9250", answered: true } })
+        },
+        function (v) {
+            expect("a choice not made yet replaces the account start", shown("torUsePage"), true)
+            expect("...the picker hidden", shown("accountSelectorRow"), false)
+            expect("...and the open page", shown("openPage"), false)
+            expect("the intro", prop("torUseIntro", "text").indexOf("How should this wallet use Tor? Tor hides your IP address"), 0)
+            expect("three options", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "text") }),
+                   ["Only what identifies you", "Everything", "Nothing"])
+            expect("each says what happens, pros and cons", ["identifying", "all", "none"].every(function (m) {
+                return ["happens_", "pros_", "cons_"].every(function (k) { return shown("torUseStart_" + k + m) === true }) }), true)
+            expect("...in the plan's words", prop("torUseStart_happens_none", "text"), "<b>What happens:</b> Every connection is direct; Tor isn't used.")
+            expect("fresh: identifying preselected", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "checked") }),
+                   [true, false, false])
+            expect("...and Recommended", shown("torUseStart_recommended_identifying"), true)
+            expect("...no Current tag", ["all", "none", "identifying"].some(function (m) { return shown("torUseStart_current_" + m) === true }), false)
+            find(view.item, "torUseContinue", 0).clicked()
+            expect("Continue sends the preselected mode", fake.last("setTorUse"), ["setTorUse", "identifying"])
+        },
+        function (v) {
+            expect("answered, the account start shows", shown("torUsePage") + " " + shown("openPage") + " " + shown("accountSelectorRow"), "false true true")
+            expect("...and the node keeps it chosen", v.torUseUnchosen, false)
+            // An existing install: today's all-Tor routing, not chosen yet. A new session, so nothing answered.
+            v.torUseAnswered = false
+            v.torChoice = ""
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "all", torUseChosen: false, sources: [
+                { id: "kyoto", kind: "kyoto", use: true, route: "tor" }] })
+        },
+        function (v) {
+            expect("existing: the screen shows once more", shown("torUsePage"), true)
+            expect("...its routing preselected", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "checked") }),
+                   [false, true, false])
+            expect("...tagged Current", shown("torUseStart_current_all"), true)
+            expect("...identifying still Recommended", shown("torUseStart_recommended_identifying"), true)
+            fake.torUseReply = "invalid parameters: torUse must be all, identifying or none"
+            find(view.item, "torUseContinue", 0).clicked()
+            expect("Continue unchanged keeps all-Tor", fake.last("setTorUse"), ["setTorUse", "all"])
+        },
+        function (v) {
+            expect("a refusal shows inline", prop("torUseStartNote", "text"), "invalid parameters: torUse must be all, identifying or none")
+            expect("...and the screen stays", shown("torUsePage"), true)
+            fake.torUseReply = ""
+            find(view.item, "torUseStart_none", 0).clicked()
+            expect("picking moves the choice", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "checked") }),
+                   [false, false, true])
+            expect("...Current stays on the node's", shown("torUseStart_current_all") + " " + shown("torUseStart_current_none"), "true false")
+            find(view.item, "torUseContinue", 0).clicked()
+            expect("Continue sends the chosen mode", fake.last("setTorUse"), ["setTorUse", "none"])
+            expect("...and clears the refusal", prop("torUseStartNote", "text"), "")
+        },
+        function (v) {
+            expect("chosen: the screen is gone", shown("torUsePage"), false)
+            v.torUseAnswered = false
+            expect("...and never shows again", shown("torUsePage"), false)
+            // Only while not chosen and no wallet is open: an older node without the key never shows it.
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", sources: [] })
+            fake.healthJson = JSON.stringify({ overall: "ok", sources: [] })
+        },
+        function (v) {
+            expect("an older node module: no screen", shown("torUsePage"), false)
+            expect("...and no choice in the sources", v.torUse, "")
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "identifying", torUseChosen: false, sources: [] })
+            fake.statusJson = JSON.stringify({ state: "ready", network: "regtest", activeNetwork: "regtest", group: "g_seg", family: "bitcoin", synced: true })
+        },
+        function (v) {
+            expect("a wallet open: no screen", shown("torUsePage"), false)
+            expect("...its tabs instead", shown("walletTabs"), true)
+            fake.statusJson = JSON.stringify({ state: "closing", network: "regtest", group: "g_seg", family: "bitcoin" })
+        },
+        function (v) {
+            expect("closing: no screen", shown("torUsePage"), false)
+            // Settings, with an account open: the same three options, disabled.
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "identifying", torUseChosen: true, sources: [] })
+            fake.statusJson = JSON.stringify({ state: "ready", network: "regtest", activeNetwork: "regtest", group: "g_seg", family: "bitcoin", synced: true })
+            v.selectTab(4)
+        },
+        function (v) {
+            expect("Settings has the choice", shown("torUseSettings"), true)
+            expect("...the node's mode checked", ["identifying", "all", "none"].map(function (m) { return prop("torUse_" + m, "checked") }),
+                   [true, false, false])
+            expect("...disabled while an account is open", ["identifying", "all", "none"].map(function (m) { return prop("torUse_" + m, "enabled") }),
+                   [false, false, false])
+            expect("...saying why", shown("torUseLocked") && prop("torUseLocked", "text"), "Close your open accounts to change this.")
+            expect("...the text behind What this means", find(view.item, "torUse_happens_all", 0), null)
+            find(view.item, "torUseExplain", 0).activated("")
+            expect("What this means shows each option's text", prop("torUse_happens_all", "text"),
+                   "<b>What happens:</b> Every connection goes through Tor, to Bitcoin nodes reachable only over Tor.")
+            expect("...Recommended there too", shown("torUse_recommended_identifying"), true)
+            // Closed: the sources sheet before an open, where it can change.
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+        },
+        function (v) {
+            find(view.item, "networkSettingsButton", 0).clicked()
+        },
+        function (v) {
+            expect("the sheet", prop("networkSheet", "visible"), true)
+            var all = findAll(view.item, "torUse_all", 0, []).filter(function (o) { return o.visible })[0]
+            expect("closed: enabled", all ? all.enabled : "<none>", true)
+            expect("...no lock line", shownAny("torUseLocked"), false)
+            expect("identifying: which Tor shows", shownAny("ownTorSwitch") && shownAny("manageTorLink"), true)
+            expect("...and what goes where", prop("privacyLine", "text").indexOf("Block headers and filters come straight from Bitcoin nodes; "
+                   + "what identifies you goes through Tor, which comes with Logos"), 0)
+            all.clicked()
+            expect("Settings sends the mode", fake.last("setTorUse"), ["setTorUse", "all"])
+        },
+        function (v) {
+            expect("...and shows it", prop("torUse_all", "checked"), true)
+            expect("all: the line it had", prop("privacyLine", "text").indexOf("Sources are reached through Tor, which comes with Logos"), 0)
+            findAll(view.item, "torUse_none", 0, []).filter(function (o) { return o.visible })[0].clicked()
+        },
+        function (v) {
+            expect("none taken", fake.last("setTorUse"), ["setTorUse", "none"])
+            expect("none: no which-Tor", shownAny("ownTorSwitch") || shownAny("ownTorPane") || shownAny("manageTorLink")
+                   || shownAny("useBuiltInTorButton"), false)
+            expect("...and says so", prop("privacyLine", "text"), "Tor isn't used: every source is reached directly, and onion sources are off.")
+            fake.torUseReply = "Close the wallet to change these settings."
+            findAll(view.item, "torUse_identifying", 0, []).filter(function (o) { return o.visible })[0].clicked()
+        },
+        function (v) {
+            expect("a refusal shows under the choice", shownAny("torUseNote") && prop("torUseNote", "message"), "Close the wallet to change these settings.")
+            expect("...the mode unchanged", prop("torUse_none", "checked"), true)
+            fake.torUseReply = ""
+            v.closeSheets()
         }
     ]
     property int step: 0

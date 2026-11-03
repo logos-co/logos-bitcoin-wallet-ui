@@ -5,7 +5,8 @@ project_name: logos-bitcoin-wallet-ui
 # call_method. Offscreen with the software renderer: no window, no GPU, screenshots still work.
 
 intro: |
-  The whole app in one headless run, in Basecamp's standalone mode: a wallet is opened through the
+  The whole app in one headless run, in Basecamp's standalone mode: before any account it asks once
+  what Tor is for (a fresh install's Only what identifies you, kept), a wallet is opened through the
   keys app's intent (the first attempt withdrawn), the sources are set before it opens and locked
   while it is open, a fresh BIP21 address is handed out, and sends go through the signer app's
   intent to each of their outcomes: nobody acknowledging within 60 s and asking again, a cancel, a
@@ -19,7 +20,7 @@ intro: |
   open asked for past the picker is refused too.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 95b8f0c) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend 95b8f0c, plus set_tor_use) with a script behind it, and no
   wallet core, keystore, chain or network. The signer manager is one too, doctests/fixture-manager:
   its `accounts` answers a keystore wallet on each chain and a Keycard account with no card
   inserted, which the account picker names by its seed wallet and still opens: only sending needs
@@ -73,6 +74,42 @@ sections:
               property: "text"
               value: "No wallet open"
               timeout: 60000
+            - name: "Before any account, the app asks once what Tor is for, in place of the account start"
+              action: expect_property
+              find_value: "torUsePage"
+              property: "visible"
+              value: true
+              timeout: 30000
+              screenshot: "wallet-tor-use.png"
+            - name: "A fresh install has Only what identifies you selected"
+              action: expect_property
+              find_value: "torUseStart_identifying"
+              property: "checked"
+              value: true
+              timeout: 5000
+            - name: "...tagged Recommended"
+              action: expect_property
+              find_value: "torUseStart_recommended_identifying"
+              property: "visible"
+              value: true
+              timeout: 5000
+            - name: "Continue keeps it"
+              action: call_method
+              find_value: "torUseContinue"
+              method: "clicked"
+              args: []
+            - name: "The account start takes its place"
+              action: expect_property
+              find_value: "openPage"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "...and the backend has it chosen, so the screen never shows again"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "torUseUnchosen"
+              value: false
+              timeout: 15000
             - name: "Choose signet"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -101,6 +138,12 @@ sections:
               property: "sourcesConfigured"
               value: true
               timeout: 30000
+            - name: "Network privacy shows the choice, which can change while no account is open"
+              action: expect_property
+              find_value: "torUse_identifying"
+              property: "checked"
+              value: true
+              timeout: 10000
             - name: "Expand advanced settings"
               action: call_method
               find_value: "advancedSourcesButton"
@@ -297,17 +340,17 @@ sections:
               find_value: "bitcoinWalletRoot"
               property: "expandedSources"
               value: ["kyoto"]
-            - name: "Under Kyoto, the install's peer book: the signed list, peers learned, and how many worked lately"
+            - name: "Under Kyoto, the install's peer book: the curated list, peers learned, and how many worked lately"
               action: expect_property
               find_value: "curatedLine"
               property: "text"
-              value: "14 known peers: 11 from the signed list, 3 learned · 6 worked in the last 30 days"
+              value: "14 known peers: 11 from the curated list, 3 learned · 6 worked in the last 30 days"
               timeout: 15000
-            - name: "...and that the signed list is provisional and test-signed"
+            - name: "...and that the curated list is provisional"
               action: expect_property
-              find_value: "signedListNote"
+              find_value: "curatedListNote"
               property: "text"
-              value: "The signed list is provisional, and signed with a test key, not a release."
+              value: "The curated list is provisional."
             - name: "A peer of your own"
               action: set_text
               find_by: "objectName"
@@ -408,13 +451,13 @@ sections:
               action: expect_property
               find_value: "keysWaitTitle"
               property: "text"
-              value: "Waiting for the keys app"
+              value: "Waiting for the Signer app"
               timeout: 5000
             - name: "No keys app is installed: Basecamp answers the intent unavailable, and the app says what to do"
               action: expect_property
               find_value: "keysNote"
               property: "text"
-              value: "The keys app is not installed here. Install it, open it, and approve the request under Requests from apps."
+              value: "The Signer app is not installed here. Install it, open it, and allow the request in its Wallets tab."
               timeout: 15000
               screenshot: "wallet-waiting-keys.png"
             - name: "Cancel"
@@ -1204,6 +1247,18 @@ sections:
               value: true
               timeout: 10000
               screenshot: "wallet-descriptors.png"
+            - name: "Use Tor for is locked while an account is open"
+              action: expect_property
+              find_value: "torUseLocked"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "...its options off"
+              action: expect_property
+              find_value: "torUse_all"
+              property: "enabled"
+              value: false
+              timeout: 5000
             - name: "The wallet's address gap limit, in its details"
               action: expect_property
               find_value: "walletGapLimit"

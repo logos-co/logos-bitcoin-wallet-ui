@@ -6,6 +6,14 @@ from `signer_manager_module`. It takes no signing password and
 holds no key material: wallets are created and restored in the keys app, each wallet is unlocked
 and each open allowed in the Signer app, and every send is approved there.
 
+- **Use Tor for, asked once:** while the node module's `torUseChosen` is false, the app shows this
+  choice in place of the account start, before any account is opened. Each option, Only what
+  identifies you (`identifying`), Everything (`all`) and Nothing (`none`), says what happens, its
+  pros and its cons. The node module's current `torUse` is preselected: a fresh install's
+  `identifying`, tagged Recommended, or an existing install's routing, tagged Current, so Continue
+  never weakens it. Continue sends `set_tor_use(mode)`; a refusal shows on the screen, and once
+  it is taken the account start appears and the screen does not come back. A node module without
+  `torUseChosen` never shows it. While a wallet is open, opening or closing it is not shown.
 - **Account selector:** [logos-account-kit](https://github.com/logos-co/logos-account-kit)'s
   picker, vendored in `qml/accountkit`, over `signer_manager.roster()`. It lists each Bitcoin and
   Taproot account once, never once per signer, including accounts never opened in this app. Mainnet
@@ -52,7 +60,9 @@ and each open allowed in the Signer app, and every send is approved there.
     "Older blocks via <source>", or a notice while nothing can scan it. Until the open's first
     round of asking the chain's sources ends (`authority.asked` false), last session's chain reads
     "Connecting to the chain's sources… · last known block N", never "No source agrees": the chip,
-    the authority line and the sources badge wait for that answer too. While the chain's headers
+    the authority line and the sources badge wait for that answer too. So does a Kyoto start still
+    dialling (`kyoto.running`, no peer yet): it reads "No source agrees" once its dials have failed
+    and it stopped. While the chain's headers
     come in (`authority.headers`), it reads "Reading the chain's headers… 84,000 of 157,000", or
     "… block 6,000" under Kyoto, whose peers' tip isn't known, and the chip "Headers 53%"; the
     server sending them counts as agreeing. A first sync from Kyoto's peers reads "… block 727,000
@@ -61,14 +71,22 @@ and each open allowed in the Signer app, and every send is approved there.
   - Under Kyoto, "Synchronized" waits for its scan of block filters (`kyoto.scanned`), not the
     headers the wallet's chain (`walletTip`) follows: until the scan is within two blocks of the
     tip, the line reads "Checking block filters… block 501,959 of 973,920 · 4%" (with "· fetching
-    filter headers" while a start fetches them first), the chip "Filters 4%", with a bar. A core
+    filter headers 12%" while a start fetches them first), the chip "Filters 4%", with a bar. Mid-scan,
+    a tip older than an hour is not "Stalled" while Kyoto's best header (`kyoto.headers`) is past it:
+    those headers reach the chain with the scan's next update. A core
     without `kyoto.scanned` keeps the old rule.
+  - The history line names its source as the chain line does: "History from Bitcoin peers", "… your
+    own node", "… Bitcoin Core RPC", or a server's label.
   - The core keeps each account's birthday: an account's first open on a network asks when it was
     first used (a day, "It's new" for today, or "I don't know"), sent as open_wallet's `birthday`.
     A wallet without one (`needsBirthday`) asks again: a day, or "I don't know" (`set_birthday`,
     a job; `{ height: 0 }` scans from where the wallet's kind of address began). Settings changes it.
     A refusal, such as a day after its first payment, shows with the core's reason; while
-    `rescanFrom` holds, Home reads "Rescanning from block H", with a share only under Kyoto.
+    `rescanFrom` holds, Home reads "Rescanning from block H", with its share (`syncPercent`) and a bar
+    only while the sync line has no bar of its own: one figure per rescan.
+  - While Kyoto's matched blocks are fetched over Tor (`kyoto.tor`), a line under the authority says
+    "Fetching N blocks with your payments over Tor", or "Waiting for Tor: N blocks with your
+    payments not fetched yet" while Tor can't be reached; nothing goes direct meanwhile.
   - Source alerts show as a banner above the tabs; Kyoto naming a chain the checks refuse
     (`authority_suspect`) has a banner of its own.
   - While the Tor that comes with Logos joins (`source_health.tor`), a peerless chain routed
@@ -111,7 +129,10 @@ and each open allowed in the Signer app, and every send is approved there.
     warnings. Change too small to spend offers "Add it to the fee (+X sats)": the send is withdrawn
     and asked again with `smallChangeToFee`, and the review then says the change went to the fee.
   - It follows the send to a final state. Expired (`errorCode` `expired`) offers Ask again, the
-    same request once more; rejected, cancelled and the other codes say what happened. An unknown
+    same request once more; rejected, cancelled and the other codes say what happened. Not sent
+    (`not_sent`: no peer reached over Tor took it, so nothing went out) offers Try again. A send that
+    fails after the signer approved it (`sawSettled`, `sawBroadcasting`) marks Broadcast, not
+    Approve in Signer. An unknown
     outcome offers Rebroadcast, Speed up and Forget this payment (`abandon_send`, behind a
     confirmation), and a banner stays above the tabs until it is settled or forgotten; a review is
     refused meanwhile. A forgotten payment shows as Forgotten, with the backend's note.
@@ -139,11 +160,15 @@ and each open allowed in the Signer app, and every send is approved there.
     rescans from its birthday and downloads more, and an enabled history server is asked about
     more addresses. The rescan shows on Home as a birthday's does; refusals (`invalid`, `busy`)
     are said in plain words.
-  - **Network privacy**, above the sources: the Tor that comes with Logos (the node module's
-    default, `set_proxy("tor")`), with its state badge, join progress, what stops it, Manage
-    Tor…, and "Use my own Tor instead", which opens a `socks5h://` field ("Use it"); turning the
-    switch off goes back to the built-in Tor. The info button says what Tor, its absence and a
-    server on your own network each reveal.
+  - **Network privacy**, above the sources: **Use Tor for**, the first run's three options
+    (`set_tor_use`), each with its text behind "What this means". It changes only while no
+    account is open: with one open, opening or closing the options are off, with "Close your
+    open accounts to change this." Then which Tor: the one that comes with Logos (the node
+    module's default, `set_proxy("tor")`), with its state badge, join progress, what stops it,
+    Manage Tor…, and "Use my own Tor instead", which opens a `socks5h://` field ("Use it");
+    turning the switch off goes back to the built-in Tor. Which Tor applies to Everything and Only
+    what identifies you, so it is hidden under Nothing. The info button says what Tor, its absence
+    and a server on your own network each reveal.
   - Sources groups **Public service** by **Bitcoin Core RPC**, **Electrum** and **Esplora**,
     followed by **Your own node**. Public RPC endpoints appear in the RPC group; local-network
     endpoints appear with the bundled node. PublicNode is built in for mainnet, disabled until
@@ -168,8 +193,8 @@ and each open allowed in the Signer app, and every send is approved there.
   - No-chain, unreachable-proxy and source-health errors remain visible. A server reached in
     plain text outside Tor is marked Not encrypted. One-operator diagnostics live in Advanced.
   - Under Kyoto, the install's peer book (`peer_list`'s `counts`): "N known peers: M from the
-    signed list, K learned · L worked in the last 30 days", whether the signed list is provisional
-    or signed with a test key, and how it grows: the wallet learns working peers from the ones it
+    curated list, K learned · L worked in the last 30 days", whether the curated list is
+    provisional, and how it grows: the wallet learns working peers from the ones it
     uses, and asks a few of Bitcoin Core's built-in onion nodes for more if too few work. Your own
     peers (`set_own_peers`, at most 64) replace all of these, so Kyoto connects to them alone,
     directly on your network, otherwise through Tor; "Use the known peers again" sends `[]`.
@@ -197,7 +222,8 @@ are a SLOT's return value, shown on Settings and dropped when it is left.
 `contracts/bitcoin_wallet_backend.lidl` is bitcoin_wallet_backend's published LIDL contract, named
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
-interface changes; this copy is from logos-bitcoin-wallet-backend 95b8f0c.
+interface changes; this copy is from logos-bitcoin-wallet-backend 95b8f0c, plus `set_tor_use` and
+`torUse`/`torUseChosen` in `sources()` and `source_health()`, ahead of the backend's release.
 `contracts/signer_manager_module.lidl` supplies the account-read API (`accounts`, `roster`) and
 the `accounts_changed` event; only public identity fields are copied into the view's account roster.
 This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, roster).
@@ -223,13 +249,15 @@ SPECS=basecamp-e2e-node OUT=/a/big/disk3 doctests/run.sh                       #
 ```
 
 `ci/states.qml` drives the pure sync, send and activity functions through every state a live
-wallet will not hold on demand, then renders the view against a fake backend.
+wallet will not hold on demand, then renders the view against a fake backend; that includes the
+first-run Tor choice (shown only while not chosen and no wallet is open, fresh versus existing
+preselection, the mode Continue sends) and the Settings choice locked while an account is open.
 
 Two doctests open the app in Basecamp's standalone mode, offscreen:
 
 - `wallet-ui-app.test.yaml` runs against `doctests/fixture-backend`, a scripted
   `bitcoin_wallet_backend` with the real backend's contract (its trait is copied verbatim) and
-  nothing behind it, and `doctests/fixture-manager`, a `signer_manager_module` whose `accounts`
+  nothing behind it (a fresh node store's "Use Tor for", chosen once at the start), and `doctests/fixture-manager`, a `signer_manager_module` whose `accounts`
   and `roster` answer a keystore wallet on each chain and a Keycard account with no card inserted: every flow,
   to every send outcome, a birthday refused and set, change added to the fee, a reorg, Kyoto as the
   authority and a chain it names that is refused, a TLS server's certificate pinned, a Kyoto peer of

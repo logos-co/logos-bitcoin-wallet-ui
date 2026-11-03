@@ -278,6 +278,74 @@ Item {
     property string networkNoteAt: ""
     onNetworkLockedChanged: { networkNote = ""; ownTorOpen = false }
 
+    // ---- "Use Tor for": the node module's all, identifying or none, asked once before any account ----
+    readonly property var torUseModes: ["identifying", "all", "none"]
+    readonly property string torUse: {
+        var m = sourcesInfo.torUse !== undefined ? sourcesInfo.torUse : health.torUse
+        return torUseModes.indexOf(m) >= 0 ? m : ""
+    }
+    // True only from a node module that keeps the choice and has not been given it yet.
+    readonly property bool torUseUnchosen: (sourcesInfo.torUseChosen !== undefined ? sourcesInfo.torUseChosen : health.torUseChosen) === false
+    // Continue was answered: the account start shows before the reads catch up.
+    property bool torUseAnswered: false
+    // In place of the account start; never while a wallet is open, opening or closing.
+    readonly property bool torChoiceShown: statusRead && torUseUnchosen && !torUseAnswered && !networkLocked
+    // Picked on the first-run screen; until then the node's current routing, so Continue never weakens it.
+    property string torChoice: ""
+    readonly property string torChoiceMode: torChoice !== "" ? torChoice : (torUse !== "" ? torUse : "identifying")
+    property bool torUseSending: false
+    property string torUseStartNote: ""
+    readonly property string torUseIntro: "How should this wallet use Tor? Tor hides your IP address, which can reveal where you are, "
+                                          + "from the computers your wallet talks to, but it is slower than a direct connection. You can "
+                                          + "change this later under Sources, in Network privacy, while no account is open."
+    readonly property var torUseCopy: ({
+        identifying: {
+            label: "Only what identifies you",
+            happens: "Block headers and filters, which are the same for everyone, come straight from Bitcoin nodes. The blocks "
+                     + "that hold your payments, and the transactions you send, go over Tor, each through a new Tor connection.",
+            pros: "Much faster than Everything, above all when restoring an old wallet. No node learns which payments are yours "
+                  + "together with your IP address.",
+            cons: "Your internet provider and the nodes you sync from can see that you use Bitcoin. Someone watching both your "
+                  + "connection and the Tor side could try to match them by timing; the wallet adds random delays to make that harder."
+        },
+        all: {
+            label: "Everything",
+            happens: "Every connection goes through Tor, to Bitcoin nodes reachable only over Tor.",
+            pros: "No node learns your IP address, and your internet provider can't see that you use Bitcoin.",
+            cons: "The slowest choice. Restoring an old wallet can take many hours, and syncing stops while Tor is slow or down."
+        },
+        none: {
+            label: "Nothing",
+            happens: "Every connection is direct; Tor isn't used.",
+            pros: "The fastest choice, and it works where Tor is blocked.",
+            cons: "The nodes you get blocks from and send transactions to see your IP address together with your payments, which "
+                  + "can tie your addresses to where you are. Your internet provider can see that you use Bitcoin."
+        }
+    })
+    function continueTorUse() {
+        root.torUseStartNote = ""
+        root.torUseSending = true
+        logos.watch(backend.setTorUse(root.torChoiceMode),
+                    function (e) {
+                        root.torUseSending = false
+                        if (e) root.torUseStartNote = e
+                        else root.torUseAnswered = true
+                    },
+                    function () {
+                        root.torUseSending = false
+                        root.torUseStartNote = "The wallet backend did not answer."
+                    })
+    }
+    // While Kyoto's matched blocks wait for their Tor errands: nothing goes direct meanwhile.
+    function kyotoTorLine(st) {
+        var t = st && st.kyoto && typeof st.kyoto.tor === "object" ? st.kyoto.tor : null
+        if (!t) return ""
+        var n = Number(t.pending || 0)
+        var blocks = n + (n === 1 ? " block" : " blocks") + " with your payments"
+        if (t.waiting === true) return "Waiting for Tor" + (n > 0 ? ": " + blocks + " not fetched yet" : "")
+        return n > 0 ? "Fetching " + blocks + " over Tor" : ""
+    }
+
     // ---- the birthday, a reorg, and the local node's pruned gap ----
     readonly property var birthdayJob: ready && backend.birthdayJson !== "" ? j(backend.birthdayJson, "{}") : ({})
     readonly property bool needsBirthday: walletOpen && status.needsBirthday === true
@@ -336,7 +404,7 @@ Item {
     readonly property var prunedGap: walletOpen && status.node && status.node.prunedGap && typeof status.node.prunedGap === "object"
                                      ? status.node.prunedGap : null
     readonly property var probe: ready && backend.probeJson !== "" ? j(backend.probeJson, "{}") : ({})
-    // Kyoto's peers: the install's peer book (the signed list and peers learned), and your own, which replace it.
+    // Kyoto's peers: the install's peer book (the curated list and peers learned), and your own, which replace it.
     readonly property var peerList: ready && backend.peerListJson !== "" ? j(backend.peerListJson, "{}") : ({})
     readonly property var ownPeers: Array.isArray(peerList.ownPeers) ? peerList.ownPeers : []
     readonly property var curated: peerList.list && typeof peerList.list === "object" ? peerList.list : ({})
@@ -345,14 +413,11 @@ Item {
         var c = root.peerCounts
         var m = root.isNum(c.list) ? Number(c.list) : (Array.isArray(root.curated.peers) ? root.curated.peers.length : 0)
         var k = root.isNum(c.learned) ? Number(c.learned) : 0
-        return (m + k) + ((m + k) === 1 ? " known peer: " : " known peers: ") + m + " from the signed list, " + k + " learned"
+        return (m + k) + ((m + k) === 1 ? " known peer: " : " known peers: ") + m + " from the curated list, " + k + " learned"
                + (root.isNum(c.okLast30d) ? " · " + c.okLast30d + " worked in the last 30 days" : "")
     }
-    function signedListNote() {
-        var parts = []
-        if (/^\s*provisional/i.test(String(root.curated.note || ""))) parts.push("provisional")
-        if (/^test-/.test(String(root.curated.keyId || ""))) parts.push("signed with a test key, not a release")
-        return parts.length ? "The signed list is " + parts.join(", and ") + "." : ""
+    function curatedListNote() {
+        return /^\s*provisional/i.test(String(root.curated.note || "")) ? "The curated list is provisional." : ""
     }
     property string ownPeersNote: ""
     function setOwnPeers(list, done) {
@@ -589,7 +654,7 @@ Item {
         if (!root.isNum(a.height)) return peers > 0 ? "headers" : "connecting"
         // Last session's chain before any source answered this open: no news, not "none agrees".
         if (peers <= 0 && a.asked === false) return "connecting"
-        if (peers <= 0) return "isolated"
+        if (peers <= 0) return root.kyotoDialling(st) ? "connecting" : "isolated"
         // The wallet's chain follows the headers; under Kyoto, its scan of filters says whether
         // payments were checked, a block or two behind the tip being the newest block's catch-up.
         var scan = root.kyotoScan(st)
@@ -598,8 +663,29 @@ Item {
                      : root.isNum(tip) ? Number(tip) >= Number(a.height) : st.synced === true
         // Regtest's blocks come when someone mines one: its tip age says nothing.
         if (st.network === "regtest") return caughtUp ? "local" : "syncing"
-        if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600) return "stalled"
+        // Mid-scan, Kyoto's newer headers reach the chain with its next update: till then the tip
+        // only looks old. Peers with nothing newer, or a finished scan, still read as a stall.
+        var ahead = scan !== null && !caughtUp && root.isNum((st.kyoto || {}).headers) && Number(st.kyoto.headers) > scan.tip
+        if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600 && !ahead) return "stalled"
         return caughtUp ? "synced" : "syncing"
+    }
+    // A Kyoto start whose dials are still out; it stops once they have all failed.
+    function kyotoDialling(st) {
+        var a = st && st.authority ? st.authority : {}
+        return a.kind === "kyoto" && !!st.kyoto && st.kyoto.running === true && !(Number(a.peers) > 0)
+    }
+    // Where the sync line's bar counts a rescan, the rescan pane leaves the figure to it.
+    function syncLineCounts(st) {
+        var s = root.syncState(st)
+        return s === "syncing" || s === "headers"
+    }
+    // The history line's source, named as the chain line names it.
+    function historyName(id) {
+        if (id === "kyoto") return "Bitcoin peers"
+        if (id === "local_node" || id === "local") return "your own node"
+        if (id === "rpc_node") return "Bitcoin Core RPC"
+        var s = root.sourceList.filter(function (x) { return x.id === id })[0]
+        return s && s.label ? s.label : String(id || "")
     }
     // What decides the chain, as the sync line names it.
     function authorityName(st) {
@@ -676,14 +762,16 @@ Item {
         var from = root.isNum(st.rescanFrom) ? Number(st.rescanFrom) : root.isNum(st.birthday) ? Number(st.birthday) : 0
         var at = root.isNum(k.scanned) ? Number(k.scanned) : null
         var share = at === null || tip <= from ? null : Math.max(0, Math.min(99, Math.floor((at - from) * 100 / (tip - from))))
-        return { at: at, from: from, tip: tip, share: share, filterHeaders: k.phase === "filter_headers" }
+        // Filter headers are the first quarter of Kyoto's progress.
+        var headers = k.phase === "filter_headers" && root.isNum(k.progress) && Number(k.progress) > 0 ? Math.min(99, Math.floor(Number(k.progress) * 400)) : null
+        return { at: at, from: from, tip: tip, share: share, filterHeaders: k.phase === "filter_headers", filterHeaderShare: headers }
     }
     // A start fetches every filter header first: a long while on the same block, said so.
     function scanLine(scan) {
         var line = scan.at === null ? "Checking block filters from block " + root.group(scan.from) + "…"
                  : "Checking block filters… block " + root.group(scan.at) + " of " + root.group(scan.tip)
                    + (scan.share !== null ? " · " + scan.share + "%" : "")
-        return line + (scan.filterHeaders ? " · fetching filter headers" : "")
+        return line + (scan.filterHeaders ? " · fetching filter headers" + (scan.filterHeaderShare !== null ? " " + scan.filterHeaderShare + "%" : "") : "")
     }
     function estimatedTip(st) {
         var k = st && st.kyoto && typeof st.kyoto === "object" ? st.kyoto : {}
@@ -745,7 +833,7 @@ Item {
     function authorityLine(st) {
         var a = st && st.authority ? st.authority : {}
         var n = root.isNum(a.peers) ? Number(a.peers) : 0
-        var asking = n === 0 && a.asked === false
+        var asking = n === 0 && (a.asked === false || root.kyotoDialling(st))
         if (a.kind === "electrum_headers")
             return "The chain: headers from Electrum servers, checked here · "
                    + (asking ? "waiting for their first answer" : n + (n === 1 ? " server agrees" : " servers agree"))
@@ -788,6 +876,7 @@ Item {
         if (code === "insufficient_funds") return "Not enough confirmed bitcoin for this and its fee"
         if (root.dustFailed(s)) return "The amount is too small for this address"
         if (code === "no_route") return "No source can broadcast it"
+        if (code === "not_sent") return "Not sent: no peer took it over Tor"
         if (code === "busy") return "The wallet was busy"
         if (code === "refused") return "A source refused the transaction"
         if (code === "no_wallet") return "The wallet closed before it was sent"
@@ -822,6 +911,8 @@ Item {
         if (code === "core_lost") return "It stopped before the send was approved, so nothing went out: try again."
         if (code === "backend_restarted") return "The wallet core no longer has this send, and nothing went out: try again."
         if (code === "busy") return "Nothing went out: try again in a moment."
+        if (code === "not_sent") return /Tor can't be reached/.test(String(s.error || "")) ? "Nothing went out: Tor can't be reached. Try again once it connects."
+                                                                                       : "Nothing went out: the peers tried over Tor didn't take it in time. Try again."
         if (root.dustFailed(s)) return code === "dust" ? String(s.error || "") : "The amount is below the smallest this address can receive."
         return String(s.error || "")
     }
@@ -830,7 +921,7 @@ Item {
         var o = root.sendOutcome(s)
         if (root.deviceFailed(s)) return true
         if (o === "expired") return true
-        return o === "failed" && ["coins_changed", "core_lost", "backend_restarted", "busy", "signer_unavailable"].indexOf(s.errorCode || "") >= 0
+        return o === "failed" && ["coins_changed", "core_lost", "backend_restarted", "busy", "signer_unavailable", "not_sent"].indexOf(s.errorCode || "") >= 0
     }
     // What the backend offers for an unknown send; a backend without `offer` offers all three.
     function offers(s, what) {
@@ -845,6 +936,8 @@ Item {
         if (st === "committing" || st === "unknown") return 2
         if (st === "sent") return 4
         if (s && s.txid && s.broadcast) return 2
+        // Failed once the signer approved it: at Broadcast, not at Approve.
+        if (s && (s.sawSettled === true || s.sawBroadcasting === true)) return 2
         return s && s.summary ? 1 : 0
     }
     function speedUpRate(row) {
@@ -1026,6 +1119,16 @@ Item {
         if (t.state === "connecting") return "Connecting to Tor… " + (t.progress || 0) + "%"
         if (t.answered !== true) return "Tor is not available"
         return t.state === "blocked" ? "Tor can't connect" : "Tor could not start"
+    }
+    // What reaches sources how, by "Use Tor for" and which Tor.
+    function torRouteLine() {
+        if (root.torUse === "none") return "Tor isn't used: every source is reached directly, and onion sources are off."
+        var via = root.ownTor ? "your own Tor at " + root.proxySetting + ". "
+                  : root.proxySetting === "tor" ? "Tor, which comes with Logos: there is nothing to install or run. " : ""
+        var line = via === "" ? "No Tor is set: only sources on your own network, and those set to skip Tor, are reached. "
+                   : root.torUse === "identifying" ? "Block headers and filters come straight from Bitcoin nodes; what identifies you goes through " + via
+                   : "Sources are reached through " + via + (root.ownTor ? "" : "They see a Tor address instead of this computer's. ")
+        return line + "Sources on your own network are always reached directly, since Tor cannot reach them."
     }
     function torColor() {
         if (root.torSocksOff) return Theme.palette.error
@@ -1414,9 +1517,9 @@ Item {
                         LogosText { text: "Your own peers"; font.weight: Theme.typography.weightMedium }
                         LogosText { objectName: "curatedLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                                     font.pixelSize: 12; color: Theme.palette.textSecondary; text: root.curatedLine() }
-                        LogosText { objectName: "signedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        LogosText { objectName: "curatedListNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                    text: root.signedListNote() }
+                                    text: root.curatedListNote() }
                         LogosText { objectName: "peerBookLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
                                     color: Theme.palette.textSecondary
                                     text: "The wallet learns working peers from the peers it already uses; if too few work, it asks a "
@@ -1512,6 +1615,43 @@ Item {
         }
     }
 
+    // One "Use Tor for" option: its label and tags, then what happens, pros and cons while `explained`.
+    component TorUseOption: ColumnLayout {
+        id: option
+        property string prefix: ""
+        property string mode: ""
+        property bool checked: false
+        property bool explained: true
+        // The first-run screen tags the node's current routing; Settings shows it checked.
+        property bool withCurrent: false
+        signal picked()
+        readonly property var copy: root.torUseCopy[mode] || ({})
+        Layout.fillWidth: true
+        spacing: Theme.spacing.tiny
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacing.small
+            LogosRadioButton { objectName: option.prefix + option.mode; checkable: false; checked: option.checked
+                               text: option.copy.label || ""; onClicked: option.picked() }
+            LogosBadge { objectName: option.prefix + "recommended_" + option.mode; visible: option.mode === "identifying"
+                         text: "Recommended"; color: Theme.palette.success }
+            LogosBadge { objectName: option.prefix + "current_" + option.mode
+                         visible: option.withCurrent && option.mode === root.torUse && option.mode !== "identifying"
+                         text: "Current"; color: Theme.palette.textSecondary }
+            Item { Layout.fillWidth: true }
+        }
+        Repeater {
+            model: option.explained ? [["What happens", option.copy.happens], ["Pros", option.copy.pros], ["Cons", option.copy.cons]] : []
+            LogosText {
+                required property var modelData
+                required property int index
+                objectName: option.prefix + ["happens_", "pros_", "cons_"][index] + option.mode
+                Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.StyledText; color: Theme.palette.textSecondary
+                text: "<b>" + modelData[0] + ":</b> " + (modelData[1] || "")
+            }
+        }
+    }
+
     // ================= the sources pane: Settings, and the sheet before a wallet opens =================
     Component {
         id: networkPane
@@ -1561,7 +1701,7 @@ Item {
                 Item { Layout.fillWidth: true }
                 LogosLink {
                     objectName: "manageTorLink"
-                    visible: root.proxySetting === "tor"
+                    visible: root.proxySetting === "tor" && root.torUse !== "none"
                     text: "Manage Tor…"
                     underline: false
                     onActivated: root.manageTor()
@@ -1569,15 +1709,49 @@ Item {
             }
             LogosText { objectName: "torNote"; visible: text !== ""; Layout.fillWidth: true; textFormat: Text.PlainText
                         wrapMode: Text.Wrap; color: Theme.palette.error; text: root.torNote }
+            // The first-run choice, changed here only while no account is open. Absent from an older node module.
+            ColumnLayout {
+                id: torUseSettings
+                objectName: "torUseSettings"
+                property bool explained: false
+                visible: root.torUse !== ""
+                Layout.fillWidth: true
+                spacing: Theme.spacing.tiny
+                RowLayout {
+                    Layout.fillWidth: true
+                    LogosText { text: "Use Tor for"; font.weight: Theme.typography.weightBold }
+                    Item { Layout.fillWidth: true }
+                    LogosLink { objectName: "torUseExplain"; underline: false
+                                text: torUseSettings.explained ? "Hide what this means" : "What this means"
+                                onActivated: torUseSettings.explained = !torUseSettings.explained }
+                }
+                Repeater {
+                    model: root.torUseModes
+                    TorUseOption {
+                        required property string modelData
+                        prefix: "torUse_"
+                        mode: modelData
+                        checked: root.torUse === modelData
+                        explained: torUseSettings.explained
+                        enabled: root.ready && !root.networkLocked
+                        onPicked: { if (modelData !== root.torUse) root.networkCall(backend.setTorUse(modelData), "torUse") }
+                    }
+                }
+                LogosText { objectName: "torUseLocked"; visible: root.networkLocked; Layout.fillWidth: true; wrapMode: Text.Wrap
+                            color: Theme.palette.textSecondary; text: "Close your open accounts to change this." }
+                LogosNotice {
+                    objectName: "torUseNote"
+                    Layout.fillWidth: true
+                    severity: LogosNotice.Error
+                    shown: root.networkNote !== "" && root.networkNoteAt === "torUse"
+                    message: shown ? root.networkNote : ""
+                }
+            }
             LogosText {
                 objectName: "privacyLine"
                 visible: root.sourcesRead
                 Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; color: Theme.palette.textSecondary
-                text: (root.ownTor ? "Sources are reached through your own Tor at " + root.proxySetting + ". "
-                       : root.proxySetting === "tor" ? "Sources are reached through Tor, which comes with Logos: there is nothing "
-                                                       + "to install or run. They see a Tor address instead of this computer's. "
-                       : "No Tor is set: only sources on your own network, and those set to skip Tor, are reached. ")
-                      + "Sources on your own network are always reached directly, since Tor cannot reach them."
+                text: root.torRouteLine()
             }
             LogosProgressBar {
                 objectName: "torProgress"
@@ -1595,14 +1769,14 @@ Item {
             }
             LogosButton {
                 objectName: "useBuiltInTorButton"
-                visible: root.sourcesRead && root.proxySetting === "" && !root.networkLocked
+                visible: root.sourcesRead && root.proxySetting === "" && !root.networkLocked && root.torUse !== "none"
                 text: "Use the Tor that comes with Logos"
                 enabled: root.ready
                 onClicked: root.networkCall(backend.setProxy("tor"), "proxy")
             }
             LogosSwitch {
                 objectName: "ownTorSwitch"
-                visible: !root.networkLocked && (root.proxySetting === "tor" || root.ownTor)
+                visible: !root.networkLocked && (root.proxySetting === "tor" || root.ownTor) && root.torUse !== "none"
                 text: "Use my own Tor instead"
                 checkable: false
                 checked: root.ownTor || root.ownTorOpen
@@ -1615,7 +1789,8 @@ Item {
             ColumnLayout {
                 objectName: "ownTorPane"
                 Layout.fillWidth: true
-                visible: root.ownTor || root.ownTorOpen
+                // Which Tor applies to Everything and Only what identifies you.
+                visible: (root.ownTor || root.ownTorOpen) && root.torUse !== "none"
                 spacing: Theme.spacing.tiny
                 LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
                             text: "For a Tor you already run: a system Tor listens at socks5h://127.0.0.1:9050, Tor Browser at "
@@ -1916,14 +2091,14 @@ Item {
         Accounts.LockedBanner {
             namePrefix: "accounts"
             Layout.fillWidth: true
-            visible: root.ready && shown
+            visible: root.ready && shown && !root.torChoiceShown
             wallets: root.signerWallets
             onUnlock: function (seeds) { root.unlockWallets(seeds) }
         }
 
         RowLayout {
             objectName: "accountSelectorRow"
-            visible: root.ready
+            visible: root.ready && !root.torChoiceShown
             Layout.fillWidth: true
             spacing: Theme.spacing.small
             // The account kit's picker: one row per account, with the wallet it comes from and every
@@ -1966,11 +2141,11 @@ Item {
             }
             Item { Layout.fillWidth: true }
         }
-        LogosText { objectName: "deviceAbsentNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+        LogosText { objectName: "deviceAbsentNote"; visible: text !== "" && !root.torChoiceShown; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.deviceAbsent(root.selectedAccount)
                           ? root.deviceName(root.selectedAccount) + " not connected · you can view this wallet; sending needs the device" : "" }
-        LogosText { objectName: "deviceReasonLine"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+        LogosText { objectName: "deviceReasonLine"; visible: text !== "" && !root.torChoiceShown; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.reasonLine(root.selectedAccount) }
         LogosText { objectName: "accountLockedNote"; visible: root.walletOpen; Layout.fillWidth: true; wrapMode: Text.Wrap
@@ -1978,7 +2153,7 @@ Item {
                     text: "Close this wallet to open another." }
         LogosText { objectName: "accountsErrorLine"; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.warning
-                    visible: root.ready && backend.accountsError !== ""
+                    visible: root.ready && backend.accountsError !== "" && !root.torChoiceShown
                     text: root.ready ? backend.accountsError : "" }
 
         LogosText {
@@ -2113,7 +2288,7 @@ Item {
         // ================= NO WALLET OPEN =================
         ColumnLayout {
             objectName: "openPage"
-            visible: root.ready && !root.walletOpen
+            visible: root.ready && !root.walletOpen && !root.torChoiceShown
             Layout.fillWidth: true; Layout.fillHeight: true
             spacing: Theme.spacing.small
 
@@ -2177,6 +2352,53 @@ Item {
             }
             // Holds the page at the top while the form is hidden.
             Item { visible: root.opening; Layout.fillHeight: true }
+        }
+
+        // ================= FIRST RUN: how this wallet uses Tor, asked once =================
+        ScrollView {
+            id: torUseScroll
+            objectName: "torUsePage"
+            visible: root.ready && root.torChoiceShown
+            Layout.fillWidth: true; Layout.fillHeight: true
+            clip: true
+            contentWidth: availableWidth
+            ColumnLayout {
+                width: torUseScroll.availableWidth
+                spacing: Theme.spacing.medium
+                LogosText { text: "Use Tor for"; font.pixelSize: 22 }
+                LogosText { objectName: "torUseIntro"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                            text: root.torUseIntro }
+                Repeater {
+                    model: root.torUseModes
+                    LogosFrame {
+                        id: startOption
+                        required property string modelData
+                        Layout.fillWidth: true
+                        borderColor: root.torChoiceMode === modelData ? Theme.palette.primary : Theme.palette.border
+                        contentItem: TorUseOption {
+                            prefix: "torUseStart_"
+                            mode: startOption.modelData
+                            checked: root.torChoiceMode === startOption.modelData
+                            withCurrent: true
+                            enabled: !root.torUseSending
+                            onPicked: root.torChoice = startOption.modelData
+                        }
+                    }
+                }
+                LogosText { objectName: "torUseStartNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                            textFormat: Text.PlainText; color: Theme.palette.error; text: root.torUseStartNote }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Item { Layout.fillWidth: true }
+                    LogosButton {
+                        objectName: "torUseContinue"
+                        text: root.torUseSending ? "Saving…" : "Continue"
+                        variant: LogosButton.Variant.Primary
+                        enabled: root.ready && !root.torUseSending
+                        onClicked: root.continueTorUse()
+                    }
+                }
+            }
         }
 
         // ================= A WALLET IS OPEN =================
@@ -2342,9 +2564,13 @@ Item {
                         LogosText { objectName: "authorityLine"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
                                     text: root.authorityLine(root.status) }
-                        LogosText { visible: !!root.status.historyServer; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        LogosText { objectName: "kyotoTorLine"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    textFormat: Text.PlainText; font.pixelSize: 12
+                                    color: root.kyotoStatus.tor && root.kyotoStatus.tor.waiting === true ? Theme.palette.warning : Theme.palette.textSecondary
+                                    text: root.kyotoTorLine(root.status) }
+                        LogosText { objectName: "historyLine"; visible: !!root.status.historyServer; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
-                                    text: "History from " + (root.status.historyServer || "") }
+                                    text: "History from " + root.historyName(root.status.historyServer) }
                         LogosText { visible: !!root.status.lastError; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning
                                     text: "Last sync error: " + (root.status.lastError || "") }
@@ -2369,9 +2595,11 @@ Item {
                                         text: (root.rescanPass(root.status) > 0
                                                ? "Rescanning with a wider address range (pass " + root.rescanPass(root.status) + ")"
                                                : "Rescanning from block " + root.group(root.status.rescanFrom))
-                                              + (root.isNum(root.status.syncPercent) ? " · " + root.status.syncPercent + "%"
-                                                                                     : (root.rescanPass(root.status) > 0 ? "" : "…")) }
+                                              + (root.syncLineCounts(root.status) ? ""
+                                                 : root.isNum(root.status.syncPercent) ? " · " + root.status.syncPercent + "%"
+                                                 : (root.rescanPass(root.status) > 0 ? "" : "…")) }
                             LogosProgressBar { objectName: "rescanProgress"; Layout.fillWidth: true
+                                               visible: !root.syncLineCounts(root.status)
                                                indeterminate: !root.isNum(root.status.syncPercent)
                                                value: root.isNum(root.status.syncPercent) ? Number(root.status.syncPercent) / 100 : 0 }
                         }
@@ -3248,8 +3476,8 @@ Item {
                  + (root.isNum(root.status.birthday) ? ", block " + root.group(root.status.birthday) : "")
                  + ", watching " + gapLimitSheet.wanted + " unused addresses past the last one used. That downloads more."
                  // Kyoto's filters and your node learn no address; a server does.
-                 + (root.status.historyServer && ["kyoto", "local"].indexOf(root.status.historyServer) < 0
-                    ? " Your history server, " + root.status.historyServer + ", will be asked about more addresses." : "")
+                 + (root.status.historyServer && ["kyoto", "local_node", "rpc_node", "local"].indexOf(root.status.historyServer) < 0
+                    ? " Your history server, " + root.historyName(root.status.historyServer) + ", will be asked about more addresses." : "")
         leftActions: [ LogosButton { objectName: "keepGapLimitButton"; text: "Cancel"; onClicked: gapLimitSheet.close() } ]
         rightActions: [
             LogosButton { objectName: "confirmGapLimitButton"; text: "Raise and rescan"

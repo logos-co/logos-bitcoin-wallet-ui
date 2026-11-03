@@ -50,6 +50,7 @@ public:
     QString useRpcSource(QString sourceId) override;
     QString removeSource(QString sourceId) override;
     QString setProxy(QString proxy) override;
+    QString setTorUse(QString mode) override;
     QString setOwnPeers(QString peersJson) override;
     QString clearSuspect(QString sourceId) override;
     void refreshSources() override;
@@ -117,6 +118,7 @@ private:
     void applySendStatus(const QString &id, const QString &reply);
 
     QString settingsReply(const QString &reply);
+    void adoptTorUse(const QJsonObject &reply);
     QString editSources(const std::function<QString(QJsonArray &)> &edit);
 
     QTimer m_readPoll;

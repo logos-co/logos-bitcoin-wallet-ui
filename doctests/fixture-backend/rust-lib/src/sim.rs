@@ -10,7 +10,8 @@
 //! first unused address and reveal none; testnet4's wallet already has 20 unused, so a new one is
 //! refused there. Fee estimates: none on testnet4, a quiet 1 sat/vB under Kyoto on signet. An
 //! amount below the address's dust limit (294 sats, taproot and P2WSH 330) fails at build with code
-//! dust, as the core refuses it. No network, no key.
+//! dust, as the core refuses it. "Use Tor for" starts as a fresh node store's, identifying and not
+//! chosen, behind the Tor that comes with Logos, which is always joined. No network, no key.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -30,6 +31,7 @@ pub const REJECTED: &str = "rejected: the person declined in the signer app";
 pub const MAY_HAVE_LEFT: &str = "the transaction may have left: rebroadcast it or replace it with a higher fee; never pay again from other coins while it could still confirm";
 pub const ABANDONED: &str = "Abandoned: its coins are free to spend again. If the original transaction still confirms, a later send from those coins will fail; if a later send confirms first, it replaces the original.";
 pub const LOCKED: &str = "source settings are locked while a wallet is open; close it first";
+pub const TOR_USES: [&str; 3] = ["all", "identifying", "none"];
 
 const VSIZE: u64 = 141;
 const COIN_SAT: u64 = 10_000_000;
@@ -183,6 +185,9 @@ pub struct Sim {
     next_tx: u64,
     sources: BTreeMap<String, Vec<Source>>,
     proxy: String,
+    /// "Use Tor for", and whether the person has chosen it.
+    tor_use: String,
+    tor_use_chosen: bool,
     wallets: Vec<Value>,
     /// Receive addresses revealed, none of them paid, by network and group.
     revealed: BTreeMap<String, u32>,
@@ -473,7 +478,9 @@ impl Sim {
             next_send: 0,
             next_tx: 0,
             sources: BTreeMap::new(),
-            proxy: "socks5h://127.0.0.1:9050".into(),
+            proxy: "tor".into(),
+            tor_use: "identifying".into(),
+            tor_use_chosen: false,
             wallets: vec![],
             revealed: BTreeMap::new(),
             asked: false,
@@ -775,9 +782,11 @@ impl Sim {
     fn source_json(&self, s: &Source) -> Value {
         let lan = is_lan(&host_of(&s.url)) && s.kind != "kyoto";
         let onion = host_of(&s.url).ends_with(".onion");
-        let route = if lan { "direct" } else if onion { "onion" } else if s.tor { "tor" } else { "direct" };
+        // With Tor used for nothing every switch reads off, and an onion stays onion, unrouted.
+        let tor = s.tor && self.tor_use != "none";
+        let route = if lan { "direct" } else if onion { "onion" } else if tor { "tor" } else { "direct" };
         let mut v = json!({"id": s.id, "kind": s.kind, "url": s.url, "operator": s.operator, "label": s.label, "use": s.enabled,
-                           "history": s.history, "tor": s.tor, "lan": lan, "hasCredentials": false, "route": route, "suspect": s.suspect});
+                           "history": s.history, "tor": tor, "lan": lan, "hasCredentials": false, "route": route, "suspect": s.suspect});
         if let Some(p) = &s.pin {
             v["certSha256"] = json!(p);
         }
@@ -798,6 +807,7 @@ impl Sim {
         let without: Vec<Value> = list.iter().filter(|v| v["use"] == true && v["route"] == "direct" && v["lan"] != true).map(named).collect();
         let ops: std::collections::BTreeSet<String> = list.iter().filter(|v| v["use"] == true && v["kind"] != "kyoto").filter_map(|v| v["operator"].as_str().map(str::to_lowercase)).collect();
         json!({"ok": true, "network": net, "configured": true, "walletOpen": self.locked(), "proxy": self.proxy,
+               "torUse": self.tor_use, "torUseChosen": self.tor_use_chosen,
                "sources": list, "exposes": exposes, "withoutTor": without, "crossCheck": ops.len() >= 2})
     }
 
@@ -826,7 +836,8 @@ impl Sim {
             .collect();
         let suspect = list.iter().any(|s| s.enabled && s.suspect);
         let mut out = json!({"ok": true, "network": net, "configured": true, "overall": if suspect { "degraded" } else { "ok" },
-                             "pending": false, "sources": rows});
+                             "pending": false, "sources": rows, "tor": self.tor_health(),
+                             "torUse": self.tor_use, "torUseChosen": self.tor_use_chosen});
         if self.open() {
             let wallet: Vec<Value> = list
                 .iter()
@@ -838,6 +849,14 @@ impl Sim {
             out["wallet"] = json!({"ok": true, "proxy": self.proxy, "crossCheck": false, "sources": wallet});
         }
         out
+    }
+
+    /// The built-in Tor, joined, while it is the proxy; null in none, where tor_module is never asked.
+    fn tor_health(&self) -> Value {
+        if self.proxy != "tor" || self.tor_use == "none" {
+            return Value::Null;
+        }
+        json!({"state": "ready", "progress": 100, "detail": "", "socks": "socks5h://127.0.0.1:9250", "answered": true})
     }
 
     /// The node module's probe: the health of one source, or of every enabled server for "".
@@ -1437,9 +1456,9 @@ impl Sim {
     fn curated(net: &str) -> Value {
         let n = if net == "testnet4" { 1 } else { 11 };
         let peers: Vec<String> = (0..n).map(|i| format!("peer{i}{}.onion:38333", "a".repeat(46))).collect();
-        json!({"format": 1, "network": net, "version": "202610110405", "created": "2026-10-11T04:05:49Z", "date": "2026-10-11",
-               "note": "PROVISIONAL: from 1 run (2026-10-11), not the plan's 6 of 7 days. Signed with a TEST key: not a release.",
-               "refreshUrl": null, "peers": peers, "keyId": "test-d680f3cac9837bf9", "signature": "00"})
+        json!({"format": 2, "network": net, "version": "202610110405", "created": "2026-10-11T04:05:49Z", "date": "2026-10-11",
+               "note": "PROVISIONAL: from 1 run (2026-10-11), not the plan's 6 of 7 days.",
+               "peers": peers})
     }
 
     /// The node module's peer_list: the curated list, your own peers, and how Kyoto reaches them.
@@ -1452,7 +1471,7 @@ impl Sim {
         let route = if !own.is_empty() && own.iter().all(|h| is_lan(&host(h))) { "direct" }
                     else if own.iter().all(|h| host(h).ends_with(".onion")) { "onion" } else { "tor" };
         let usable = if own.is_empty() { list["peers"].clone() } else { json!(own) };
-        // The install's peer book: the signed list, peers learned from it, and Core's onion seeds.
+        // The install's peer book: the curated list, peers learned from it, and Core's onion seeds.
         let listed = list["peers"].as_array().map_or(0, Vec::len);
         let learned = if net == "signet" { 3 } else { 0 };
         let usable_n = if own.is_empty() { listed + learned } else { own.len() };
@@ -1499,11 +1518,25 @@ impl Sim {
             return json!({"ok": false, "error": LOCKED});
         }
         let p = proxy.trim();
-        if !p.is_empty() && !p.starts_with("socks5h://") {
-            return json!({"ok": false, "error": "the proxy is socks5h://host:port"});
+        if !p.is_empty() && p != "tor" && !p.starts_with("socks5h://") {
+            return json!({"ok": false, "error": "the proxy is tor or socks5h://host:port"});
         }
         self.proxy = p.into();
         json!({"ok": true, "proxy": self.proxy})
+    }
+
+    /// "Use Tor for", which also marks it chosen. Refused while a wallet is open, as the node module does.
+    pub fn set_tor_use(&mut self, mode: &str) -> Value {
+        if self.locked() {
+            return json!({"ok": false, "error": LOCKED});
+        }
+        let m = mode.trim();
+        if !TOR_USES.contains(&m) {
+            return json!({"ok": false, "error": "invalid parameters: torUse must be all, identifying or none"});
+        }
+        self.tor_use = m.into();
+        self.tor_use_chosen = true;
+        json!({"ok": true, "torUse": self.tor_use, "torUseChosen": true})
     }
 
     pub fn clear_suspect(&mut self, id: &str, now: Instant, out: &mut Vec<Event>) -> Value {
@@ -2278,6 +2311,23 @@ mod tests {
         assert_eq!((sim.active(), sim.pending_network()), ("testnet4".to_string(), None));
         assert_eq!(sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev)["ok"], true);
         assert_eq!(sim.set_active_network("signet")["code"], "busy", "an open in progress");
+    }
+
+    #[test]
+    fn tor_use_is_asked_once_and_locked_while_open() {
+        let mut sim = Sim::new(false, Instant::now());
+        assert_eq!((sim.sources()["torUse"].clone(), sim.sources()["torUseChosen"].clone()), (json!("identifying"), json!(false)));
+        assert_eq!(sim.source_health(0)["tor"]["state"], "ready");
+        assert!(sim.set_tor_use("some")["error"].as_str().unwrap().contains("all, identifying or none"));
+        assert_eq!(sim.set_tor_use("none"), json!({"ok": true, "torUse": "none", "torUseChosen": true}));
+        let h = sim.source_health(0);
+        assert_eq!((h["torUse"].clone(), h["torUseChosen"].clone(), h["tor"].clone()), (json!("none"), json!(true), Value::Null));
+        let rows = sim.sources()["sources"].as_array().unwrap().clone();
+        assert!(rows.iter().all(|r| r["tor"] == false && r["route"] == "direct"), "none: every switch off");
+        sim.set_tor_use("all");
+        assert_eq!(sim.source_health(0)["tor"]["answered"], true);
+        let (mut sim, _) = opened("signet");
+        assert_eq!(sim.set_tor_use("identifying")["error"], LOCKED);
     }
 
     #[test]

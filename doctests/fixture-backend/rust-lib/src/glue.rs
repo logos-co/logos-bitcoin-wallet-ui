@@ -71,9 +71,11 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     /// BTC as satoshis, exactly; more than 8 decimals is refused. `{ ok, btc, sat }`.
     fn parse_btc(&self, btc: String) -> String;
 
-    /// The node module's sources for the wallet's network.
+    /// The node module's sources for the wallet's network, with its top-level `torUse` (all|identifying|none)
+    /// and `torUseChosen`.
     fn sources(&self) -> String;
-    /// The node module's source health, plus `wallet`, the open wallet's own view of them.
+    /// The node module's source health, with `torUse`, `torUseChosen` and `tor` (the built-in Tor's state,
+    /// null in none), plus `wallet`, the open wallet's own view of them.
     fn source_health(&self) -> String;
     /// `{ network?, source }`: the node module probes that source now, or every enabled server for "",
     /// within 15 s; a TLS server's row carries `certificate`.
@@ -86,6 +88,9 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     fn set_source(&self, source_id: String, changes_json: String) -> String;
     /// CUSTODIAN. The Tor proxy for every source, socks5h://host:port. Refused while a wallet is open.
     fn set_proxy(&self, proxy: String) -> String;
+    /// CUSTODIAN. "Use Tor for": all, identifying or none, relayed to the node module, which marks it
+    /// chosen. Refused while a wallet is open. `{ ok, torUse, torUseChosen }`.
+    fn set_tor_use(&self, mode: String) -> String;
     /// CUSTODIAN. Clears a suspect mark in the node module and, with a wallet open, in the core.
     fn clear_suspect(&self, source_id: String) -> String;
     /// CUSTODIAN. `{ network, peers: [host[:port]] }`, at most 64: Kyoto's own peers, which replace the
@@ -306,6 +311,10 @@ impl BitcoinWalletBackendModule for BitcoinWalletBackendModuleImpl {
 
     fn set_proxy(&self, proxy: String) -> String {
         self.gated(|s, _, _| s.set_proxy(&proxy))
+    }
+
+    fn set_tor_use(&self, mode: String) -> String {
+        self.gated(|s, _, _| s.set_tor_use(&mode))
     }
 
     fn set_own_peers(&self, params_json: String) -> String {

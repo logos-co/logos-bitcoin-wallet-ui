@@ -214,17 +214,17 @@ sections:
               find_value: "sourceDetails_kyoto"
               method: "clicked"
               args: []
-            - name: "Under Kyoto, the node module's peer book for signet: its signed list, nothing learned yet"
+            - name: "Under Kyoto, the node module's peer book for signet: its curated list, nothing learned yet"
               action: expect_property
               find_value: "curatedLine"
               property: "text"
-              value: "11 known peers: 11 from the signed list, 0 learned · 0 worked in the last 30 days"
+              value: "11 known peers: 11 from the curated list, 0 learned · 0 worked in the last 30 days"
               timeout: 20000
-            - name: "...the signed list provisional and test-signed"
+            - name: "...the curated list provisional"
               action: expect_property
-              find_value: "signedListNote"
+              find_value: "curatedListNote"
               property: "text"
-              value: "The signed list is provisional, and signed with a test key, not a release."
+              value: "The curated list is provisional."
             - name: "A peer of your own"
               action: set_text
               find_by: "objectName"
