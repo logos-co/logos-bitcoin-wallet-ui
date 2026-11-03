@@ -229,6 +229,20 @@ Item {
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973917, phase: "filters" } }),
              "Checking block filters… block 973,917 of 973,920 · 99% · Kyoto · 3 peers"],
+            // A scan's first update brings Kyoto's newer headers: an old tip until then is no stall.
+            [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
+                       kyoto: { scanned: null, phase: "filter_headers", progress: 0.03, headers: 974330 } }),
+             "Checking block filters from block 481,824… · fetching filter headers 12% · Kyoto · 3 peers"],
+            // Its peers with nothing newer, or the scan done, and the tip still old: stalled.
+            [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
+                       kyoto: { scanned: null, phase: "filter_headers", progress: 0.03, headers: 974135 } }),
+             "Stalled · block 974,135, tip 35 hours old · Kyoto · 3 peers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
+                       kyoto: { scanned: 974134, phase: "synced", headers: 974330 } }),
+             "Stalled · block 974,135, tip 35 hours old · Kyoto · 3 peers"],
             // The newest block or two still being checked is caught up.
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973918, phase: "synced" } }),
@@ -265,6 +279,9 @@ Item {
         expect("chip: Kyoto's scan", v.syncChip(scanning), "Filters 4%")
         scanning.kyoto.scanned = null
         expect("...before its first block", v.syncChip(scanning), "Checking filters…")
+        scanning.authority.tipAgeSecs = 126000
+        scanning.kyoto = { scanned: null, phase: "filter_headers", progress: 0.03, headers: 974330 }
+        expect("...an old tip behind its headers: no stall", v.syncChip(scanning), "Checking filters…")
         expect("an estimate behind the chain: no share", v.headersShare({ have: 900000, target: null }, 935424, 935000), null)
         expect("chip without a height, as before", v.syncChip(mainnet({ state: "syncing", authority: { height: null, peers: 2 } })), "Connecting…")
         expect("authority not asked yet", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: false } })),

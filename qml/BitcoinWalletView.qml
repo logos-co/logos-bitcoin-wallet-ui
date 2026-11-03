@@ -663,7 +663,10 @@ Item {
                      : root.isNum(tip) ? Number(tip) >= Number(a.height) : st.synced === true
         // Regtest's blocks come when someone mines one: its tip age says nothing.
         if (st.network === "regtest") return caughtUp ? "local" : "syncing"
-        if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600) return "stalled"
+        // Mid-scan, Kyoto's newer headers reach the chain with its next update: till then the tip
+        // only looks old. Peers with nothing newer, or a finished scan, still read as a stall.
+        var ahead = scan !== null && !caughtUp && root.isNum((st.kyoto || {}).headers) && Number(st.kyoto.headers) > scan.tip
+        if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600 && !ahead) return "stalled"
         return caughtUp ? "synced" : "syncing"
     }
     // What decides the chain, as the sync line names it.
@@ -741,14 +744,16 @@ Item {
         var from = root.isNum(st.rescanFrom) ? Number(st.rescanFrom) : root.isNum(st.birthday) ? Number(st.birthday) : 0
         var at = root.isNum(k.scanned) ? Number(k.scanned) : null
         var share = at === null || tip <= from ? null : Math.max(0, Math.min(99, Math.floor((at - from) * 100 / (tip - from))))
-        return { at: at, from: from, tip: tip, share: share, filterHeaders: k.phase === "filter_headers" }
+        // Filter headers are the first quarter of Kyoto's progress.
+        var headers = k.phase === "filter_headers" && root.isNum(k.progress) && Number(k.progress) > 0 ? Math.min(99, Math.floor(Number(k.progress) * 400)) : null
+        return { at: at, from: from, tip: tip, share: share, filterHeaders: k.phase === "filter_headers", filterHeaderShare: headers }
     }
     // A start fetches every filter header first: a long while on the same block, said so.
     function scanLine(scan) {
         var line = scan.at === null ? "Checking block filters from block " + root.group(scan.from) + "…"
                  : "Checking block filters… block " + root.group(scan.at) + " of " + root.group(scan.tip)
                    + (scan.share !== null ? " · " + scan.share + "%" : "")
-        return line + (scan.filterHeaders ? " · fetching filter headers" : "")
+        return line + (scan.filterHeaders ? " · fetching filter headers" + (scan.filterHeaderShare !== null ? " " + scan.filterHeaderShare + "%" : "") : "")
     }
     function estimatedTip(st) {
         var k = st && st.kyoto && typeof st.kyoto === "object" ? st.kyoto : {}

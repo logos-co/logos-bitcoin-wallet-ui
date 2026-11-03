@@ -69,7 +69,9 @@ and each open allowed in the Signer app, and every send is approved there.
   - Under Kyoto, "Synchronized" waits for its scan of block filters (`kyoto.scanned`), not the
     headers the wallet's chain (`walletTip`) follows: until the scan is within two blocks of the
     tip, the line reads "Checking block filters… block 501,959 of 973,920 · 4%" (with "· fetching
-    filter headers" while a start fetches them first), the chip "Filters 4%", with a bar. A core
+    filter headers 12%" while a start fetches them first), the chip "Filters 4%", with a bar. Mid-scan,
+    a tip older than an hour is not "Stalled" while Kyoto's best header (`kyoto.headers`) is past it:
+    those headers reach the chain with the scan's next update. A core
     without `kyoto.scanned` keeps the old rule.
   - The core keeps each account's birthday: an account's first open on a network asks when it was
     first used (a day, "It's new" for today, or "I don't know"), sent as open_wallet's `birthday`.
