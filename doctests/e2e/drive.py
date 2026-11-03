@@ -34,22 +34,20 @@ CHAIN_DIR = os.path.join(E2E, "chain")
 # Off the regtest defaults, so another test chain on this machine is left alone.
 CHAIN_ENV = {"CHAIN_DIR": CHAIN_DIR, "RPC_PORT": "28543", "P2P_PORT": "28544", "FORK_RPC_PORT": "28553",
              "FORK_P2P_PORT": "28554", "PEER_RPC_PORT": "28563", "PEER_P2P_PORT": "28564",
-             "PRUNED_RPC_PORT": "28573", "PRUNED_P2P_PORT": "28574", "ELECTRUM_PORTS": "61701,61711",
-             "ESPLORA_PORT": "61721", "ESPLORA": os.path.join(BUILD, "esplora", "bin", "electrs")}
+             "PRUNED_RPC_PORT": "28573", "PRUNED_P2P_PORT": "28574", "ELECTRUM_PORTS": "61701,61711"}
 ELECTRUM_PORTS = [61701, 61711]
-# Blockstream's electrs on the main node (`chain.sh esplora`), behind a front that answers no header.
-ESPLORA_FRONT_PORT = 61724
-ESPLORA_URL = "http://%s:%d" % (CHAIN_HOST, ESPLORA_FRONT_PORT)
+# The main node's electrs behind a front that serves no header range below the checkpoint.
+ELECTRUM_FRONT_PORT = 61724
 # The chain's three nodes serve compact block filters: Kyoto's peers.
 FILTER_PEERS = ["%s:%s" % (CHAIN_HOST, CHAIN_ENV[k]) for k in ("P2P_PORT", "FORK_P2P_PORT", "PEER_P2P_PORT")]
-# What decides the chain, as the core's regtest.json says and the sync line names it.
+# What decides the chain, as the core's regtest.json says and the sync line names it (a pattern).
 AUTHORITIES = {
-    "electrum": ({"electrum": ["tcp://%s:%d" % (CHAIN_HOST, p) for p in ELECTRUM_PORTS], "pollSecs": 1}, "Servers' headers"),
+    "electrum": ({"electrum": ["tcp://%s:%d" % (CHAIN_HOST, p) for p in ELECTRUM_PORTS], "pollSecs": 1}, r"from \d+ Electrum servers?"),
     "kyoto": ({"electrum": ["tcp://%s:%d" % (CHAIN_HOST, ELECTRUM_PORTS[0])], "kyoto": FILTER_PEERS, "kyotoRequired": 2,
-               "checkOnly": True, "pollSecs": 1}, "Kyoto · "),
-    "local": ({"local": True, "pollSecs": 1}, "Your node"),
-    # Kyoto with Esplora as the only server, and a checkpoint: written by esplora_regtest().
-    "kyoto-esplora": (None, "Kyoto · "),
+               "checkOnly": True, "pollSecs": 1}, r"from \d+ Bitcoin peers?"),
+    "local": ({"local": True, "pollSecs": 1}, "from your node"),
+    # Kyoto with one Electrum history server behind the front, and a checkpoint: written by unchecked_regtest().
+    "kyoto-unchecked": (None, r"from \d+ Bitcoin peers?"),
 }
 APP, KEYS, SIGNER = "bitcoin_wallet_ui", "evm_keystore_ui", "evm_signer_ui"
 MODULE_BUILDS = ["backend", "core", "node", "keystore", "manager"]
@@ -510,7 +508,7 @@ def layout(user, mode=None):
         for m in sorted(os.listdir(os.path.join(BUILD, b, "plugins"))):
             copytree(os.path.join(BUILD, b, "plugins", m), os.path.join(ud, "plugins", m))
     # regtest.json turns regtest on for the backend and the node module, and gives the core its servers.
-    core = esplora_regtest() if authority() == "kyoto-esplora" else AUTHORITIES[authority()][0]
+    core = unchecked_regtest() if authority() == "kyoto-unchecked" else AUTHORITIES[authority()][0]
     cfg = {"bitcoin_wallet_backend": {}, "bitcoin_node_module": {}, "bitcoin_wallet_core_module": core}
     for module, body in cfg.items():
         d = os.path.join(ud, "module_data", module, "e2e")
@@ -527,31 +525,31 @@ def layout(user, mode=None):
            % (user, authority(), len(os.listdir(os.path.join(ud, "modules"))), len(os.listdir(os.path.join(ud, "plugins")))))
 
 
-# Esplora alone serves history, and a checkpoint sits just above the first two payments: for a wallet
-# whose birthday is above it, Esplora reports them below the chain's start. Its front answers no
-# header, so the core cannot link them there.
-def esplora_regtest():
+# One Electrum server serves history, and a checkpoint sits just above the first two payments: for a
+# wallet whose birthday is above it, the server reports them below the chain's start. Its front serves
+# no header range below the checkpoint, so the core cannot link them there.
+def unchecked_regtest():
     if CHAIN_URL:
-        raise Fail("the chain host runs no Esplora: this step runs on Linux and macOS")
+        raise Fail("the front runs beside the chain: this step runs on Linux and macOS")
     base = int(state()["coinbase_height"]) + 1
     header = rpc("getblockheader", [rpc("getblockhash", [base]), False])
-    log(chain("esplora"))
     front_stop()
-    upstream = "http://127.0.0.1:%s" % CHAIN_ENV["ESPLORA_PORT"]
-    subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "esplora_front.py"),
-                    str(ESPLORA_FRONT_PORT), upstream, FRONT_PID], check=True)
+    upstream = "%s:%d" % (CHAIN_HOST, ELECTRUM_PORTS[0])
+    subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "electrum_front.py"),
+                    str(ELECTRUM_FRONT_PORT), upstream, str(base), FRONT_PID], check=True)
     end = time.time() + 20
-    while not listening(ESPLORA_FRONT_PORT):
+    while not listening(ELECTRUM_FRONT_PORT):
         if time.time() > end:
-            raise Fail("the Esplora front did not come up")
+            raise Fail("the Electrum front did not come up")
         time.sleep(0.2)
-    log("esplora front: %s, answering no block header" % ESPLORA_URL)
+    url = "tcp://%s:%d" % (CHAIN_HOST, ELECTRUM_FRONT_PORT)
+    log("electrum front: %s, serving no headers below block %d" % (url, base))
     save(unchecked_base=base)
-    return {"esplora": [ESPLORA_URL], "kyoto": FILTER_PEERS, "kyotoRequired": 2, "pollSecs": 1,
+    return {"electrum": [url], "kyoto": FILTER_PEERS, "kyotoRequired": 2, "pollSecs": 1,
             "checkpoint": {"height": base, "header": header}}
 
 
-FRONT_PID = os.path.join(CHAIN_DIR, "esplora-front.pid")
+FRONT_PID = os.path.join(CHAIN_DIR, "electrum-front.pid")
 
 
 def front_stop():
@@ -683,8 +681,8 @@ def amount_text(sat):
 
 def wait_synced(ins, timeout=120):
     h = height()
-    want = "Local chain · block {:,} · {}".format(h, AUTHORITIES[authority()][1])
-    line = ins.wait("syncLine", "text", lambda t: (t or "").startswith(want), timeout, "the app reads the chain at block %d (%s)" % (h, want))
+    want = re.compile(re.escape("Local chain · block {:,} · ".format(h)) + AUTHORITIES[authority()][1])
+    line = ins.wait("syncLine", "text", lambda t: bool(want.match(t or "")), timeout, "the app reads the chain at block %d (%s)" % (h, want.pattern))
     return h
 
 
@@ -791,7 +789,7 @@ def wait_send(ins, outcome_headline, timeout=120):
     return ins.wait("sendHeadline", "text", outcome_headline, timeout, "the send settles as %r" % outcome_headline)
 
 
-# The badge and both servers as the open wallet sees them: nothing suspect, both answering.
+# The servers as the open wallet sees them: nothing suspect, every one answering.
 def sources_ok(ins, when):
     wallet_tab(ins, 4)
     servers = {"electrum": 2, "kyoto": 1, "local": 0}[authority()]
@@ -799,10 +797,9 @@ def sources_ok(ins, when):
              for i in range(servers)]
     for i in range(servers):
         expect(ins.get("suspectBadge_electrum-%d" % i, "visible") is not True, "electrum-%d is not suspect %s" % (i, when))
-    badge = ins.wait("healthBadge", "text", "Sources OK", 30) if servers else str(ins.get("healthBadge", "text"))
     ins.shot("sources-" + when.replace(" ", "-"))
     wallet_tab(ins, 3)
-    passed("%s: %s%s" % (when, badge, "".join("; " + l for l in lines)))
+    passed("%s: %s" % (when, "; ".join(lines) if lines else "no servers"))
 
 
 def payee(label):
@@ -1295,8 +1292,8 @@ def phase_restore_birthday():
     log("PHASE restore-birthday OK")
 
 
-# Esplora reports the first two payments below the chain's start (esplora_regtest): unchecked, apart
-# from the balance, until an earlier birthday, set from the banner, lets Kyoto check them.
+# The Electrum server reports the first two payments below the chain's start (unchecked_regtest):
+# unchecked, apart from the balance, until an earlier birthday, set from the banner, lets Kyoto check them.
 def phase_unchecked():
     s = state()
     base = int(s["unchecked_base"])
@@ -1321,8 +1318,8 @@ def phase_unchecked():
     ins.shot("unchecked-home")
     wallet_tab(ins, 3)
     for key in ("receive_txid", "coinbase_txid"):
-        wait_row(ins, "historyState", s[key], "Reported by esplora-0, not checked", 60)
-        passed("%s… reads Reported by esplora-0, not checked" % s[key][:12])
+        wait_row(ins, "historyState", s[key], "Reported by electrum-0, not checked", 60)
+        passed("%s… reads Reported by electrum-0, not checked" % s[key][:12])
     ins.shot("unchecked-activity")
     wallet_tab(ins, 0)
     ins.press("uncheckedBirthdayButton")

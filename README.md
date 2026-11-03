@@ -53,16 +53,19 @@ and each open allowed in the Signer app, and every send is approved there.
   payments with the source that reported them, sent transactions not yet confirmed (with Speed
   up), mined coins not yet mature, and coins too small to spend at today's fee rate. A busy read
   is "not read": the last read stays, and an empty amount shows as a dash, never as zero.
-  - The sync line gives the chain authority's height and tip age, and names the authority:
-    "Kyoto · N peers", "Your node" or "Servers' headers". It never says "Synchronized" when no
-    source agrees with the wallet's chain, nor when the tip is older than an hour; it says "No
-    source agrees" or "Stalled" instead. Regtest reads "Local chain". A pruned node's gap reads
+  - The sync line is one line: the state, the block, and where the chain comes from, such as
+    "Synchronized · block N · from 8 Bitcoin peers", "… · from your node" or "… · from 3 Electrum
+    servers". It never says "Synchronized" when no source agrees with the wallet's chain, nor when
+    the tip is older than an hour; it says "Can't confirm the chain · no peer answered · last block
+    N, 2 hours old" (or "no server answered", "your node didn't answer") or "Stalled" instead.
+    Regtest reads "Local chain". A pruned node's gap reads
     "Older blocks via <source>", or a notice while nothing can scan it. Until the open's first
     round of asking the chain's sources ends (`authority.asked` false), last session's chain reads
-    "Connecting to the chain's sources… · last known block N", never "No source agrees": the chip,
-    the authority line and the sources badge wait for that answer too. So does a Kyoto start still
-    dialling (`kyoto.running`, no peer yet): it reads "No source agrees" once its dials have failed
-    and it stopped. While the chain's headers
+    "Connecting to the chain's sources… · last known block N", never "Can't confirm the chain": the
+    chip waits for that answer too. So does a Kyoto start still
+    dialling (`kyoto.running`, no peer yet): it reads "Can't confirm the chain" once its dials have
+    failed and it stopped. There is no sources badge: the tip watch's alert says when the wallet
+    may be behind. While the chain's headers
     come in (`authority.headers`), it reads "Reading the chain's headers… 84,000 of 157,000", or
     "… block 6,000" under Kyoto, whose peers' tip isn't known, and the chip "Headers 53%"; the
     server sending them counts as agreeing. A first sync from Kyoto's peers reads "… block 727,000
@@ -75,8 +78,8 @@ and each open allowed in the Signer app, and every send is approved there.
     a tip older than an hour is not "Stalled" while Kyoto's best header (`kyoto.headers`) is past it:
     those headers reach the chain with the scan's next update. A core
     without `kyoto.scanned` keeps the old rule.
-  - The history line names its source as the chain line does: "History from Bitcoin peers", "… your
-    own node", "… Bitcoin Core RPC", or a server's label.
+  - The history line says where payments are found: "Payments found on this device, through block
+    filters" under Kyoto, "Payments found through your node", or "Payments looked up at <server>".
   - The core keeps each account's birthday: an account's first open on a network asks when it was
     first used (a day, "It's new" for today, or "I don't know"), sent as open_wallet's `birthday`.
     A wallet without one (`needsBirthday`) asks again: a day, or "I don't know" (`set_birthday`,
@@ -88,7 +91,10 @@ and each open allowed in the Signer app, and every send is approved there.
     "Fetching N blocks with your payments over Tor", or "Waiting for Tor: N blocks with your
     payments not fetched yet" while Tor can't be reached; nothing goes direct meanwhile.
   - Source alerts show as a banner above the tabs; Kyoto naming a chain the checks refuse
-    (`authority_suspect`) has a banner of its own.
+    (`authority_suspect`) has a banner of its own. The tip watch's `authority_behind` reads "Your
+    wallet may be behind: <server> has seen blocks your peers haven't sent for 30 minutes; your
+    peers may be cut off from the network", with "your node" or "the Electrum servers" in place of
+    the peers when they decide the chain.
   - While the Tor that comes with Logos joins (`source_health.tor`), a peerless chain routed
     through Tor reads "Connecting to Tor… 40%" (chip "Tor 40%"), and health is read every 3 s. When
     its SOCKS port is off, Tor is blocked, or tor_module does not answer, Home says which, with
@@ -113,10 +119,11 @@ and each open allowed in the Signer app, and every send is approved there.
 - **Send:** an address or a BIP21 URI, checked as you type with `address_valid`; the amount in BTC
   or sats (a URI's amount fills it); fast, normal or slow from `fee_rates`, or a custom sat/vB
   rate; and Send max, which takes coins found beyond the gap limit too. The presets need an
-  estimate: while `fee_rates` has none (Kyoto alone) Send says "Fee estimate not available
+  estimate: while `fee_rates` has none (Kyoto alone, off signet) Send says "Fee estimate not available
   yet" and takes a rate of your own. Every level the same reads "The network is quiet: every speed
   costs N sat/vB", with the source the estimate came from, or "X's mempool" when the core read it
-  off that server's mempool (`basis: "mempool"`). A review whose inputs
+  off that server's mempool (`basis: "mempool"`). Signet's relay floor (`basis: "floor"`) reads
+  "Fees: the lowest rate peers relay (signet has no useful fee estimates)." A review whose inputs
   include such coins (the `beyond_gap_inputs` warning) says so in one line.
   - An amount below the address's dust limit (`address_valid`'s `dustSat`: 294 sats native segwit,
     330 taproot) reads "The smallest amount this address can receive is 294 sats." under the
@@ -169,29 +176,39 @@ and each open allowed in the Signer app, and every send is approved there.
     turning the switch off goes back to the built-in Tor. Which Tor applies to Everything and Only
     what identifies you, so it is hidden under Nothing. The info button says what Tor, its absence
     and a server on your own network each reveal.
-  - Sources groups **Public service** by **Bitcoin Core RPC**, **Electrum** and **Esplora**,
-    followed by **Your own node**. Public RPC endpoints appear in the RPC group; local-network
-    endpoints appear with the bundled node. PublicNode is built in for mainnet, disabled until
-    selected, with Tor off. Add an HTTP/HTTPS endpoint with optional RPC basic
-    authentication, check its network and block-filter capability, then choose **Use only this**.
-    This atomically disables the other sources. RPC starts with Tor off; Details offers Tor and
-    certificate pinning. The wallet checks headers and scans payments locally, using block filters
-    where available and full blocks otherwise. Full-block restores can be very slow.
+  - The sources follow, as three questions, then Advanced settings. No list of roles is shown.
+  - **Where the chain comes from**: one choice of **Bitcoin peers** (the default), **Your node**
+    or **Electrum servers**, read from what is switched on (local or RPC, else Kyoto, else every
+    Electrum server, as the node module routes the chain). Picking one makes the `set_source`
+    calls that make it so, one after another: Bitcoin peers turns Kyoto on and your node off;
+    Your node turns the other node off first (the node module allows one), then the chosen one on,
+    then Kyoto off; Electrum servers turns Kyoto and your node off. Electrum servers keep their
+    switches either way, for fees. The one-peer and one-operator notice sits under the choice.
+  - **Your node** is in Logos (the bundled node) or at an address (Bitcoin Core over RPC, with
+    an optional login). An address is checked for its network and block filters, and is added
+    off, with Tor off; turning it on with Use turns the other node off first. Details offers Tor
+    and certificate pinning. The wallet checks headers and scans payments locally, using block
+    filters where available and full blocks otherwise. Full-block restores can be very slow.
+  - **Fees**: "From your node." while it decides the chain, else from the Electrum servers
+    switched on, else signet's relay floor under Bitcoin peers. **Change** opens the Electrum
+    servers' list, which stays open while they decide the chain; adding a server opens it too.
+  - **Payments before they confirm**: under Bitcoin peers, a switch that turns History on at the
+    Electrum server picked (`set_source` `{ use, history }`); others with History on are its
+    failover, and turning it off turns History off on each. With your node it is automatic and
+    private; under Electrum servers a server with History on is how the wallet finds payments.
   - Compact provider rows show Enabled/Disabled, route and health, even while settings are
     locked. Details reveals History, optional Tor, certificates and removal. Expansion survives
     health refreshes. History and Tor changes apply without extra privacy confirmations.
-  - One short public-service disclosure explains that direct connections reveal the IP and
-    wallet-related requests. Running your own node, with public services disabled, is presented
-    as the privacy-focused option. The help popup explains connection types and providers.
-  - **Use without Tor**, under Electrum, selects a regular TLS server. `useDirectSource` enables
+  - The help popup explains Bitcoin peers, your node, Electrum servers and who runs them.
+  - **Use without Tor**, in the Electrum servers' list, selects a regular TLS server. `useDirectSource` enables
     it with History on and Tor off and disables every other source in one `set_sources` call
     against a freshly read list. Pins and credentials remain intact; a wallet must be closed.
-  - **Advanced settings** holds the custom-server form, Kyoto peers, operator diagnostics and
-    connection record. Onion addresses require Tor.
-    Kyoto does not automatically hand the chain to Electrum when it cannot connect. Enabled
-    sources are summarized above the groups, including Kyoto when Advanced is collapsed.
+  - **Advanced settings** holds Bitcoin peers' row (Kyoto, with peers of your own), the custom
+    Electrum server form and the connection record; pins are in each row's Details. Onion
+    addresses require Tor. Kyoto does not automatically hand the chain to Electrum when it cannot
+    connect.
   - No-chain, unreachable-proxy and source-health errors remain visible. A server reached in
-    plain text outside Tor is marked Not encrypted. One-operator diagnostics live in Advanced.
+    plain text outside Tor is marked Not encrypted.
   - Under Kyoto, the install's peer book (`peer_list`'s `counts`): "N known peers: M from the
     curated list, K learned · L worked in the last 30 days", whether the curated list is
     provisional, and how it grows: the wallet learns working peers from the ones it
@@ -202,9 +219,9 @@ and each open allowed in the Signer app, and every send is approved there.
     trusts shows its subject, issuer, validity and SHA-256 fingerprint, with "Trust this
     certificate", which pins it (`set_source` `certSha256`). A pinned server shows its pin, with
     "Remove pin". Pins are locked while a wallet is open, like every source setting.
-  - With a wallet open, the sources badge applies the node module's rules to the wallet's own
-    view of its sources (`source_health`'s `wallet`), and servers it uses that the list lacks,
-    such as a test chain's own, are listed with their state.
+  - With a wallet open, servers it uses that the list lacks, such as a test chain's own, are
+    listed with their state from the wallet's own view (`source_health`'s `wallet`); a server whose
+    tip the watch finds behind reads "behind". Roles are not listed.
   - An unknown send names the source last tried, never one it was "broadcast through".
   - While a wallet is open, opening or closing, these settings show but do not change. A suspect
     mark can still be cleared.
@@ -223,7 +240,8 @@ are a SLOT's return value, shown on Settings and dropped when it is left.
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
 interface changes; this copy is from logos-bitcoin-wallet-backend 95b8f0c, plus `set_tor_use` and
-`torUse`/`torUseChosen` in `sources()` and `source_health()`, ahead of the backend's release.
+`torUse`/`torUseChosen` in `sources()` and `source_health()`, and `fee_rates`' signet floor
+(logos-co/logos-bitcoin-wallet-backend#10), ahead of the backend's release.
 `contracts/signer_manager_module.lidl` supplies the account-read API (`accounts`, `roster`) and
 the `accounts_changed` event; only public identity fields are copied into the view's account roster.
 This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, roster).
@@ -267,8 +285,8 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   deciding the chain on testnet4, and a coin past the 20-address gap limit that a small send spends
   and a gap limit of 30 takes into the balance. Each open shows last session's chain as connecting for
   its first 4 s, and the first open on a network then reads the chain's headers for 4 s; reopens show the first unused address again; testnet4's wallet already holds 20 unused
-  ones, so New address there says so; Kyoto on testnet4 has no fee estimate and Esplora's under Kyoto
-  on signet is a quiet network's. An amount below the address's dust limit keeps Review off. A send's
+  ones, so New address there says so; Kyoto on testnet4 has no fee estimate and the Electrum server's
+  under Kyoto on signet is a quiet network's. An amount below the address's dust limit keeps Review off. A send's
   fate is picked by its amount; the header of `sim.rs` says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
   manager and keystore: the node module's sources, certificate pin and curated Kyoto list with a
@@ -289,9 +307,10 @@ routes whenever it routes anything on regtest, so the driver switches off the no
 its only regtest default, before each open: the chain's sources then come from the core's
 `regtest.json`. The Kyoto spec then restores twice:
 once opened with no birthday, so the wallet asks for one and gets it in the wallet
-app; once with Blockstream's electrs as the only server and a `regtest.json` checkpoint above the
-first two payments, which it reports below the chain's start. A front that answers no block header
-(`doctests/e2e/esplora_front.py`) keeps the core from linking them there, so they stay unchecked
+app; once with one of the chain's electrs as the only server, serving history, and a `regtest.json`
+checkpoint above the first two payments, which it reports below the chain's start. A front that serves
+no header range below the checkpoint (`doctests/e2e/electrum_front.py`) keeps the core from linking
+them there, so they stay unchecked
 until the banner's earlier birthday lets Kyoto check them. That restore opens with open_wallet's own birthday (the app
 takes no block height, and a regtest day names none) and runs on Linux and macOS only. Last, user
 A's wallet pays itself at receive index 72 while its gap limit is 100; at 20 the coin shows apart
