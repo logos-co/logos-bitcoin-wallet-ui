@@ -671,31 +671,12 @@ QString BitcoinWalletUiBackend::addRpcSource(QString address, QString rpcUser, Q
     return addServer(address, QStringLiteral("rpc"), name, credentials);
 }
 
-QString BitcoinWalletUiBackend::useRpcSource(QString sourceId) {
-    return editSources([&](QJsonArray &list) -> QString {
-        bool found = false;
-        for (const QJsonValue &v : list) {
-            const auto s = v.toObject();
-            if (s.value("id").toString() == sourceId && s.value("kind").toString() == QLatin1String("rpc")) found = true;
-        }
-        if (!found) return QStringLiteral("Choose a Bitcoin Core RPC endpoint.");
-        for (qsizetype i = 0; i < list.size(); ++i) {
-            auto s = list.at(i).toObject();
-            const bool selected = s.value("id").toString() == sourceId;
-            s.insert("use", selected);
-            if (selected) s.insert("history", false);
-            list.replace(i, s);
-        }
-        return {};
-    });
-}
-
 QString BitcoinWalletUiBackend::addServer(QString address, QString kind, QString name, const QJsonObject &credentials) {
     address = address.trimmed();
     name = name.trimmed();
     kind = kind.trimmed().toLower();
-    if (kind != QLatin1String("electrum") && kind != QLatin1String("esplora") && kind != QLatin1String("rpc"))
-        return QStringLiteral("Choose an Electrum, Esplora or Bitcoin Core RPC server.");
+    if (kind != QLatin1String("electrum") && kind != QLatin1String("rpc"))
+        return QStringLiteral("Choose an Electrum server or your node's address.");
     // The host only names the entry: the node module parses and normalizes the address itself.
     const QString host = QUrl(address.contains(QLatin1String("://")) ? address : QStringLiteral("tcp://") + address).host();
     if (host.isEmpty()) return QStringLiteral("Enter a server address, such as 192.168.1.20:50001 or electrs.lan.");

@@ -47,7 +47,6 @@ public:
     QString useDirectSource(QString sourceId) override;
     QString addSource(QString address, QString kind, QString name) override;
     QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name) override;
-    QString useRpcSource(QString sourceId) override;
     QString removeSource(QString sourceId) override;
     QString setProxy(QString proxy) override;
     QString setTorUse(QString mode) override;

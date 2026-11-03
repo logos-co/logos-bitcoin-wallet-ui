@@ -1,14 +1,15 @@
 //! The scripted wallet behind the fixture: states move on a clock, a send's fate is its amount, and
 //! the first send that goes out turns the history server suspect. A wallet takes the birthday its
 //! open gives, else scans from where its kind of address began; a reorg re-anchors one payment 5 s after the first open is ready, and Kyoto in use is the
-//! authority and names a refused chain 3 s after it is. On signet under Kyoto, Esplora reports a
+//! authority and names a refused chain 3 s after it is. On signet under Kyoto, the Electrum server reports a
 //! payment below the chain's start (signet's checkpoint): unchecked until a birthday below it is
 //! set, whose rescan ends with one wider pass. On testnet4 Kyoto is on with one peer, which then
 //! decides the chain. A signet wallet holds a coin past a 20-address gap limit: listed apart and
 //! spendable, small sends spend it, and a gap limit of 30 or more takes it into the balance after
 //! its rescan. Each open shows last session's chain for 4 s before its sources answer. Opens show the
 //! first unused address and reveal none; testnet4's wallet already has 20 unused, so a new one is
-//! refused there. Fee estimates: none on testnet4, a quiet 1 sat/vB under Kyoto on signet. An
+//! refused there. Fee estimates: none on testnet4; under Kyoto on signet a quiet 1 sat/vB from the
+//! Electrum server, or the relay floor with no server on. An
 //! amount below the address's dust limit (294 sats, taproot and P2WSH 330) fails at build with code
 //! dust, as the core refuses it. "Use Tor for" starts as a fresh node store's, identifying and not
 //! chosen, behind the Tor that comes with Logos, which is always joined. No network, no key.
@@ -48,7 +49,7 @@ const KYOTO_PEERS: u64 = 4;
 const CLOSE_TIME: Duration = Duration::from_secs(3);
 const SWITCH_AFTER_CLOSE: Duration = Duration::from_secs(4);
 const MAX_OWN_PEERS: usize = 64;
-/// Esplora's report below signet's checkpoint, and when its alert fires after the wallet is ready.
+/// The Electrum server's report below signet's checkpoint, and when its alert fires after the wallet is ready.
 const UNCHECKED_SAT: u64 = 60_000;
 const UNCHECKED_HEIGHT: u64 = 289_950;
 const UNCHECKED_ALERT_AFTER: Duration = Duration::from_secs(1);
@@ -452,7 +453,6 @@ fn defaults() -> Vec<Source> {
     vec![
         s("kyoto", "kyoto", "p2p://peer-list", "peers", "Kyoto peers", false),
         s("electrum.example", "electrum", "ssl://electrum.example:50002", "example", "Example Electrum", true),
-        s("esplora.example", "esplora", "https://esplora.example/api", "example", "Example Esplora", true),
     ]
 }
 
@@ -697,17 +697,23 @@ impl Sim {
         json!({"ok": true, "page": page.max(0), "pageSize": 50, "total": self.history.len(), "rows": rows})
     }
 
-    /// Kyoto estimates nothing, so testnet4 has no estimate; under Kyoto on signet Esplora's is a
-    /// quiet network's.
+    /// Kyoto estimates nothing, so testnet4 has no estimate; under Kyoto on signet the Electrum
+    /// server's is a quiet network's, and with no server on the relay floor stands in, as in the core.
     pub fn fee_rates(&self) -> Value {
         if !self.open() {
             return json!({"ok": false, "error": "no wallet is open"});
         }
-        if self.network == "testnet4" {
+        let servers: Vec<String> = self.sources.get(&self.net())
+            .map(|l| l.iter().filter(|s| s.enabled && s.kind == "electrum").map(|s| s.id.clone()).collect())
+            .unwrap_or_default();
+        if self.network == "testnet4" || (servers.is_empty() && !(self.kyoto() && self.network == "signet")) {
             return json!({"ok": false, "error": "no fee estimate yet"});
         }
+        if servers.is_empty() {
+            return json!({"ok": true, "fast": 1.0, "normal": 1.0, "slow": 1.0, "minimum": 1.0, "sources": [], "estimated": true, "basis": "floor"});
+        }
         let (fast, normal, slow) = if self.kyoto() { (1.0, 1.0, 1.0) } else { (12.0, 6.0, 2.0) };
-        json!({"ok": true, "fast": fast, "normal": normal, "slow": slow, "minimum": 1.0, "sources": ["esplora.example"], "estimated": true})
+        json!({"ok": true, "fast": fast, "normal": normal, "slow": slow, "minimum": 1.0, "sources": servers, "estimated": true, "basis": "estimate"})
     }
 
     fn revealed_mut(&mut self) -> &mut u32 {
@@ -803,12 +809,11 @@ impl Sim {
         let net = self.net();
         let list: Vec<Value> = self.sources.get(&net).map(|l| l.iter().map(|s| self.source_json(s)).collect()).unwrap_or_default();
         let named = |v: &Value| json!({"id": v["id"], "url": v["url"], "operator": v["operator"], "lan": v["lan"]});
-        let exposes: Vec<Value> = list.iter().filter(|v| v["use"] == true && v["history"] == true && (v["kind"] == "electrum" || v["kind"] == "esplora")).map(named).collect();
+        let exposes: Vec<Value> = list.iter().filter(|v| v["use"] == true && v["history"] == true && v["kind"] == "electrum").map(named).collect();
         let without: Vec<Value> = list.iter().filter(|v| v["use"] == true && v["route"] == "direct" && v["lan"] != true).map(named).collect();
-        let ops: std::collections::BTreeSet<String> = list.iter().filter(|v| v["use"] == true && v["kind"] != "kyoto").filter_map(|v| v["operator"].as_str().map(str::to_lowercase)).collect();
         json!({"ok": true, "network": net, "configured": true, "walletOpen": self.locked(), "proxy": self.proxy,
                "torUse": self.tor_use, "torUseChosen": self.tor_use_chosen,
-               "sources": list, "exposes": exposes, "withoutTor": without, "crossCheck": ops.len() >= 2})
+               "sources": list, "exposes": exposes, "withoutTor": without})
     }
 
     pub fn source_health(&self, now_s: u64) -> Value {
@@ -834,8 +839,7 @@ impl Sim {
                 v
             })
             .collect();
-        let suspect = list.iter().any(|s| s.enabled && s.suspect);
-        let mut out = json!({"ok": true, "network": net, "configured": true, "overall": if suspect { "degraded" } else { "ok" },
+        let mut out = json!({"ok": true, "network": net, "configured": true,
                              "pending": false, "sources": rows, "tor": self.tor_health(),
                              "torUse": self.tor_use, "torUseChosen": self.tor_use_chosen});
         if self.open() {
@@ -846,7 +850,7 @@ impl Sim {
                                 "state": if s.suspect { "suspect" } else if self.asked { "ok" } else { "unknown" }, "suspect": s.suspect,
                                 "history": s.id == "electrum.example", "encrypted": is_tls(&s.url)}))
                 .collect();
-            out["wallet"] = json!({"ok": true, "proxy": self.proxy, "crossCheck": false, "sources": wallet});
+            out["wallet"] = json!({"ok": true, "proxy": self.proxy, "sources": wallet});
         }
         out
     }
@@ -1147,8 +1151,8 @@ impl Sim {
         } else {
             self.beyond_gap = false;
         }
-        let esplora = self.sources.get(&net).is_some_and(|l| l.iter().any(|s| s.enabled && s.kind == "esplora"));
-        self.unchecked = net == "signet" && self.kyoto() && esplora;
+        let electrum = self.sources.get(&net).is_some_and(|l| l.iter().any(|s| s.enabled && s.kind == "electrum"));
+        self.unchecked = net == "signet" && self.kyoto() && electrum;
         self.chain_base = if self.unchecked { checkpoint(&net) } else { 0 };
         if self.unchecked {
             // No reportedBy, as the core leaves an unchecked row: the alert names the source.
@@ -1660,7 +1664,7 @@ impl Sim {
         }
         if self.unchecked_alert_at.is_some_and(|t| now >= t) && self.open() {
             self.unchecked_alert_at = None;
-            out.push(Event::SourceAlert(json!({"source": "esplora.example", "kind": "unchecked_anchor",
+            out.push(Event::SourceAlert(json!({"source": "electrum.example", "kind": "unchecked_anchor",
                 "detail": format!("reported a payment in block {UNCHECKED_HEIGHT}, below the chain's start at {}: nothing could check it", self.chain_base),
                 "at": now_secs(), "network": self.network, "group": self.group})));
         }
@@ -1989,8 +1993,18 @@ mod tests {
 
     #[test]
     fn fee_estimates_by_network() {
-        let (sim, _) = opened("signet");
-        assert_eq!((sim.fee_rates()["normal"].clone(), sim.fee_rates()["estimated"].clone()), (json!(6.0), json!(true)));
+        let (mut sim, t) = opened("signet");
+        assert_eq!((sim.fee_rates()["normal"].clone(), sim.fee_rates()["sources"].clone()), (json!(6.0), json!(["electrum.example"])));
+        // Kyoto with no Electrum server on: signet's relay floor, as the core gives it.
+        let mut ev = vec![];
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        assert_eq!(sim.set_source("kyoto", r#"{"use":true}"#)["ok"], true);
+        assert_eq!(sim.set_source("electrum.example", r#"{"use":false}"#)["ok"], true);
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
+        run(&mut sim, t, 10);
+        assert_eq!((sim.fee_rates()["basis"].clone(), sim.fee_rates()["sources"].clone(), sim.fee_rates()["normal"].clone()),
+                   (json!("floor"), json!([]), json!(1.0)));
         let (sim, _) = opened("testnet4");
         assert_eq!(sim.fee_rates(), json!({"ok": false, "error": "no fee estimate yet"}));
     }
@@ -2284,7 +2298,7 @@ mod tests {
         let p = sim.probe(r#"{"source":"electrs.lan"}"#);
         let cert = p["sources"][0]["certificate"].clone();
         assert_eq!((cert["trusted"].clone(), cert["issuer"].clone()), (json!(false), json!("CN=electrs.lan")));
-        assert_eq!(sim.probe(r#"{"source":""}"#)["answered"].as_array().unwrap().len(), 4, "every enabled server");
+        assert_eq!(sim.probe(r#"{"source":""}"#)["answered"].as_array().unwrap().len(), 3, "every enabled server");
         assert!(sim.set_source("plain", &json!({"certSha256": cert["certSha256"]}).to_string())["error"].as_str().unwrap().contains("TLS"));
         let pinned = sim.set_source("electrs.lan", &json!({"certSha256": cert["certSha256"]}).to_string());
         assert_eq!(row(&pinned, "electrs.lan")["certSha256"], cert["certSha256"]);

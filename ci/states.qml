@@ -92,7 +92,6 @@ Item {
         function dismissAlerts() { alertsJson = "[]" }
         function setSource(id, changes) { note("setSource", [id, changes]); return "" }
         function addRpcSource(a,u,p,n) { note("addRpcSource", [a,u,p,n]); return "" }
-        function useRpcSource(id) { note("useRpcSource", [id]); return "" }
         function useDirectSource(id) { note("useDirectSource", [id]); return "" }
         function addSource(a, k, n) { note("addSource", [a, k, n]); return "" }
         function removeSource(id) { note("removeSource", [id]); return "" }
@@ -188,18 +187,19 @@ Item {
             [{ state: "failed", lastError: "the keystore opened a wallet of another family" }, "Failed: the keystore opened a wallet of another family"],
             [mainnet({ state: "syncing", authority: { height: null, peers: 0 } }), "Connecting to the chain's sources…"],
             [mainnet({ state: "syncing", authority: { height: null, peers: 2 } }), "Reading the chain's headers…"],
-            [mainnet({}), "Synchronized · block 935,500, tip 4 min old · Servers' headers"],
-            [mainnet({ authority: { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 3 } }), "Synchronized · block 935,500, tip 4 min old · Kyoto · 3 peers"],
-            [mainnet({ authority: { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 1 } }), "Synchronized · block 935,500, tip 4 min old · Kyoto · 1 peer"],
-            [mainnet({ authority: { kind: "local_node", height: 935500, tipAgeSecs: 240, peers: 1 } }), "Synchronized · block 935,500, tip 4 min old · Your node"],
-            // No agreeing source: the core's own `synced` is not enough.
-            [mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } }), "No source agrees · block 935,500, tip 4 min old"],
-            [mainnet({ authority: { height: 935500, tipAgeSecs: 7300, peers: 0 } }), "No source agrees · block 935,500, tip 2 hours old"],
+            [mainnet({}), "Synchronized · block 935,500 · from 2 Electrum servers"],
+            [mainnet({ authority: { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 3 } }), "Synchronized · block 935,500 · from 3 Bitcoin peers"],
+            [mainnet({ authority: { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 1 } }), "Synchronized · block 935,500 · from 1 Bitcoin peer"],
+            [mainnet({ authority: { kind: "local_node", height: 935500, tipAgeSecs: 240, peers: 1 } }), "Synchronized · block 935,500 · from your node"],
+            [mainnet({ authority: { kind: "electrum_headers", height: 935500, tipAgeSecs: 240, peers: 1 } }), "Synchronized · block 935,500 · from 1 Electrum server"],
+            // No agreeing source: the core's own `synced` is not enough. The words follow who decides the chain.
+            [mainnet({ authority: { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 0 } }), "Can't confirm the chain · no peer answered · last block 935,500, 4 min old"],
+            [mainnet({ authority: { kind: "electrum_headers", height: 935500, tipAgeSecs: 7300, peers: 0 } }), "Can't confirm the chain · no server answered · last block 935,500, 2 hours old"],
             // Last session's chain before any source answered this open: connecting, never "none agrees".
             [mainnet({ synced: false, authority: { height: 935500, tipAgeSecs: 75600, peers: 0, asked: false } }), "Connecting to the chain's sources… · last known block 935,500"],
-            [mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: true } }), "No source agrees · block 935,500, tip 4 min old"],
+            [mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: true } }), "Can't confirm the chain · no source answered · last block 935,500, 4 min old"],
             [mainnet({ network: "regtest", walletTip: 150, authority: { height: 150, tipAgeSecs: 30, peers: 0, asked: false } }), "Connecting to the chain's sources… · last known block 150"],
-            // A header download: how far it read of the server's tip, never "stalled" or "no source agrees".
+            // A header download: how far it read of the server's tip, never "stalled" or "can't confirm".
             [mainnet({ state: "syncing", synced: false, walletTip: 84000, authority: { kind: "electrum_headers", height: 84000, tipAgeSecs: 50000000, peers: 1, asked: true,
                        headers: { have: 84000, target: 157000 } } }), "Reading the chain's headers… 84,000 of 157,000"],
             [mainnet({ state: "syncing", synced: false, authority: { height: 2016, tipAgeSecs: 50000000, peers: 0, asked: false, headers: { have: 2016, target: 157000 } } }),
@@ -219,50 +219,50 @@ Item {
             // never "Synchronized". Without `scanned` (an older core) the rule above holds.
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, syncPercent: 100, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 501959, phase: "filters" } }),
-             "Checking block filters… block 501,959 of 973,920 · 4% · Kyoto · 3 peers"],
+             "Checking block filters… block 501,959 of 973,920 · 4% · from 3 Bitcoin peers"],
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 501959, phase: "filter_headers" } }),
-             "Checking block filters… block 501,959 of 973,920 · 4% · fetching filter headers · Kyoto · 3 peers"],
+             "Checking block filters… block 501,959 of 973,920 · 4% · fetching filter headers · from 3 Bitcoin peers"],
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824, rescanFrom: 973700,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: null, phase: "syncing" } }),
-             "Checking block filters from block 973,700… · Kyoto · 3 peers"],
+             "Checking block filters from block 973,700… · from 3 Bitcoin peers"],
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973917, phase: "filters" } }),
-             "Checking block filters… block 973,917 of 973,920 · 99% · Kyoto · 3 peers"],
+             "Checking block filters… block 973,917 of 973,920 · 99% · from 3 Bitcoin peers"],
             // A scan's first update brings Kyoto's newer headers: an old tip until then is no stall.
             [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
                        authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
                        kyoto: { scanned: null, phase: "filter_headers", progress: 0.03, headers: 974330 } }),
-             "Checking block filters from block 481,824… · fetching filter headers 12% · Kyoto · 3 peers"],
+             "Checking block filters from block 481,824… · fetching filter headers 12% · from 3 Bitcoin peers"],
             // Its peers with nothing newer, or the scan done, and the tip still old: stalled.
             [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
                        authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
                        kyoto: { scanned: null, phase: "filter_headers", progress: 0.03, headers: 974135 } }),
-             "Stalled · block 974,135, tip 35 hours old · Kyoto · 3 peers"],
+             "Stalled · block 974,135, tip 35 hours old · from 3 Bitcoin peers"],
             [mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 481824,
                        authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
                        kyoto: { scanned: 974134, phase: "synced", headers: 974330 } }),
-             "Stalled · block 974,135, tip 35 hours old · Kyoto · 3 peers"],
+             "Stalled · block 974,135, tip 35 hours old · from 3 Bitcoin peers"],
             // The newest block or two still being checked is caught up.
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973918, phase: "synced" } }),
-             "Synchronized · block 973,920, tip 25 min old · Kyoto · 3 peers"],
+             "Synchronized · block 973,920 · from 3 Bitcoin peers"],
             // At the tip the core says null: the usual states.
-            [mainnet({ authority: { kind: "electrum_headers", height: 935500, tipAgeSecs: 240, peers: 2, headers: null } }), "Synchronized · block 935,500, tip 4 min old · Servers' headers"],
+            [mainnet({ authority: { kind: "electrum_headers", height: 935500, tipAgeSecs: 240, peers: 2, headers: null } }), "Synchronized · block 935,500 · from 2 Electrum servers"],
             // A tip older than an hour is never synchronized.
             [mainnet({ authority: { height: 935500, tipAgeSecs: 3601, peers: 3 } }), "Stalled · block 935,500, tip 1 hour old"],
             [mainnet({ authority: { height: 935500, tipAgeSecs: 200000, peers: 3 } }), "Stalled · block 935,500, tip 2 days old"],
             [mainnet({ state: "syncing", synced: false, walletTip: 900000, syncPercent: 42,
                        authority: { height: 935500, tipAgeSecs: 300, peers: 2 } }), "Syncing 42% · block 900,000 of 935,500"],
-            [mainnet({ state: "syncing", synced: false, walletTip: undefined }), "Syncing · the chain is at block 935,500 · Servers' headers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: undefined }), "Syncing · the chain is at block 935,500 · from 2 Electrum servers"],
             [mainnet({ network: "regtest", walletTip: 150, authority: { height: 150, tipAgeSecs: 9000, peers: 1 } }), "Local chain · block 150"],
-            [mainnet({ network: "regtest", walletTip: 150, authority: { kind: "local_node", height: 150, tipAgeSecs: 9000, peers: 1 } }), "Local chain · block 150 · Your node"],
-            [mainnet({ network: "regtest", walletTip: 150, authority: { height: 150, tipAgeSecs: 9000, peers: 0 } }), "No source agrees · block 150, tip 2 hours old"],
+            [mainnet({ network: "regtest", walletTip: 150, authority: { kind: "local_node", height: 150, tipAgeSecs: 9000, peers: 1 } }), "Local chain · block 150 · from your node"],
+            [mainnet({ network: "regtest", walletTip: 150, authority: { kind: "rpc_node", height: 150, tipAgeSecs: 9000, peers: 0 } }), "Can't confirm the chain · your node didn't answer · last block 150, 2 hours old"],
             [mainnet({ unavailable: true, error: "the wallet core did not answer" }), "The wallet backend is not answering"]
         ]
         for (var i = 0; i < sync.length; i++) expect("sync " + i, v.syncLabel(sync[i][0]), sync[i][1])
         expect("chip synced", v.syncChip(mainnet({})), "Synced · 935,500")
-        expect("chip no peers", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } })), "No sources")
+        expect("chip no peers", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } })), "No answer")
         expect("chip not asked yet", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: false } })), "Connecting…")
         expect("chip reading headers", v.syncChip(mainnet({ authority: { height: 84000, tipAgeSecs: 50000000, peers: 1, headers: { have: 84000, target: 157000 } } })), "Headers 53%")
         expect("chip never says done before the tip", v.syncChip(mainnet({ authority: { height: 156999, peers: 1, headers: { have: 156999, target: 157000 } } })), "Headers 99%")
@@ -284,11 +284,9 @@ Item {
         expect("...an old tip behind its headers: no stall", v.syncChip(scanning), "Checking filters…")
         expect("an estimate behind the chain: no share", v.headersShare({ have: 900000, target: null }, 935424, 935000), null)
         expect("chip without a height, as before", v.syncChip(mainnet({ state: "syncing", authority: { height: null, peers: 2 } })), "Connecting…")
-        expect("authority not asked yet", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: false } })),
-               "The chain: headers from Electrum servers, checked here · waiting for their first answer")
-        expect("authority asked, none agrees", v.authorityLine(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: true } })),
-               "The chain: headers from Electrum servers, checked here · 0 servers agree")
-        expect("kyoto not asked yet", v.authorityLine({ authority: { kind: "kyoto", peers: 0, asked: false } }), "The chain: Bitcoin peers, through block filters · connecting")
+        expect("servers not asked yet: connecting, no second line", v.syncLabel(mainnet({ authority: { kind: "electrum_headers", height: 935500, peers: 0, asked: false } })),
+               "Connecting to the chain's sources… · last known block 935,500")
+        expect("no authority line any more", find(view.item, "authorityLine", 0), null)
         // A Kyoto restart still dialling connects; it reads as isolated once its dials failed and it stopped.
         var servers = [{ id: "fee", state: "ok", tip: 974135, operator: "a" }]
         var restart = mainnet({ state: "syncing", synced: false, walletTip: 974135, birthday: 969082, rescanFrom: 969082,
@@ -296,27 +294,26 @@ Item {
                                 kyoto: { running: true, scanned: 970000, phase: "syncing", progress: 0 } })
         expect("a Kyoto start dialling", v.syncLabel(restart), "Connecting to the chain's sources… · last known block 974,135")
         expect("...its chip", v.syncChip(restart), "Connecting…")
-        expect("...its chain line", v.authorityLine(restart), "The chain: Bitcoin peers, through block filters · connecting")
-        expect("...not degraded", v.walletOverall(servers, restart), "ok")
         restart.kyoto.running = false
-        expect("its dials failed: none agrees", v.syncLabel(restart), "No source agrees · block 974,135, tip 5 min old · Kyoto · 0 peers")
-        expect("...its chip", v.syncChip(restart), "No sources")
-        expect("...its chain line", v.authorityLine(restart), "The chain: Bitcoin peers, through block filters · 0 peers")
-        expect("...degraded", v.walletOverall(servers, restart), "degraded")
+        expect("its dials failed: no peer answered", v.syncLabel(restart), "Can't confirm the chain · no peer answered · last block 974,135, 5 min old")
+        expect("...its chip", v.syncChip(restart), "No answer")
         restart.kyoto.running = true
         restart.authority.kind = "electrum_headers"
-        expect("servers' headers with none agreeing: not Kyoto's dials", v.syncChip(restart), "No sources")
+        expect("servers' headers with none agreeing: not Kyoto's dials", v.syncChip(restart), "No answer")
         restart.authority = { kind: "kyoto", height: 974135, tipAgeSecs: 300, peers: 3, asked: true }
         restart.kyoto = { running: true, scanned: 969582, phase: "filters", progress: 0.34 }
         restart.syncPercent = 34
-        expect("a rescan the sync line counts", v.syncLabel(restart), "Checking block filters… block 969,582 of 974,135 · 9% · Kyoto · 3 peers")
+        expect("a rescan the sync line counts", v.syncLabel(restart), "Checking block filters… block 969,582 of 974,135 · 9% · from 3 Bitcoin peers")
         expect("...so the rescan pane gives no figure", v.syncLineCounts(restart), true)
         restart.kyoto.scanned = 974134
         expect("a finished scan: the rescan pane counts", v.syncLineCounts(restart), false)
         expect("history from Kyoto", v.historyName("kyoto"), "Bitcoin peers")
-        expect("...from your node", v.historyName("local_node"), "your own node")
-        expect("...from an RPC node", v.historyName("rpc_node"), "Bitcoin Core RPC")
+        expect("...from your node", v.historyName("local_node"), "your node")
+        expect("...from your node at an address", v.historyName("rpc_node"), "your node")
         expect("...from a server not listed", v.historyName("gone"), "gone")
+        expect("history line: Kyoto", v.historyLine("kyoto"), "Payments found on this device, through block filters")
+        expect("history line: your node", v.historyLine("rpc_node"), "Payments found through your node")
+        expect("history line: a server", v.historyLine("gone"), "Payments looked up at gone")
         expect("chip stalled", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 4000, peers: 2 } })), "Stalled")
 
         var sends = [
@@ -406,36 +403,22 @@ Item {
 
         // Operators, not hosts, decide whether one operator decides the chain.
         var list = [{ id: "kyoto", kind: "kyoto", use: false }, { id: "a", kind: "electrum", use: true, operator: "Example" },
-                    { id: "b", kind: "electrum", use: true, operator: "example" }, { id: "c", kind: "esplora", use: true, operator: "other" }]
+                    { id: "b", kind: "electrum", use: true, operator: "example" }, { id: "c", kind: "electrum", use: false, operator: "other" }]
         expect("chain servers", v.chainSourcesOf(list).map(function (x) { return x.id }), ["a", "b"])
         expect("chain operators", v.operatorsOf(v.chainSourcesOf(list)), ["Example"])
         list[0].use = true
         expect("chain kyoto", v.chainSourcesOf(list).map(function (x) { return x.id }), ["kyoto"])
 
-        // The open wallet's own view decides the badge; a source not asked yet does not count.
-        expect("overall ok", v.walletOverall([{ state: "ok" }, { state: "ok" }, { state: "unknown" }]), "ok")
-        expect("overall degraded", v.walletOverall([{ state: "ok" }, { state: "failing" }]), "degraded")
-        expect("overall offline", v.walletOverall([{ state: "failing" }, { state: "down" }]), "offline")
-        expect("overall suspect", v.walletOverall([{ state: "suspect", suspect: true }, { state: "ok" }]), "degraded")
-        expect("overall disagree", v.walletOverall([{ state: "ok", operator: "A", tip: 100 }, { state: "ok", operator: "b", tip: 104 }]), "disagreement")
-        expect("overall one operator", v.walletOverall([{ state: "ok", operator: "A", tip: 100 }, { state: "ok", operator: "a", tip: 104 }]), "ok")
-        expect("overall not asked", v.walletOverall([{ state: "unknown" }]), "")
-        var nodeAt = function (peers) { return { state: "ready", network: "regtest", walletTip: 150,
-                                                 authority: { kind: "local_node", height: 150, tipAgeSecs: 30, peers: peers } } }
-        expect("your node alone", v.walletOverall([], nodeAt(1)), "ok")
-        expect("your node unreachable", v.walletOverall([], nodeAt(0)), "offline")
-        expect("kyoto not asked yet is no news", v.walletOverall([], { state: "ready", network: "mainnet", walletTip: 935500,
-               authority: { kind: "kyoto", height: 935500, tipAgeSecs: 75600, peers: 0, asked: false } }), "")
-        expect("kyoto isolated, a server fine", v.walletOverall([{ state: "ok" }],
-               { state: "ready", network: "regtest", walletTip: 150, authority: { kind: "kyoto", height: 150, peers: 0 } }), "degraded")
-        expect("servers decide", v.walletOverall([], { state: "ready", authority: { kind: "electrum_headers", height: 1, peers: 1 } }), "")
-        expect("source line", v.walletSourceLine({ state: "ok", roles: ["chain", "history"], history: true }), "ok · chain, history · history server")
+        // No badge and no roles: a source's state, and why it is not fine.
+        expect("no badge any more", typeof v.walletOverall, "undefined")
+        expect("source line, no roles", v.walletSourceLine({ state: "ok", roles: ["chain", "history"], history: true }), "ok")
         expect("suspect line", v.walletSourceLine({ state: "suspect", suspect: true, suspectReason: "served invalid headers", error: "x" }), "suspect: served invalid headers")
-        expect("failing line", v.walletSourceLine({ state: "failing", roles: ["chain"], error: "connection refused" }), "failing · chain · connection refused")
-        expect("plain line", v.walletSourceLine({ state: "ok", roles: ["chain"], encrypted: false }), "ok · chain · not encrypted")
+        expect("failing line", v.walletSourceLine({ state: "failing", roles: ["chain"], error: "connection refused" }), "failing · connection refused")
+        expect("behind line", v.walletSourceLine({ state: "stale", roles: ["check"] }), "behind")
+        expect("plain line", v.walletSourceLine({ state: "ok", roles: ["chain"], encrypted: false }), "ok · not encrypted")
 
-        expect("authority kyoto", v.authorityLine({ authority: { kind: "kyoto", peers: 2 } }), "The chain: Bitcoin peers, through block filters · 2 peers")
-        expect("authority node", v.authorityLine({ authority: { kind: "local_node" } }), "The chain: your own node, checked here")
+        expect("authority kyoto", v.authorityName({ authority: { kind: "kyoto", peers: 2 } }), "2 Bitcoin peers")
+        expect("authority node", v.authorityName({ authority: { kind: "local_node" } }), "your node")
         expect("gap", v.gapBlocks({ from: 100, below: 300 }), "blocks 100–299")
         expect("gap one", v.gapBlocks({ from: 100, below: 101 }), "block 100")
         expect("change to fee", v.warningText({ kind: "change_to_fee", amountSat: "450", costToSpendSat: "680" }),
@@ -476,9 +459,8 @@ Item {
                 {id:"0x123",family:"evm",chain:"test",available:true}])
             fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "socks5h://127.0.0.1:9050", walletOpen: false,
                 sources: [{ id: "kyoto", kind: "kyoto", url: "p2p://peer-list", operator: "peers", label: "Bitcoin peers", use: false, history: false, tor: true, lan: false, route: "tor" },
-                          { id: "electrum.example", kind: "electrum", url: "ssl://electrum.example:50002", operator: "example", label: "Example Electrum", use: true, history: false, tor: true, lan: false, route: "tor" },
-                          { id: "esplora.example", kind: "esplora", url: "https://esplora.example/api", operator: "example", label: "Example Esplora", use: true, history: false, tor: true, lan: false, route: "tor" }],
-                exposes: [], withoutTor: [], crossCheck: false })
+                          { id: "electrum.example", kind: "electrum", url: "ssl://electrum.example:50002", operator: "example", label: "Example Electrum", use: true, history: false, tor: true, lan: false, route: "tor" }],
+                exposes: [], withoutTor: [] })
         },
         function (v) {
             expect("open page", shown("openPage"), true)
@@ -573,7 +555,7 @@ Item {
             fake.statusJson = scene.syncedMainnet
             fake.balancesJson = JSON.stringify({ busy: false, confirmed: "125000000", confirmedBtc: "1.25000000", waiting: "50000", pending: "30000",
                                                  sent: "0", immature: "0", tooSmall: { count: 2, sat: "540", btc: "0.00000540" } })
-            fake.feeRatesJson = JSON.stringify({ fast: 12, normal: 6, slow: 2, minimum: 1, sources: ["esplora.example"] })
+            fake.feeRatesJson = JSON.stringify({ fast: 12, normal: 6, slow: 2, minimum: 1, sources: ["electrum.example"] })
             fake.historyJson = JSON.stringify({ page: 0, pageSize: 50, total: 3, rows: [
                 { txid: "aa".repeat(32), intent: "receive", amountSat: "30000", state: "pending", reportedBy: "electrum.example", confirmations: 0 },
                 { txid: "bb".repeat(32), intent: "send", amountSat: "60000", feeSat: "141", state: "sent", counterparties: ["bcrt1qpay"], confirmations: 0 },
@@ -581,28 +563,42 @@ Item {
         },
         function (v) {
             expect("tabs", shown("walletTabs"), true)
-            expect("synced line", prop("syncLine", "text"), "Synchronized · block 935,500, tip 4 min old · Servers' headers")
+            expect("synced line", prop("syncLine", "text"), "Synchronized · block 935,500 · from 2 Electrum servers")
             expect("confirmed", prop("confirmedCard", "value"), "1.25 BTC")
             expect("waiting row", shown("waitingRow"), true)
             expect("pending row", shown("pendingRow"), true)
             expect("too small row", prop("tooSmallRowAmount", "text"), "2 coins, 0.0000054 BTC")
             expect("sent row", shown("sentRow"), true)
             expect("home speed up", shown("homeSpeedUp_" + "bb".repeat(32)), true)
+            expect("the tip watch, in the servers' words", v.alertMessage({ kind: "authority_behind", source: "electrum.example" }),
+                   "Example Electrum has seen blocks the Electrum servers haven't sent for 30 minutes; the Electrum servers may be cut off from the network.")
+            var st = JSON.parse(scene.syncedMainnet)
+            st.authority = { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 8 }
+            fake.statusJson = JSON.stringify(st)
+            fake.alertsJson = JSON.stringify([{ source: "electrum.example", kind: "authority_behind", detail: "3 checked blocks ahead for half an hour", at: 1 }])
+        },
+        function (v) {
+            expect("the tip watch's banner", prop("alertBanner", "title"), "Your wallet may be behind")
+            expect("...in the peers' words", prop("alertBanner", "message"),
+                   "Example Electrum has seen blocks your peers haven't sent for 30 minutes; your peers may be cut off from the network.")
+            expect("...from 8 Bitcoin peers", prop("syncLine", "text"), "Synchronized · block 935,500 · from 8 Bitcoin peers")
+            fake.alertsJson = "[]"
+            fake.statusJson = scene.syncedMainnet
             fake.healthJson = JSON.stringify({ overall: "offline", sources: [], wallet: { sources: [
                 { id: "regtest-0", url: "tcp://127.0.0.1:61701", state: "ok", suspect: false, roles: ["chain", "history"], history: true },
                 { id: "regtest-1", url: "tcp://127.0.0.1:61711", state: "ok", suspect: false, roles: ["chain"] }] } })
         },
         function (v) {
-            expect("badge from the open wallet's sources", prop("healthBadge", "text"), "Sources OK")
+            expect("no sources badge", find(view.item, "healthBadge", 0), null)
             expect("wallet's own servers", v.walletOnlySources.map(function (s) { return s.id }), ["regtest-0", "regtest-1"])
-            expect("a server's line, through its delegate", prop("walletSourceState_regtest-0", "text"), "ok · chain, history · history server")
+            expect("a server's line, through its delegate, without roles", prop("walletSourceState_regtest-0", "text"), "ok")
             fake.healthJson = ""
             var st = JSON.parse(scene.syncedMainnet)
             st.authority.peers = 0
             fake.statusJson = JSON.stringify(st)
         },
         function (v) {
-            expect("rendered: no peers is never synchronized", prop("syncLine", "text"), "No source agrees · block 935,500, tip 4 min old · Servers' headers")
+            expect("rendered: no peers is never synchronized", prop("syncLine", "text"), "Can't confirm the chain · no server answered · last block 935,500, 4 min old")
             var st = JSON.parse(scene.syncedMainnet)
             st.synced = false
             st.authority = { kind: "electrum_headers", height: 935432, tipAgeSecs: 75600, peers: 0, asked: false }
@@ -613,8 +609,6 @@ Item {
         function (v) {
             expect("rendered: before the first answer", prop("syncLine", "text"), "Connecting to the chain's sources… · last known block 935,432")
             expect("...the chip", prop("syncChip", "text"), "Connecting…")
-            expect("...the authority", prop("authorityLine", "text"), "The chain: headers from Electrum servers, checked here · waiting for their first answer")
-            expect("...and no badge while nothing was asked", shown("healthBadge"), false)
             fake.healthJson = ""
             var st = JSON.parse(scene.syncedMainnet)
             st.state = "syncing"
@@ -626,7 +620,6 @@ Item {
         function (v) {
             expect("rendered: a header download", prop("syncLine", "text"), "Reading the chain's headers… 84,000 of 157,000")
             expect("...the chip", prop("syncChip", "text"), "Headers 53%")
-            expect("...the server sending them agrees", prop("authorityLine", "text"), "The chain: headers from Electrum servers, checked here · 1 server agrees")
             expect("...with a bar for the header phase", shown("headersProgress") && !prop("headersProgress", "indeterminate"), true)
             var scan = JSON.parse(scene.syncedMainnet)
             scan.state = "syncing"
@@ -638,7 +631,7 @@ Item {
             fake.statusJson = JSON.stringify(scan)
         },
         function (v) {
-            expect("rendered: Kyoto's scan behind its headers", prop("syncLine", "text"), "Checking block filters… block 501,959 of 973,920 · 4% · Kyoto · 3 peers")
+            expect("rendered: Kyoto's scan behind its headers", prop("syncLine", "text"), "Checking block filters… block 501,959 of 973,920 · 4% · from 3 Bitcoin peers")
             expect("...the chip", prop("syncChip", "text"), "Filters 4%")
             expect("...its bar, not the backend's 100%", shown("syncProgress") && !prop("syncProgress", "indeterminate")
                    && Math.abs(prop("syncProgress", "value") - 0.04) < 1e-9, true)
@@ -648,7 +641,7 @@ Item {
             fake.statusJson = JSON.stringify(rescan)
         },
         function (v) {
-            expect("rendered: a Kyoto rescan, one figure", prop("syncLine", "text"), "Checking block filters… block 501,959 of 973,920 · 4% · Kyoto · 3 peers")
+            expect("rendered: a Kyoto rescan, one figure", prop("syncLine", "text"), "Checking block filters… block 501,959 of 973,920 · 4% · from 3 Bitcoin peers")
             expect("...the rescan pane names where it starts", prop("rescanLine", "text"), "Rescanning from block 481,824")
             expect("...one bar", shown("syncProgress") && !shown("rescanProgress"), true)
             fake.statusJson = scene.syncedMainnet
@@ -660,12 +653,19 @@ Item {
             expect("...in plain words", prop("feeUnknownNote", "text"), "Fee estimate not available yet. Give a rate of your own, in sat/vB.")
             expect("...no preset offered", shown("feeNormal"), false)
             expect("...a rate of your own", prop("feeCustomChoice", "checked"), true)
-            fake.feeRatesJson = JSON.stringify({ fast: 1, normal: 1, slow: 1, minimum: 1, sources: ["esplora.example"], estimated: true })
+            fake.feeRatesJson = JSON.stringify({ fast: 1, normal: 1, slow: 1, minimum: 1, sources: ["electrum.example"], estimated: true })
         },
         function (v) {
-            expect("a quiet network, said plainly with its source", prop("feeQuietNote", "text"), "The network is quiet: every speed costs 1 sat/vB. Estimate from Example Esplora.")
+            expect("a quiet network, said plainly with its source", prop("feeQuietNote", "text"), "The network is quiet: every speed costs 1 sat/vB. Estimate from Example Electrum.")
             expect("...the presets back", shown("feeNormal"), true)
             expect("...no unknown note", shown("feeUnknownNote"), false)
+            expect("...no floor note", shown("feeFloorNote"), false)
+            fake.feeRatesJson = JSON.stringify({ fast: 1, normal: 1, slow: 1, minimum: 1, sources: [], estimated: true, basis: "floor" })
+        },
+        function (v) {
+            expect("signet's floor, said as the peers' lowest rate", prop("feeFloorNote", "text"), "Fees: the lowest rate peers relay (signet has no useful fee estimates).")
+            expect("...not as a quiet network", shown("feeQuietNote"), false)
+            expect("...the presets stay", shown("feeNormal"), true)
             fake.feeRatesJson = JSON.stringify({ fast: 1, normal: 1, slow: 1, minimum: 1, sources: ["electrum.example"], estimated: true, basis: "mempool" })
         },
         function (v) {
@@ -674,7 +674,7 @@ Item {
         },
         function (v) {
             expect("...two of them", prop("feeQuietNote", "text"), "The network is quiet: every speed costs 1 sat/vB. Estimate from the mempools of Example Electrum, electrum.other.")
-            fake.feeRatesJson = JSON.stringify({ fast: 12, normal: 6, slow: 2, minimum: 1, sources: ["esplora.example"], estimated: true })
+            fake.feeRatesJson = JSON.stringify({ fast: 12, normal: 6, slow: 2, minimum: 1, sources: ["electrum.example"], estimated: true })
         },
         function (v) {
             expect("levels apart: no quiet note", shown("feeQuietNote"), false)
@@ -859,22 +859,21 @@ Item {
             expect("unconfigured says nothing of the chain", shown("noChainNotice"), false)
             fake.sourcesJson = keep
             expect("unlocked", shown("networkLockedNotice"), false)
-            expect("public group visible", shown("publicServicesHeading"), true)
+            expect("no public-service group", find(view.item, "publicServicesHeading", 0), null)
+            expect("no Esplora group", find(view.item, "esploraSources", 0), null)
             expect("advanced starts collapsed", shown("advancedSourcesPane"), false)
             expect("details start collapsed", shown("sourceOptions_electrum.example"), false)
-            expect("Electrum grouped separately", prop("electrumSources", "entries").map(function (s) { return s.id }), ["electrum.example"])
-            expect("Esplora grouped separately", prop("esploraSources", "entries").map(function (s) { return s.id }), ["esplora.example"])
-            expect("RPC endpoint form available", shown("rpcAddress"), true)
+            expect("Electrum servers grouped", prop("electrumSources", "entries").map(function (s) { return s.id }), ["electrum.example"])
+            expect("no custom server kind to pick", find(view.item, "addSourceKind", 0), null)
             find(view.item, "sourceDetails_electrum.example", 0).clicked()
-            find(view.item, "sourceDetails_esplora.example", 0).clicked()
             expect("Details expands the selected row", shown("sourceOptions_electrum.example"), true)
             expandAdvanced()
-            expect("operator diagnostic in Advanced", shown("oneOperatorNotice"), true)
-            find(view.item, "historySwitch_esplora.example", 0).clicked()
+            expect("operator diagnostic", shown("oneOperatorNotice"), true)
+            find(view.item, "historySwitch_electrum.example", 0).clicked()
         },
         function (v) {
             expect("history changes without another privacy prompt", fake.count("setSource"), 1)
-            expect("history on", fake.last("setSource"), ["setSource", "esplora.example", JSON.stringify({ history: true })])
+            expect("history on", fake.last("setSource"), ["setSource", "electrum.example", JSON.stringify({ history: true })])
             find(view.item, "torSwitch_electrum.example", 0).clicked()
         },
         function (v) {
@@ -888,7 +887,6 @@ Item {
         function (v) {
             expect("details survive a source refresh", shown("sourceOptions_electrum.example"), true)
             expect("without tor badge", shown("withoutTorBadge_electrum.example"), true)
-            expect("single public-service disclosure", shown("publicPrivacyNotice"), true)
             v.closeSheets()
             var st = JSON.parse(scene.syncedMainnet)
             st.needsBirthday = true
@@ -990,7 +988,7 @@ Item {
             v.selectTab(0)
         },
         function (v) {
-            expect("named node", prop("syncLine", "text"), "Synchronized · block 935,500, tip 4 min old · Your node")
+            expect("named node", prop("syncLine", "text"), "Synchronized · block 935,500 · from your node")
             expect("gap covered", prop("prunedGapLine", "text"), "Older blocks via electrum.example (blocks 100–299)")
             expect("no gap notice", shown("prunedGapNotice"), false)
             var st = JSON.parse(fake.statusJson)
@@ -1010,7 +1008,7 @@ Item {
         },
         function (v) {
             expandSources(["mine", "plain", "newsrv"])
-            expect("LAN servers under your own node", prop("ownNodeSources", "entries").length, 3)
+            expect("Electrum servers on your network are Electrum servers", prop("electrumSources", "entries").length, 3)
             expect("history from a server: its label", v.historyName("mine"), "My server")
             expect("untrusted certificate shown", String(prop("certDetails_mine", "text")).indexOf("Subject CN=electrs.lan, issued by CN=electrs.lan") === 0, true)
             expect("trust offered", shown("trustCert_mine"), true)
@@ -1153,7 +1151,7 @@ Item {
                   blockHash: "11".repeat(32), confirmations: 281, time: 1791500000, state: "unchecked", reportedBy: null, confirmedVia: "bb".repeat(32) },
                 { txid: "cc".repeat(32), intent: "receive", amountSat: "100000000", feeSat: null, counterparties: [], height: null,
                   blockHash: null, confirmations: 3, time: 1791500000, state: "confirmed", confirmedVia: "dd".repeat(32) }] })
-            fake.alertsJson = JSON.stringify([{ source: "esplora-0", kind: "unchecked_anchor", detail: "1 transaction reported below block 150", at: 1791590400 }])
+            fake.alertsJson = JSON.stringify([{ source: "electrum-0", kind: "unchecked_anchor", detail: "1 transaction reported below block 150", at: 1791590400 }])
         },
         function (v) {
             expect("one peer decides: the one-operator notice", shownAny("oneOperatorNotice"), true)
@@ -1178,7 +1176,7 @@ Item {
             v.openTx = "aa".repeat(32)
         },
         function (v) {
-            expect("reported, not checked", prop("historyState_" + "aa".repeat(32), "text"), "Reported by esplora-0, not checked")
+            expect("reported, not checked", prop("historyState_" + "aa".repeat(32), "text"), "Reported by electrum-0, not checked")
             expect("never confirmed-coloured", prop("historyState_" + "aa".repeat(32), "color") === v.rowStateColor({ state: "confirmed" }), false)
             expect("its spend is confirmed", prop("historyVia_" + "aa".repeat(32), "text"), "bb".repeat(32) + ", confirmed; this one's own block is not checked")
             scene.keptAlerts = fake.alertsJson
@@ -1223,7 +1221,7 @@ Item {
             delete st.rescanFrom
             st.gapLimit = 20
             st.birthday = 101
-            st.historyServer = "esplora-0"
+            st.historyServer = "electrum-0"
             fake.statusJson = JSON.stringify(st)
             fake.balancesJson = JSON.stringify({ busy: false, confirmed: "100250000", waiting: "0", unchecked: "0", pending: "0",
                                                  sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" }, beyondGap: { count: 1, sat: "70000", confirmedSat: "70000" } })
@@ -1282,7 +1280,7 @@ Item {
             expect("raising asks first", prop("gapLimitSheet", "visible"), true)
             expect("...naming the limit", prop("gapLimitSheet", "title"), "Raise the gap limit to 40?")
             expect("...the rescan, and the history server", prop("gapLimitSheet", "message"), "The wallet scans again from its birthday, block 101, "
-                   + "watching 40 unused addresses past the last one used. That downloads more. Your history server, esplora-0, will be asked about more addresses.")
+                   + "watching 40 unused addresses past the last one used. That downloads more. Your history server, electrum-0, will be asked about more addresses.")
             expect("nothing asked yet", fake.count("setGapLimit"), 0)
             find(view.item, "confirmGapLimitButton", 0).clicked()
         },
@@ -1309,12 +1307,12 @@ Item {
         },
         function (v) {
             expect("Kyoto's filters learn no address: no server is named", String(prop("gapLimitSheet", "message")).indexOf("history server"), -1)
-            expect("the history line names Kyoto as the chain line does", prop("historyLine", "text"), "History from Bitcoin peers")
+            expect("the history line says where payments are found", prop("historyLine", "text"), "Payments found on this device, through block filters")
             v.selectTab(0)
             fake.statusJson = JSON.stringify({ state: "syncing", network: "mainnet", authority: { kind: "kyoto", peers: 0 } })
             fake.sourcesJson = JSON.stringify({ network: "mainnet", proxy: "socks5h://127.0.0.1:9050", sources: [
                 { id: "kyoto", kind: "kyoto", use: true, route: "tor" },
-                { id: "fee", kind: "esplora", use: true, route: "onion" },
+                { id: "fee", kind: "electrum", use: true, route: "onion" },
                 { id: "backup", kind: "electrum", use: false, route: "tor", url: "ssl://example.com:50002" }] })
             fake.healthJson = JSON.stringify({ sources: [
                 { id: "kyoto", state: "not_probed", peers: 1024 },
@@ -1381,22 +1379,29 @@ Item {
             expect("RPC password cleared after submission", prop("rpcPass", "text"), "")
             fake.sourcesJson = JSON.stringify({sources:[
                 {id:"rpc-public",kind:"rpc",url:"https://rpc.example",use:false,tor:false,route:"direct"},
-                {id:"rpc-home",kind:"rpc",url:"http://192.168.1.20:8332",lan:true,use:false,tor:false,route:"direct"}]})
+                {id:"rpc-home",kind:"rpc",url:"http://192.168.1.20:8332",lan:true,use:true,tor:false,route:"direct"}]})
         },
         function (v) {
-            expect("public RPC in its group", prop("rpcSources", "entries").map(function (s) { return s.id }), ["rpc-public"])
-            expect("private RPC with own node", prop("ownNodeSources", "entries").map(function (s) { return s.id }), ["rpc-home"])
+            expect("your node at an address: every endpoint in one place", prop("rpcSources", "entries").map(function (s) { return s.id }), ["rpc-public", "rpc-home"])
+            expect("...with no node in Logos listed, the place is an address", prop("nodePlace_rpc", "checked"), true)
+            expect("no Use only this any more", find(view.item, "useRpc_rpc-public", 0), null)
             expandSources(["rpc-public"])
             expect("RPC never offers address-history queries", shown("historySwitch_rpc-public"), false)
-            find(view.item, "useRpc_rpc-public", 0).clicked()
-            expect("RPC selection is atomic", fake.last("useRpcSource"), ["useRpcSource", "rpc-public"])
-            expect("RPC correctly names chain authority", v.authorityName({authority:{kind:"rpc_node"}}), "Bitcoin Core RPC")
+            var before = fake.count("setSource")
+            find(view.item, "useSwitch_rpc-public", 0).clicked()
+            expect("one node at a time: the other goes off first", fake.calls.filter(function (c) { return c[0] === "setSource" }).slice(before),
+                   [["setSource", "rpc-home", JSON.stringify({ use: false })], ["setSource", "rpc-public", JSON.stringify({ use: true })]])
+            find(view.item, "nodePlace_local", 0).clicked()
+            expect("In Logos, picked", prop("nodePlace_local", "checked"), true)
+            expect("...hides the address form", shown("rpcAddress"), false)
+            v.nodePlacePicked = ""
+            expect("RPC names your node as the chain's source", v.authorityName({authority:{kind:"rpc_node"}}), "your node")
             // The Tor that comes with Logos, joining: the badge, Home and the sync chip follow it.
             scene.keptSources = fake.sourcesJson
             scene.keptHealth = fake.healthJson
             fake.sourcesJson = JSON.stringify({ network: "mainnet", proxy: "tor", sources: [
                 { id: "kyoto", kind: "kyoto", use: true, route: "tor" },
-                { id: "fee", kind: "esplora", use: true, route: "onion" }] })
+                { id: "fee", kind: "electrum", use: true, route: "onion" }] })
             fake.healthJson = JSON.stringify({ overall: "offline", sources: [],
                 tor: { state: "connecting", progress: 40, detail: "", socks: "socks5h://127.0.0.1:9250", answered: true } })
         },
@@ -1404,7 +1409,6 @@ Item {
             var peerless = { state: "syncing", authority: { kind: "kyoto", peers: 0 } }
             expect("built-in Tor badge", prop("torBadge", "text"), "Connecting to Tor… 40%")
             expect("...its progress", shownAny("torProgress"), true)
-            expect("...offline sources say why", v.overallLabel("offline"), "Connecting to Tor… 40%")
             expect("...joining is no trouble", shownAny("torTroubleNotice") || v.torUnusable, false)
             expect("a peerless Kyoto waits for Tor", v.syncChip(peerless), "Tor 40%")
             expect("...and says so", v.syncStateLabel(peerless).indexOf("Connecting to Tor… 40%"), 0)

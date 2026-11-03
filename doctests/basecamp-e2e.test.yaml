@@ -130,7 +130,7 @@ sections:
     steps:
       - title: "Re-anchoring, with no alert and no suspect source"
         run: python3 "$E2E_REPO/doctests/e2e/drive.py" reorg
-        expect_contains: ["PASS the payment confirms again in the new block", "PASS Activity: re-anchored at height", "PASS details: Moved to a new block", "PASS no alert during the reorg", "PASS after the reorg: Sources OK", "PHASE reorg OK"]
+        expect_contains: ["PASS the payment confirms again in the new block", "PASS Activity: re-anchored at height", "PASS details: Moved to a new block", "PASS no alert during the reorg", "PASS after the reorg: electrum-0 ok", "PHASE reorg OK"]
 
   - title: "Close, then restore in a fresh user dir"
     platform: [linux, macos, windows]

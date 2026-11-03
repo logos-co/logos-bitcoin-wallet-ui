@@ -104,10 +104,9 @@ class BitcoinWalletUi
     SLOT(QString setSource(QString sourceId, QString changesJson))
     // Select one TLS Electrum server for every role, directly, after the UI explains exposure.
     SLOT(QString useDirectSource(QString sourceId))
-    // kind is electrum or esplora; the node module normalizes the address. The new server is probed.
+    // kind is electrum; the node module normalizes the address. The new server is probed.
     SLOT(QString addSource(QString address, QString kind, QString name))
     SLOT(QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name))
-    SLOT(QString useRpcSource(QString sourceId))
     SLOT(QString removeSource(QString sourceId))
     SLOT(QString setProxy(QString proxy))
     // "Use Tor for": all, identifying or none. The node module marks it chosen; sourcesJson and

@@ -11,9 +11,9 @@ intro: |
   while it is open, a fresh BIP21 address is handed out, and sends go through the signer app's
   intent to each of their outcomes: nobody acknowledging within 60 s and asking again, a cancel, a
   rejection, an unknown outcome that is forgotten, and a payment that goes out and is sped up. The
-  sync line never claims "Synchronized" once no source agrees with the wallet's chain, nor "No
-  source agrees" before its sources first answered, and counts the chain's headers while the
-  first wallet on a network reads them. Opens show the first unused address, New
+  sync line never claims "Synchronized" once no source agrees with the wallet's chain, nor "Can't
+  confirm the chain" before its sources first answered, counts the chain's headers while the
+  first wallet on a network reads them, and names where the chain comes from. Opens show the first unused address, New
   address at the gap limit says why it gives no new one, and the fee presets need an estimate. An
   amount below what the address can receive says so under the amount and keeps Review off.
   While a wallet is open the account picker stays on it and Open is off until it is closed; an
@@ -37,7 +37,7 @@ intro: |
   and names a chain the wallet refuses. A TLS server of your own is probed and pinned, a peer of
   your own replaces Kyoto's curated list, and a switch asked for while the wallet closes waits for
   the close, and an open asked for meanwhile is refused until the switch applies. Under Kyoto on signet a
-  payment Esplora reports below the chain's start shows unchecked, apart from the balance, until an
+  payment the Electrum server reports below the chain's start shows unchecked, apart from the balance, until an
   earlier birthday checks it; on testnet4 one peer decides the chain, and the sources say so. A coin
   past the 20-address gap limit shows apart and spendable, a small send spends it and its review
   says so, and a gap limit raised to 30 (asked first) rescans and takes it into the balance.
@@ -149,7 +149,7 @@ sections:
               find_value: "advancedSourcesButton"
               method: "clicked"
               args: []
-            - name: "With Kyoto off, both servers in use are one operator's, and the app says so"
+            - name: "With Kyoto off, the one server in use decides the chain, and the app says so"
               action: expect_property
               find_value: "oneOperatorNotice"
               property: "visible"
@@ -217,12 +217,6 @@ sections:
             - name: "The row is marked"
               action: expect_property
               find_value: "withoutTorBadge_electrum.example"
-              property: "visible"
-              value: true
-              timeout: 10000
-            - name: "The public-service disclosure remains visible"
-              action: expect_property
-              find_value: "publicPrivacyNotice"
               property: "visible"
               value: true
               timeout: 10000
@@ -502,7 +496,7 @@ sections:
               property: "walletOpen"
               value: true
               timeout: 30000
-            - name: "Until its sources first answer, last session's chain shows as connecting, never as no source agreeing"
+            - name: "Until its sources first answer, last session's chain shows as connecting, never as unconfirmed"
               action: expect_property
               find_value: "syncLine"
               property: "text"
@@ -522,23 +516,17 @@ sections:
               property: "text"
               value: "Headers 49%"
               timeout: 3000
-            - name: "...and the server sending them agrees with the chain"
-              action: expect_property
-              find_value: "authorityLine"
-              property: "text"
-              value: "The chain: headers from Electrum servers, checked here · 1 server agrees"
-              timeout: 3000
             - name: "...on signet"
               action: expect_property
               find_value: "statusLine"
               property: "text"
               value: "Open: Fixture wallet · signet"
               timeout: 10000
-            - name: "It syncs to the chain's tip, with sources agreeing and a fresh tip"
+            - name: "It syncs to the chain's tip, and the one line names where the chain comes from"
               action: expect_property
               find_value: "syncLine"
               property: "text"
-              value: "Synchronized · block 290,123, tip 4 min old · Servers' headers"
+              value: "Synchronized · block 290,123 · from 1 Electrum server"
               timeout: 30000
             - name: "Restored without a birthday: Home asks for one"
               action: expect_property
@@ -1053,7 +1041,7 @@ sections:
               action: expect_property
               find_value: "syncLine"
               property: "text"
-              value: "No source agrees · block 290,123, tip 4 min old · Servers' headers"
+              value: "Can't confirm the chain · no server answered · last block 290,123, 4 min old"
               timeout: 10000
               screenshot: "wallet-alert.png"
             - name: "Settings"
@@ -1103,7 +1091,7 @@ sections:
               action: expect_property
               find_value: "syncLine"
               property: "text"
-              value: "Synchronized · block 290,123, tip 4 min old · Servers' headers"
+              value: "Synchronized · block 290,123 · from 1 Electrum server"
               timeout: 15000
             - name: "Dismiss the alert"
               action: click_object
@@ -1278,7 +1266,7 @@ sections:
               action: expect_property
               find_value: "gapLimitSheet"
               property: "message"
-              value: "The wallet scans again from its birthday, block 0, watching 30 unused addresses past the last one used. That downloads more. Your history server, electrum.example, will be asked about more addresses."
+              value: "The wallet scans again from its birthday, block 0, watching 30 unused addresses past the last one used. That downloads more. Your history server, Example Electrum, will be asked about more addresses."
               timeout: 10000
               screenshot: "wallet-gap-limit-ask.png"
             - name: "Raise and rescan"
@@ -1370,7 +1358,7 @@ sections:
               action: expect_property
               find_value: "syncLine"
               property: "text"
-              value: "Synchronized · block 290,123, tip 4 min old · Kyoto · 4 peers"
+              value: "Synchronized · block 290,123 · from 4 Bitcoin peers"
               timeout: 30000
             - name: "Receive, after the reopen"
               action: call_method
@@ -1388,11 +1376,11 @@ sections:
               find_value: "bitcoinWalletRoot"
               method: "selectTab"
               args: [1]
-            - name: "Esplora's estimate puts every speed at 1 sat/vB: the app says the network is quiet, and whose estimate it is"
+            - name: "The Electrum server's estimate puts every speed at 1 sat/vB: the app says the network is quiet, and whose estimate it is"
               action: expect_property
               find_value: "feeQuietNote"
               property: "text"
-              value: "The network is quiet: every speed costs 1 sat/vB. Estimate from Example Esplora."
+              value: "The network is quiet: every speed costs 1 sat/vB. Estimate from Example Electrum."
               timeout: 15000
               screenshot: "wallet-fees-quiet.png"
             - name: "Home again"
@@ -1412,7 +1400,7 @@ sections:
               find_value: "alertBanner"
               property: "visible"
               value: false
-            - name: "Esplora reported a payment below where this wallet's chain starts: a banner of its own"
+            - name: "The Electrum server reported a payment below where this wallet's chain starts: a banner of its own"
               action: expect_property
               find_value: "uncheckedBanner"
               property: "visible"
@@ -1422,7 +1410,7 @@ sections:
               action: expect_property
               find_value: "uncheckedBanner"
               property: "message"
-              value: "A server reported payments older than where this wallet's chain starts, block 290,000. Nothing could check them, so they are not counted as confirmed. Setting an earlier birthday lets Kyoto check them.\nesplora.example: reported a payment in block 289950, below the chain's start at 290000: nothing could check it"
+              value: "A server reported payments older than where this wallet's chain starts, block 290,000. Nothing could check them, so they are not counted as confirmed. Setting an earlier birthday lets Kyoto check them.\nelectrum.example: reported a payment in block 289950, below the chain's start at 290000: nothing could check it"
               screenshot: "wallet-unchecked-banner.png"
             - name: "Home shows the amount apart, outside the confirmed balance"
               action: expect_property
@@ -1444,7 +1432,7 @@ sections:
               action: expect_property
               find_value: "historyState_0dd0000000046c9e0dd0000000046c9e0dd0000000046c9e0dd0000000046c9e"
               property: "text"
-              value: "Reported by esplora.example, not checked"
+              value: "Reported by electrum.example, not checked"
               timeout: 10000
               screenshot: "wallet-unchecked-row.png"
             - name: "Settings"
