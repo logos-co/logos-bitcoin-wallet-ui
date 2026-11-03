@@ -876,6 +876,7 @@ Item {
         if (code === "insufficient_funds") return "Not enough confirmed bitcoin for this and its fee"
         if (root.dustFailed(s)) return "The amount is too small for this address"
         if (code === "no_route") return "No source can broadcast it"
+        if (code === "not_sent") return "Not sent: no peer took it over Tor"
         if (code === "busy") return "The wallet was busy"
         if (code === "refused") return "A source refused the transaction"
         if (code === "no_wallet") return "The wallet closed before it was sent"
@@ -910,6 +911,8 @@ Item {
         if (code === "core_lost") return "It stopped before the send was approved, so nothing went out: try again."
         if (code === "backend_restarted") return "The wallet core no longer has this send, and nothing went out: try again."
         if (code === "busy") return "Nothing went out: try again in a moment."
+        if (code === "not_sent") return /Tor can't be reached/.test(String(s.error || "")) ? "Nothing went out: Tor can't be reached. Try again once it connects."
+                                                                                       : "Nothing went out: the peers tried over Tor didn't take it in time. Try again."
         if (root.dustFailed(s)) return code === "dust" ? String(s.error || "") : "The amount is below the smallest this address can receive."
         return String(s.error || "")
     }
@@ -918,7 +921,7 @@ Item {
         var o = root.sendOutcome(s)
         if (root.deviceFailed(s)) return true
         if (o === "expired") return true
-        return o === "failed" && ["coins_changed", "core_lost", "backend_restarted", "busy", "signer_unavailable"].indexOf(s.errorCode || "") >= 0
+        return o === "failed" && ["coins_changed", "core_lost", "backend_restarted", "busy", "signer_unavailable", "not_sent"].indexOf(s.errorCode || "") >= 0
     }
     // What the backend offers for an unknown send; a backend without `offer` offers all three.
     function offers(s, what) {
@@ -933,6 +936,8 @@ Item {
         if (st === "committing" || st === "unknown") return 2
         if (st === "sent") return 4
         if (s && s.txid && s.broadcast) return 2
+        // Failed once the signer approved it: at Broadcast, not at Approve.
+        if (s && (s.sawSettled === true || s.sawBroadcasting === true)) return 2
         return s && s.summary ? 1 : 0
     }
     function speedUpRate(row) {

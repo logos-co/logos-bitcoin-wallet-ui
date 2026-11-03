@@ -344,7 +344,13 @@ Item {
             [{ state: "failed", errorCode: "no_wallet", error: "the wallet closed before the send was approved" }, "failed", "The wallet closed before it was sent", 0],
             [{ state: "unknown", abandoned: true, offer: [] }, "forgotten", "Forgotten", 2],
             [{ state: "failed", errorCode: "dust", error: "The smallest amount this address can receive is 294 sats." }, "failed", "The amount is too small for this address", 0],
-            [{ state: "failed", errorCode: "failed", error: "cannot build the send: Output below the dust limit: 0" }, "failed", "The amount is too small for this address", 0]
+            [{ state: "failed", errorCode: "failed", error: "cannot build the send: Output below the dust limit: 0" }, "failed", "The amount is too small for this address", 0],
+            // Failed after the signer approved it: the lane marks Broadcast, not Approve.
+            [{ state: "failed", errorCode: "not_sent", error: "not sent: no peer reached over Tor took the transaction (timed out)", summary: {},
+               approval: "settled", sawSettled: true, sawBroadcasting: true }, "failed", "Not sent: no peer took it over Tor", 2],
+            [{ state: "failed", errorCode: "no_route", error: "no broadcast source answered", summary: {}, sawSettled: true }, "failed", "No source can broadcast it", 2],
+            [{ state: "failed", errorCode: "not_sent", summary: {}, sawBroadcasting: true,
+               error: "not sent: no peer reached over Tor took the transaction (Tor can't be reached at 127.0.0.1:9050: refused)" }, "failed", "Not sent: no peer took it over Tor", 2]
         ]
         for (var s = 0; s < sends.length; s++) {
             expect("outcome " + s, v.sendOutcome(sends[s][0]), sends[s][1])
@@ -357,6 +363,9 @@ Item {
         expect("retry restarted", v.canRetry(sends[20][0]), true)
         expect("no retry rejected", v.canRetry(sends[10][0]), false)
         expect("no retry refused", v.canRetry(sends[15][0]), false)
+        expect("not sent: nothing went out", v.sendDetail(sends[25][0]), "Nothing went out: the peers tried over Tor didn't take it in time. Try again.")
+        expect("...Tor down says so", v.sendDetail(sends[27][0]), "Nothing went out: Tor can't be reached. Try again once it connects.")
+        expect("...and can be tried again", v.canRetry(sends[25][0]), true)
         var unknownSend = { state: "unknown", offer: ["rebroadcast", "request_fee_bump", "abandon_send"] }
         expect("offer forget", v.offers(unknownSend, "abandon_send"), true)
         expect("offer nothing once forgotten", v.offers({ state: "unknown", abandoned: true, offer: [] }, "rebroadcast"), false)

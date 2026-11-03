@@ -129,7 +129,10 @@ and each open allowed in the Signer app, and every send is approved there.
     warnings. Change too small to spend offers "Add it to the fee (+X sats)": the send is withdrawn
     and asked again with `smallChangeToFee`, and the review then says the change went to the fee.
   - It follows the send to a final state. Expired (`errorCode` `expired`) offers Ask again, the
-    same request once more; rejected, cancelled and the other codes say what happened. An unknown
+    same request once more; rejected, cancelled and the other codes say what happened. Not sent
+    (`not_sent`: no peer reached over Tor took it, so nothing went out) offers Try again. A send that
+    fails after the signer approved it (`sawSettled`, `sawBroadcasting`) marks Broadcast, not
+    Approve in Signer. An unknown
     outcome offers Rebroadcast, Speed up and Forget this payment (`abandon_send`, behind a
     confirmation), and a banner stays above the tabs until it is settled or forgotten; a review is
     refused meanwhile. A forgotten payment shows as Forgotten, with the backend's note.
