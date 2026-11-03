@@ -144,6 +144,19 @@ sections:
               property: "checked"
               value: true
               timeout: 10000
+            - name: "Where the chain comes from: with Kyoto off, the Electrum servers in use"
+              action: expect_property
+              find_value: "chainChoice_electrum"
+              property: "checked"
+              value: true
+              timeout: 10000
+              screenshot: "wallet-sources.png"
+            - name: "Fees name the server they come from"
+              action: expect_property
+              find_value: "feeSourceLine"
+              property: "text"
+              value: "From Example Electrum."
+              timeout: 10000
             - name: "Expand advanced settings"
               action: call_method
               find_value: "advancedSourcesButton"
@@ -1335,9 +1348,9 @@ sections:
               property: "opened"
               value: true
               timeout: 10000
-            - name: "Turn on Kyoto"
+            - name: "Choose Bitcoin peers for the chain"
               action: call_method
-              find_value: "useSwitch_kyoto"
+              find_value: "chainChoice_peers"
               method: "clicked"
               args: []
             - name: "Kyoto is in use"

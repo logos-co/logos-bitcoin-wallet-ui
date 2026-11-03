@@ -176,25 +176,39 @@ and each open allowed in the Signer app, and every send is approved there.
     turning the switch off goes back to the built-in Tor. Which Tor applies to Everything and Only
     what identifies you, so it is hidden under Nothing. The info button says what Tor, its absence
     and a server on your own network each reveal.
-  - Sources lists **Electrum servers**, then **Your node**: in Logos (the bundled node) or at an
-    address (Bitcoin Core over RPC, with an optional login). One node is on at a time: turning one
-    on turns the other off first, as the node module requires. An address is checked for its
-    network and block filters, and is added off, with Tor off; Details offers Tor and certificate
-    pinning. The wallet checks headers and scans payments locally, using block filters where
-    available and full blocks otherwise. Full-block restores can be very slow.
+  - The sources follow, as three questions, then Advanced settings. No list of roles is shown.
+  - **Where the chain comes from**: one choice of **Bitcoin peers** (the default), **Your node**
+    or **Electrum servers**, read from what is switched on (local or RPC, else Kyoto, else every
+    Electrum server, as the node module routes the chain). Picking one makes the `set_source`
+    calls that make it so, one after another: Bitcoin peers turns Kyoto on and your node off;
+    Your node turns the other node off first (the node module allows one), then the chosen one on,
+    then Kyoto off; Electrum servers turns Kyoto and your node off. Electrum servers keep their
+    switches either way, for fees. The one-peer and one-operator notice sits under the choice.
+  - **Your node** is in Logos (the bundled node) or at an address (Bitcoin Core over RPC, with
+    an optional login). An address is checked for its network and block filters, and is added
+    off, with Tor off; turning it on with Use turns the other node off first. Details offers Tor
+    and certificate pinning. The wallet checks headers and scans payments locally, using block
+    filters where available and full blocks otherwise. Full-block restores can be very slow.
+  - **Fees**: "From your node." while it decides the chain, else from the Electrum servers
+    switched on, else signet's relay floor under Bitcoin peers. **Change** opens the Electrum
+    servers' list, which stays open while they decide the chain; adding a server opens it too.
+  - **Payments before they confirm**: under Bitcoin peers, a switch that turns History on at the
+    Electrum server picked (`set_source` `{ use, history }`); others with History on are its
+    failover, and turning it off turns History off on each. With your node it is automatic and
+    private; under Electrum servers a server with History on is how the wallet finds payments.
   - Compact provider rows show Enabled/Disabled, route and health, even while settings are
     locked. Details reveals History, optional Tor, certificates and removal. Expansion survives
     health refreshes. History and Tor changes apply without extra privacy confirmations.
   - The help popup explains Bitcoin peers, your node, Electrum servers and who runs them.
-  - **Use without Tor**, under Electrum servers, selects a regular TLS server. `useDirectSource` enables
+  - **Use without Tor**, in the Electrum servers' list, selects a regular TLS server. `useDirectSource` enables
     it with History on and Tor off and disables every other source in one `set_sources` call
     against a freshly read list. Pins and credentials remain intact; a wallet must be closed.
-  - **Advanced settings** holds the custom Electrum server form, Kyoto peers, operator diagnostics
-    and connection record. Onion addresses require Tor.
-    Kyoto does not automatically hand the chain to Electrum when it cannot connect. Enabled
-    sources are summarized above the groups, including Kyoto when Advanced is collapsed.
+  - **Advanced settings** holds Bitcoin peers' row (Kyoto, with peers of your own), the custom
+    Electrum server form and the connection record; pins are in each row's Details. Onion
+    addresses require Tor. Kyoto does not automatically hand the chain to Electrum when it cannot
+    connect.
   - No-chain, unreachable-proxy and source-health errors remain visible. A server reached in
-    plain text outside Tor is marked Not encrypted. One-operator diagnostics live in Advanced.
+    plain text outside Tor is marked Not encrypted.
   - Under Kyoto, the install's peer book (`peer_list`'s `counts`): "N known peers: M from the
     curated list, K learned · L worked in the last 30 days", whether the curated list is
     provisional, and how it grows: the wallet learns working peers from the ones it

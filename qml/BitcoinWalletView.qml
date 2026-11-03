@@ -268,10 +268,31 @@ Item {
     }) || null
     readonly property string torHelp: (ownTor ? "Cannot reach your Tor at " + proxySetting + ". Start it, change it under Network privacy"
                                               : "Cannot reach the Tor that comes with Logos. Open the Tor app, use your own Tor under Network privacy")
-                                      + ", or close the wallet and choose Use without Tor under Electrum servers."
+                                      + ", or close the wallet and choose Use without Tor under Fees."
     readonly property var directServers: sourceList.filter(function (s) {
         return s.kind === "electrum" && /^ssl:\/\//i.test(String(s.url || "")) && !root.isOnion(s) && s.suspect !== true
     })
+    // Where the chain comes from, as the node module routes it: "peers", "node", "electrum" or "".
+    // From what is switched on, a suspect source included: the choice stays while one misbehaves.
+    readonly property string chainMode: {
+        var on = sourceList.filter(function (s) { return s.use === true })
+        var has = function (kind) { return on.some(function (s) { return s.kind === kind }) }
+        return has("local") || has("rpc") ? "node" : has("kyoto") ? "peers" : has("electrum") ? "electrum" : ""
+    }
+    // The radio the user picked stays while its sources are not on yet, such as a node not added.
+    property string chainPicked: ""
+    readonly property string chainChoice: !networkLocked && chainPicked !== "" ? chainPicked : chainMode
+    readonly property var chainOptions: [
+        { mode: "peers", label: "Bitcoin peers",
+          note: "The default. Block filters from Bitcoin peers: your payments are found on this device, and no server learns your addresses." },
+        { mode: "node", label: "Your node", note: "Bitcoin Core, in Logos or at an address. It checks the chain and finds your payments itself." },
+        { mode: "electrum", label: "Electrum servers",
+          note: "The servers switched on under Fees send the chain's headers, checked here. Pick servers run by different people." }
+    ]
+    readonly property string sourcesNetwork: sourcesInfo.network || ""
+    onSourcesNetworkChanged: { chainPicked = ""; nodePlacePicked = "" }
+    readonly property var historyServers: sourceList.filter(function (s) { return s.kind === "electrum" && s.use === true && s.history === true })
+    readonly property var pendingCandidates: sourceList.filter(function (s) { return s.kind === "electrum" && s.suspect !== true })
     // Your node: "local" in Logos, "rpc" at an address. The user's pick, else the node on, else in Logos.
     property string nodePlacePicked: ""
     readonly property string nodePlace: {
@@ -1114,7 +1135,7 @@ Item {
         if (t.answered !== true)
             return "The Tor that comes with Logos is not answering. Sources that need Tor are not reached until it does."
         return (t.detail ? t.detail + ". " : "") + "Sources that need Tor are not reached until it can. The app keeps trying. "
-               + "If Tor is blocked on this network, use your own Tor with a bridge, or choose Use without Tor under Electrum servers."
+               + "If Tor is blocked on this network, use your own Tor with a bridge, or choose Use without Tor under Fees."
     }
     // The built-in Tor has its own app.
     function manageTor() {
@@ -1159,10 +1180,61 @@ Item {
     }
     function setSource(id, changes) { root.networkCall(backend.setSource(id, JSON.stringify(changes)), "sources") }
     // [{ id, changes }] one after another, stopping at the first refusal.
-    function setSourcesInOrder(steps) {
+    function setSourcesInOrder(steps, refused) {
         if (steps.length === 0) return
-        root.networkCall(backend.setSource(steps[0].id, JSON.stringify(steps[0].changes)), "sources", null,
-                         function () { root.setSourcesInOrder(steps.slice(1)) })
+        root.networkCall(backend.setSource(steps[0].id, JSON.stringify(steps[0].changes)), "sources", refused,
+                         function () { root.setSourcesInOrder(steps.slice(1), refused) })
+    }
+    function sourcesOn(kind) { return root.sourceList.filter(function (s) { return s.kind === kind && s.use === true }) }
+    function turnOff(list) { return list.map(function (s) { return { id: s.id, changes: { use: false } } }) }
+    function nodeTarget() {
+        var list = root.sourceList.filter(function (s) { return s.kind === root.nodePlace })
+        return list.filter(function (s) { return s.use === true })[0] || list[0] || null
+    }
+    // One choice: peers turn the nodes off; a node turns the other node and Kyoto off; Electrum
+    // turns both off. Electrum servers keep their switches, for fees.
+    function chooseChain(mode) {
+        root.chainPicked = mode
+        var nodes = root.sourcesOn("local").concat(root.sourcesOn("rpc"))
+        var steps = []
+        if (mode === "peers") {
+            steps = root.sourceList.filter(function (s) { return s.kind === "kyoto" && s.use !== true })
+                                   .map(function (s) { return { id: s.id, changes: { use: true } } }).concat(root.turnOff(nodes))
+        } else if (mode === "node") {
+            var target = root.nodeTarget()
+            if (!target) return
+            steps = root.turnOff(nodes.filter(function (s) { return s.id !== target.id }))
+                    .concat(target.use === true ? [] : [{ id: target.id, changes: { use: true } }])
+                    .concat(root.turnOff(root.sourcesOn("kyoto")))
+        } else {
+            steps = root.turnOff(root.sourcesOn("kyoto")).concat(root.turnOff(nodes))
+        }
+        root.setSourcesInOrder(steps, function () { root.chainPicked = "" })
+    }
+    function pickNodePlace(place) {
+        root.nodePlacePicked = place
+        if (root.chainMode === "node") root.chooseChain("node")
+    }
+    function feeSourceLine() {
+        if (root.chainMode === "node") return "From your node."
+        var on = root.sourcesOn("electrum").filter(function (s) { return s.suspect !== true })
+        if (on.length) return "From " + on.map(function (s) { return s.label || s.id }).join(", ") + "."
+        if (root.sourcesNetwork === "signet" && root.chainMode === "peers") return "The lowest rate peers relay: signet has no useful fee estimates."
+        return "No server gives fees: you give a rate of your own when you send."
+    }
+    function pendingLine() {
+        var names = root.historyServers.map(function (s) { return s.label || s.id }).join(", ")
+        var learn = root.historyServers.length === 1 ? ", which learns your addresses." : ", which learn your addresses."
+        if (root.chainChoice === "node") return "Your node shows them, privately: there is nothing to turn on."
+        if (root.chainChoice === "electrum")
+            return names ? "Your payments, confirmed or not, are looked up at " + names + learn
+                         : "With Electrum servers, the wallet finds payments only at a server with History on, which learns your addresses."
+        if (names) return "Shown through " + names + learn
+        return "Bitcoin peers don't share unconfirmed payments. Turn this on to see incoming payments before they confirm; the server you pick learns your addresses."
+    }
+    function startPending(id) { root.setSource(id, { use: true, history: true }) }
+    function stopPending() {
+        root.setSourcesInOrder(root.historyServers.map(function (s) { return { id: s.id, changes: { history: false } } }))
     }
     // One node is on at a time: the other goes off first.
     function useNode(id) {
@@ -1643,6 +1715,7 @@ Item {
             spacing: Theme.spacing.small
 
             // The fields clear at once, so a reply arriving later never wipes the next server typed in.
+            // An added server opens the Electrum list under Fees, where its row is.
             function addSource() {
                 var address = addSourceAddress.text.trim(), name = addSourceName.text.trim()
                 addSourceAddress.text = ""
@@ -1652,7 +1725,7 @@ Item {
                         addSourceAddress.text = address
                         addSourceName.text = name
                     }
-                })
+                }, function () { feeServersToggle.expanded = true })
             }
 
             LogosNotice {
@@ -1801,7 +1874,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: Theme.spacing.small
-                LogosText { text: "Connection"; font.pixelSize: 16; font.weight: Theme.typography.weightBold }
+                LogosText { objectName: "chainHeading"; text: "Where the chain comes from"; font.pixelSize: 16; font.weight: Theme.typography.weightBold }
                 Item { Layout.fillWidth: true }
                 LogosInfoButton {
                     objectName: "operatorsInfo"
@@ -1856,70 +1929,67 @@ Item {
                         text: !root.sourcesRead ? "Reading the sources…"
                               : !root.sourcesConfigured ? "Setting up the sources for " + (root.sourcesInfo.network || "this network") + "…"
                               : "No sources on this network yet: add a server of your own." }
-            // Below the list, so the rows do not move when they appear.
+            Repeater {
+                model: root.sourceList.length > 0 ? root.chainOptions : []
+                ColumnLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: 0
+                    LogosRadioButton { objectName: "chainChoice_" + modelData.mode; checkable: false
+                                       checked: root.chainChoice === modelData.mode; enabled: root.ready && !root.networkLocked
+                                       text: modelData.label; onClicked: root.chooseChain(modelData.mode) }
+                    LogosText { Layout.fillWidth: true; Layout.leftMargin: 28; wrapMode: Text.Wrap; font.pixelSize: 12
+                                color: Theme.palette.textSecondary; text: modelData.note }
+                }
+            }
+            // Below the choice, so the rows do not move when it appears.
             LogosNotice {
                 objectName: "noChainNotice"
                 Layout.fillWidth: true
                 severity: LogosNotice.Warning
                 shown: root.sourcesConfigured && root.chainSources.length === 0
-                message: "Turn on Bitcoin peers, your node, or an Electrum server to connect to the chain."
+                message: root.chainChoice === "electrum" ? "Turn on at least one Electrum server, under Fees."
+                         : root.chainChoice === "node" ? "Turn on your node below, or add its address."
+                         : "Choose where the chain comes from: Bitcoin peers, your node, or Electrum servers."
             }
-
-            LogosText { objectName: "activeSourcesSummary"; Layout.fillWidth: true; wrapMode: Text.Wrap
-                        color: Theme.palette.textSecondary
-                        text: "Enabled: " + (root.sourceList.filter(function (s) { return s.use === true }).map(function (s) { return s.label || s.id }).join(", ") || "None") }
-
-            LogosText { objectName: "electrumHeading"; text: "Electrum servers"; font.pixelSize: 15; font.weight: Theme.typography.weightBold; Layout.topMargin: Theme.spacing.small }
-            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                        text: "Wallet servers for fees, payment history and broadcast. They decide the chain when Bitcoin peers and your node are off." }
-            RowLayout {
+            LogosNotice {
+                objectName: "oneOperatorNotice"
                 Layout.fillWidth: true
-                visible: !root.networkLocked && root.directServers.length > 0
-                LogosComboBox {
-                    id: directServerChoice
-                    objectName: "directServerChoice"
-                    Layout.fillWidth: true
-                    model: root.directServers.map(function (s) { return s.label || s.id })
-                }
-                LogosButton {
-                    objectName: "connectDirectButton"
-                    text: "Use without Tor"
-                    enabled: root.ready && !root.networkLocked && directServerChoice.currentIndex >= 0
-                             && directServerChoice.currentIndex < root.directServers.length
-                    onClicked: root.networkCall(backend.useDirectSource(root.directServers[directServerChoice.currentIndex].id), "sources")
-                }
+                // Kyoto below its quorum (testnet4) is the same risk: one peer alone decides.
+                shown: root.onePeerDecides || (root.sourcesConfigured && root.serversDecideChain && root.chainOperators.length === 1)
+                title: root.onePeerDecides ? "One peer decides this wallet's chain" : ""
+                message: !shown ? ""
+                         : root.onePeerDecides
+                           ? "Only one Bitcoin peer could be reached, so its headers and filters have nothing to check them "
+                             + "against. Add peers of your own under Advanced settings, or turn on a server run by someone else."
+                           : "Bitcoin peers are off, so the Electrum servers in use decide the chain, and "
+                             + root.chainOperators[0] + " runs them all: nothing checks them. Turn on Bitcoin peers, or a server run by someone else."
             }
-            LogosText { visible: !root.networkLocked && root.directServers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
-                        font.pixelSize: 12; color: Theme.palette.textTertiary
-                        text: "Uses the selected server for all wallet connections and turns off other sources." }
-            SourceList { objectName: "electrumSources"; Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "electrum" }) }
-            LogosText { visible: !root.sourceList.some(function (s) { return s.kind === "electrum" })
-                        text: "No Electrum servers on this network."; color: Theme.palette.textTertiary }
 
-            LogosText { objectName: "ownNodeHeading"; text: "Your node"; font.pixelSize: 16; Layout.topMargin: Theme.spacing.medium }
-            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                        text: "Bitcoin Core checks the chain and finds your payments itself, and no server learns your addresses. One node is on at a time." }
             RowLayout {
                 objectName: "nodePlaceChoice"
+                visible: root.chainChoice === "node"
+                Layout.leftMargin: 28
                 spacing: Theme.spacing.medium
                 LogosRadioButton { objectName: "nodePlace_local"; checkable: false; checked: root.nodePlace === "local"
-                                   text: "In Logos"; onClicked: root.nodePlacePicked = "local" }
+                                   text: "In Logos"; onClicked: root.pickNodePlace("local") }
                 LogosRadioButton { objectName: "nodePlace_rpc"; checkable: false; checked: root.nodePlace === "rpc"
-                                   text: "At an address"; onClicked: root.nodePlacePicked = "rpc" }
+                                   text: "At an address"; onClicked: root.pickNodePlace("rpc") }
             }
-            SourceList { objectName: "localNodeSources"; visible: root.nodePlace === "local"; Layout.fillWidth: true
+            SourceList { objectName: "localNodeSources"; visible: root.chainChoice === "node" && root.nodePlace === "local"; Layout.fillWidth: true
                          entries: root.sourceList.filter(function (s) { return s.kind === "local" }) }
-            LogosText { visible: root.nodePlace === "local"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
-                        color: Theme.palette.textTertiary
+            LogosText { visible: root.chainChoice === "node" && root.nodePlace === "local"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        font.pixelSize: 12; color: Theme.palette.textTertiary
                         text: root.sourceList.some(function (s) { return s.kind === "local" }) ? "The node in Logos must be running and synced."
                                                                                               : "The node in Logos is not available on this network." }
-            LogosText { visible: root.nodePlace === "rpc"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+            LogosText { visible: root.chainChoice === "node" && root.nodePlace === "rpc"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        color: Theme.palette.textSecondary
                         text: "Bitcoin Core at an address you give, over its RPC interface. Without block filters, the wallet scans full blocks and restores can be slow." }
-            SourceList { objectName: "rpcSources"; visible: root.nodePlace === "rpc"; Layout.fillWidth: true
+            SourceList { objectName: "rpcSources"; visible: root.chainChoice === "node" && root.nodePlace === "rpc"; Layout.fillWidth: true
                          entries: root.sourceList.filter(function (s) { return s.kind === "rpc" }) }
             LogosFrame {
                 Layout.fillWidth: true
-                visible: !root.networkLocked && root.nodePlace === "rpc"
+                visible: !root.networkLocked && root.chainChoice === "node" && root.nodePlace === "rpc"
                 contentItem: ColumnLayout {
                     LogosText { text: "Add your node's address"; font.weight: Theme.typography.weightBold }
                     LogosTextField { id: rpcAddress; objectName: "rpcAddress"; Layout.fillWidth: true
@@ -1952,7 +2022,7 @@ Item {
                 spacing: Theme.spacing.tiny
                 LogosText { text: "The open wallet's servers"; font.weight: Theme.typography.weightMedium }
                 LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            text: "Set for this network outside the list above, such as a test chain's own. The open wallet uses these." }
+                            text: "Set for this network outside the list below, such as a test chain's own. The open wallet uses these." }
                 Repeater {
                     model: root.walletOnlySources
                     RowLayout {
@@ -1968,9 +2038,80 @@ Item {
                 }
             }
 
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spacing.medium
+                LogosText { objectName: "feesHeading"; text: "Fees"; font.pixelSize: 16; font.weight: Theme.typography.weightBold }
+                Item { Layout.fillWidth: true }
+                LogosButton { id: feeServersToggle; objectName: "feeServersButton"; property bool expanded: false
+                              visible: root.chainChoice !== "electrum"; text: expanded ? "Hide" : "Change"; onClicked: expanded = !expanded }
+            }
+            LogosText { objectName: "feeSourceLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                        color: Theme.palette.textSecondary; text: root.feeSourceLine() }
+            // One list of Electrum servers: under Fees, open while they decide the chain.
+            ColumnLayout {
+                objectName: "electrumPane"
+                Layout.fillWidth: true
+                visible: root.chainChoice === "electrum" || feeServersToggle.expanded
+                spacing: Theme.spacing.small
+                LogosText { objectName: "electrumHeading"; text: "Electrum servers"; font.pixelSize: 15; font.weight: Theme.typography.weightBold }
+                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                            text: "Wallet servers. Every one switched on gives fees, and decides the chain when Bitcoin peers and your node are off." }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: !root.networkLocked && root.directServers.length > 0
+                    LogosComboBox {
+                        id: directServerChoice
+                        objectName: "directServerChoice"
+                        Layout.fillWidth: true
+                        model: root.directServers.map(function (s) { return s.label || s.id })
+                    }
+                    LogosButton {
+                        objectName: "connectDirectButton"
+                        text: "Use without Tor"
+                        enabled: root.ready && !root.networkLocked && directServerChoice.currentIndex >= 0
+                                 && directServerChoice.currentIndex < root.directServers.length
+                        onClicked: root.networkCall(backend.useDirectSource(root.directServers[directServerChoice.currentIndex].id), "sources")
+                    }
+                }
+                LogosText { visible: !root.networkLocked && root.directServers.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap
+                            font.pixelSize: 12; color: Theme.palette.textTertiary
+                            text: "Uses the selected server for all wallet connections and turns off other sources." }
+                SourceList { objectName: "electrumSources"; Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "electrum" }) }
+                LogosText { visible: !root.sourceList.some(function (s) { return s.kind === "electrum" })
+                            text: "No Electrum servers on this network."; color: Theme.palette.textTertiary }
+            }
+
+            LogosText { objectName: "pendingHeading"; text: "Payments before they confirm"; font.pixelSize: 16
+                        font.weight: Theme.typography.weightBold; Layout.topMargin: Theme.spacing.medium }
+            LogosText { objectName: "pendingLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                        color: Theme.palette.textSecondary; text: root.pendingLine() }
+            RowLayout {
+                objectName: "pendingChoice"
+                Layout.fillWidth: true
+                visible: !root.networkLocked && root.chainChoice !== "node" && (root.historyServers.length > 0 || root.pendingCandidates.length > 0)
+                LogosSwitch {
+                    id: pendingSwitch
+                    objectName: "pendingSwitch"
+                    text: "Show them"
+                    checkable: false
+                    checked: root.historyServers.length > 0
+                    enabled: root.ready && (checked || (pendingServerChoice.currentIndex >= 0 && pendingServerChoice.currentIndex < root.pendingCandidates.length))
+                    onClicked: checked ? root.stopPending() : root.startPending(root.pendingCandidates[pendingServerChoice.currentIndex].id)
+                }
+                LogosComboBox {
+                    id: pendingServerChoice
+                    objectName: "pendingServerChoice"
+                    visible: !pendingSwitch.checked
+                    Layout.fillWidth: true
+                    model: root.pendingCandidates.map(function (s) { return s.label || s.id })
+                }
+            }
+
             LogosButton {
                 id: advancedToggle
                 objectName: "advancedSourcesButton"
+                Layout.topMargin: Theme.spacing.medium
                 property bool expanded: false
                 text: expanded ? "Hide advanced settings" : "Advanced settings"
                 onClicked: expanded = !expanded
@@ -1980,15 +2121,20 @@ Item {
                 Layout.fillWidth: true
                 visible: advancedToggle.expanded
                 spacing: Theme.spacing.small
+                LogosText { text: "Bitcoin peers"; font.pixelSize: 15 }
+                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                            text: "Block filters from Bitcoin peers, scanned on this device. The default onion peers need Tor. Details lists the peers, and takes peers of your own." }
+                SourceList { Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "kyoto" && !s.lan }) }
                 ColumnLayout {
                     objectName: "addSourcePane"
                     Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing.small
                     visible: !root.networkLocked
                     spacing: Theme.spacing.tiny
                     LogosText { text: "Add a custom server"; font.weight: Theme.typography.weightMedium }
                     LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
                                 text: "An Electrum server you run or trust: an address like 192.168.1.20:50001 or electrs.lan, "
-                                      + "or ssl://host:port. Servers on your own network are reached directly, without Tor." }
+                                      + "or ssl://host:port. Servers on your own network are reached directly, without Tor. It joins the Electrum servers under Fees." }
                     RowLayout {
                         Layout.fillWidth: true
                         LogosTextField { id: addSourceAddress; objectName: "addSourceAddress"; Layout.fillWidth: true
@@ -1998,24 +2144,6 @@ Item {
                         LogosButton { objectName: "addSourceButton"; text: "Add"
                                       enabled: root.ready && addSourceAddress.text.trim() !== ""; onClicked: pane.addSource() }
                     }
-                }
-
-                LogosText { text: "Bitcoin peers (Kyoto)"; font.pixelSize: 15; Layout.topMargin: Theme.spacing.medium }
-                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            text: "Scan block filters from Bitcoin peers on this device. The default onion peers need Tor. Expand Details to manage peers." }
-                SourceList { Layout.fillWidth: true; entries: root.sourceList.filter(function (s) { return s.kind === "kyoto" && !s.lan }) }
-                LogosNotice {
-                    objectName: "oneOperatorNotice"
-                    Layout.fillWidth: true
-                    // Kyoto below its quorum (testnet4) is the same risk: one peer alone decides.
-                    shown: root.onePeerDecides || (root.sourcesConfigured && root.serversDecideChain && root.chainOperators.length === 1)
-                    title: root.onePeerDecides ? "One peer decides this wallet's chain" : ""
-                    message: !shown ? ""
-                             : root.onePeerDecides
-                               ? "Kyoto could dial only one peer, so it takes that peer's headers and filters with nothing to check "
-                                 + "them against. Add peers of your own, or turn on a server from another operator."
-                               : "Kyoto is off, so the Electrum servers in use decide the chain, and they are all "
-                                 + root.chainOperators[0] + "'s: nothing checks them. Switch on Kyoto, or a server from another operator."
                 }
                 ColumnLayout {
                     objectName: "exposurePane"

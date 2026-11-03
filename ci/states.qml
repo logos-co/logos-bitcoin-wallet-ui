@@ -844,7 +844,8 @@ Item {
         function (v) {
             expect("settings locked", shown("networkLockedNotice"), true)
             expect("no switches while open", shown("useSwitch_electrum.example"), false)
-            expect("operator diagnostic is collapsed", shown("oneOperatorNotice"), false)
+            expect("operator diagnostic under the chain choice, not in Advanced", shown("oneOperatorNotice"), true)
+            expect("...the choice itself locked", prop("chainChoice_electrum", "enabled"), false)
             fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
         },
         function (v) {
@@ -885,8 +886,68 @@ Item {
             fake.sourcesJson = JSON.stringify(s)
         },
         function (v) {
+            scene.keptSources = fake.sourcesJson
+            var s = JSON.parse(fake.sourcesJson)
+            s.sources[1].suspect = true
+            fake.sourcesJson = JSON.stringify(s)
+        },
+        function (v) {
+            expect("a suspect server keeps the Electrum choice, its list open on its row",
+                   [prop("chainChoice_electrum", "checked"), shown("electrumPane"), shown("suspectBadge_electrum.example")], [true, true, true])
+            fake.sourcesJson = scene.keptSources
+        },
+        function (v) {
             expect("details survive a source refresh", shown("sourceOptions_electrum.example"), true)
             expect("without tor badge", shown("withoutTorBadge_electrum.example"), true)
+            // The screen's order: privacy, where the chain comes from, fees, payments before they confirm, advanced.
+            var y = function (name) { var o = find(view.item, name, 0); return o.mapToItem(view.item, 0, 0).y }
+            expect("sections in order", [y("privacyLine") < y("chainHeading"), y("chainHeading") < y("feesHeading"),
+                                         y("feesHeading") < y("pendingHeading"), y("pendingHeading") < y("advancedSourcesButton")], [true, true, true, true])
+            expect("the chain comes from the Electrum servers in use", prop("chainChoice_electrum", "checked"), true)
+            expect("...listed under Fees, open", shown("electrumPane"), true)
+            expect("fees from the server in use", prop("feeSourceLine", "text"), "From Example Electrum.")
+            expect("payments need a server with History on", prop("pendingLine", "text"),
+                   "With Electrum servers, the wallet finds payments only at a server with History on, which learns your addresses.")
+            var sets = function (from) { return fake.calls.filter(function (c) { return c[0] === "setSource" }).slice(from) }
+            var before = fake.count("setSource")
+            find(view.item, "chainChoice_peers", 0).clicked()
+            expect("Bitcoin peers: Kyoto on, the fee server left on", sets(before), [["setSource", "kyoto", JSON.stringify({ use: true })]])
+            expect("...picked at once", prop("chainChoice_peers", "checked"), true)
+            expect("...the Electrum list behind Change", shown("electrumPane") || !shown("feeServersButton"), false)
+            find(view.item, "addSourceAddress", 0).text = "192.168.1.30:50001"
+            find(view.item, "addSourceButton", 0).clicked()
+            expect("a server added in Advanced opens the Electrum list, where its row is",
+                   [fake.last("addSource"), shown("electrumPane")], [["addSource", "192.168.1.30:50001", "electrum", ""], true])
+            find(view.item, "feeServersButton", 0).expanded = false
+            expect("...and an offer to see payments before they confirm", prop("pendingLine", "text"),
+                   "Bitcoin peers don't share unconfirmed payments. Turn this on to see incoming payments before they confirm; the server you pick learns your addresses.")
+            expect("...at a server picked from the list", prop("pendingSwitch", "enabled") && shown("pendingServerChoice"), true)
+            before = fake.count("setSource")
+            find(view.item, "pendingSwitch", 0).clicked()
+            expect("...which turns History on there", sets(before), [["setSource", "electrum.example", JSON.stringify({ use: true, history: true })]])
+            v.chainPicked = ""
+            scene.keptSources = fake.sourcesJson
+            fake.sourcesJson = JSON.stringify({ network: "signet", configured: true, walletOpen: false, exposes: [], withoutTor: [], sources: [
+                { id: "kyoto", kind: "kyoto", url: "p2p://peer-list", operator: "peers", label: "Bitcoin peers", use: true, route: "tor" },
+                { id: "emzy", kind: "electrum", url: "ssl://electrum.emzy.de:50002", operator: "emzy.de", label: "emzy.de", use: false, history: true, route: "tor" },
+                { id: "local", kind: "local", url: "logos://bitcoind_module", operator: "you", label: "Your node", use: false, route: "direct" }] })
+        },
+        function (v) {
+            expect("signet under Bitcoin peers: fees are the relay floor", prop("feeSourceLine", "text"), "The lowest rate peers relay: signet has no useful fee estimates.")
+            expect("...no payments before they confirm until a server is picked", prop("pendingSwitch", "checked"), false)
+            var sets = function (from) { return fake.calls.filter(function (c) { return c[0] === "setSource" }).slice(from) }
+            var before = fake.count("setSource")
+            find(view.item, "chainChoice_node", 0).clicked()
+            expect("Your node, in Logos: on, then Kyoto off", sets(before),
+                   [["setSource", "local", JSON.stringify({ use: true })], ["setSource", "kyoto", JSON.stringify({ use: false })]])
+            expect("...its place shown", prop("nodePlace_local", "checked") && shown("localNodeSources"), true)
+            expect("...with no switch for payments before they confirm", shown("pendingChoice"), false)
+            before = fake.count("setSource")
+            find(view.item, "chainChoice_electrum", 0).clicked()
+            expect("Electrum servers: Kyoto off, the servers left as they are", sets(before), [["setSource", "kyoto", JSON.stringify({ use: false })]])
+            expect("...the list open", shown("electrumPane") && !shown("feeServersButton"), true)
+            v.chainPicked = ""
+            fake.sourcesJson = scene.keptSources
             v.closeSheets()
             var st = JSON.parse(scene.syncedMainnet)
             st.needsBirthday = true
