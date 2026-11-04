@@ -665,13 +665,13 @@ QString BitcoinWalletUiBackend::addSource(QString address, QString kind, QString
     return addServer(address, kind, name, {});
 }
 
-QString BitcoinWalletUiBackend::addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name) {
+QString BitcoinWalletUiBackend::addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name, bool tor) {
     if (rpcUser.isEmpty() && !rpcPass.isEmpty()) return QStringLiteral("Enter the RPC username as well as the password.");
     const QJsonObject credentials = rpcUser.isEmpty() ? QJsonObject{} : QJsonObject{{"username", rpcUser}, {"password", rpcPass}};
-    return addServer(address, QStringLiteral("rpc"), name, credentials);
+    return addServer(address, QStringLiteral("rpc"), name, credentials, tor);
 }
 
-QString BitcoinWalletUiBackend::addServer(QString address, QString kind, QString name, const QJsonObject &credentials) {
+QString BitcoinWalletUiBackend::addServer(QString address, QString kind, QString name, const QJsonObject &credentials, bool tor) {
     address = address.trimmed();
     name = name.trimmed();
     kind = kind.trimmed().toLower();
@@ -693,9 +693,19 @@ QString BitcoinWalletUiBackend::addServer(QString address, QString kind, QString
         };
         QString id = base;
         for (int n = 2; taken(id); ++n) id = base + QLatin1Char('-') + QString::number(n);
-        // RPC starts disabled: probing its capabilities does not switch the wallet's authority.
+        // Your node at an address is added as the node in use, with its own Tor switch; the other
+        // node goes off in the same write. A server joins with Tor on.
         const bool rpc = kind == QLatin1String("rpc");
-        QJsonObject s{{"id", id}, {"kind", kind}, {"url", address}, {"use", !rpc}, {"history", false}, {"tor", !rpc}};
+        if (rpc) {
+            for (qsizetype i = 0; i < list.size(); ++i) {
+                QJsonObject other = list.at(i).toObject();
+                const QString k = other.value("kind").toString();
+                if (k != QLatin1String("local") && k != QLatin1String("rpc")) continue;
+                other.insert(QStringLiteral("use"), false);
+                list.replace(i, other);
+            }
+        }
+        QJsonObject s{{"id", id}, {"kind", kind}, {"url", address}, {"use", true}, {"history", false}, {"tor", !rpc || tor}};
         if (!credentials.isEmpty()) s.insert("credentials", credentials);
         if (!name.isEmpty()) s.insert("label", name);
         list.append(s);

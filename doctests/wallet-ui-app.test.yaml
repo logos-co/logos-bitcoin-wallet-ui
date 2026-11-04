@@ -141,13 +141,13 @@ sections:
               property: "sourcesConfigured"
               value: true
               timeout: 30000
-            - name: "Network privacy shows the choice, which can change while no account is open"
+            - name: "Public sources show Use Tor for, which can change while no account is open"
               action: expect_property
               find_value: "torUse_identifying"
               property: "checked"
               value: true
               timeout: 10000
-            - name: "Where the chain comes from: with Kyoto off, the Electrum servers in use"
+            - name: "Public sources: with Kyoto off, the Electrum servers in use"
               action: expect_property
               find_value: "chainChoice_electrum"
               property: "checked"
@@ -1800,7 +1800,7 @@ sections:
               action: expect_property
               find_value: "accountPicker"
               property: "displayText"
-              value: "Card account · shell-cdcd…d-84-1-0"
+              value: "Card account · Native SegWit · account 0 — Wallet “Black Card” · cdcdcdcd — Keycard · reader"
             - name: "Open is off"
               action: expect_property
               find_value: "openWalletButton"

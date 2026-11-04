@@ -6,14 +6,18 @@ from `signer_manager_module`. It takes no signing password and
 holds no key material: wallets are created and restored in the keys app, each wallet is unlocked
 and each open allowed in the Signer app, and every send is approved there.
 
-- **Use Tor for, asked once:** while the node module's `torUseChosen` is false, the app shows this
-  choice in place of the account start, before any account is opened. Each option, Only what
-  identifies you (`identifying`), Everything (`all`) and Nothing (`none`), says what happens, its
-  pros and its cons. The node module's current `torUse` is preselected: a fresh install's
-  `identifying`, tagged Recommended, or an existing install's routing, tagged Current, so Continue
-  never weakens it. Continue sends `set_tor_use(mode)`; a refusal shows on the screen, and once
-  it is taken the account start appears and the screen does not come back. A node module without
-  `torUseChosen` never shows it. While a wallet is open, opening or closing it is not shown.
+- **Where the wallet gets Bitcoin's chain, asked once:** while the node module's `torUseChosen` is
+  false, the app shows the Sources sheet's top choice in place of the account start, before any
+  account is opened: **Your own node** (Most private) or **Public sources**, preselected, with
+  **Use Tor for** under it. Each Tor option, most private first, Everything (`all`), Only what
+  identifies you (`identifying`) and Nothing (`none`), says what happens, its pros and its cons.
+  The node module's current `torUse` is preselected: a fresh install's `identifying`, tagged
+  Recommended, or an existing install's routing, tagged Current, so Continue never weakens it.
+  Continue sends `set_tor_use(mode)`. With your own node it sends `identifying`, so a later switch
+  to public sources has a sane mode, then turns the node in Logos on and opens Sources on it. A
+  refusal shows on the screen; once taken, the account start appears and the screen does not come
+  back. A node module without `torUseChosen` never shows it, nor does an open, opening or closing
+  wallet.
 - **Account selector:** [logos-account-kit](https://github.com/logos-co/logos-account-kit)'s
   picker, vendored in `qml/accountkit`, over `signer_manager.roster()`. It lists each Bitcoin and
   Taproot account once, never once per signer, including accounts never opened in this app. Mainnet
@@ -59,7 +63,8 @@ and each open allowed in the Signer app, and every send is approved there.
     the tip is older than an hour; it says "Can't confirm the chain · no peer answered · last block
     N, 2 hours old" (or "no server answered", "your node didn't answer") or "Stalled" instead.
     Regtest reads "Local chain". A pruned node's gap reads
-    "Older blocks via <source>", or a notice while nothing can scan it. Until the open's first
+    "Older blocks via <source>", or a notice while nothing can scan it: your node is asked alone,
+    so it points to Public sources until they are scanned. Until the open's first
     round of asking the chain's sources ends (`authority.asked` false), last session's chain reads
     "Connecting to the chain's sources… · last known block N", never "Can't confirm the chain": the
     chip waits for that answer too. So does a Kyoto start still
@@ -99,8 +104,9 @@ and each open allowed in the Signer app, and every send is approved there.
   - Source alerts show as a banner above the tabs; Kyoto naming a chain the checks refuse
     (`authority_suspect`) has a banner of its own. The tip watch's `authority_behind` reads "Your
     wallet may be behind: <server> has seen blocks your peers haven't sent for 30 minutes; your
-    peers may be cut off from the network", with "your node" or "the Electrum servers" in place of
-    the peers when they decide the chain.
+    peers may be cut off from the network", with "the Electrum servers" in place of the peers when
+    they decide the chain. Your own node, asked alone, raises it from its own report, with itself as
+    the source: "Your node has had no new block for 120 minutes; it may be cut off from the network."
   - While the Tor that comes with Logos joins (`source_health.tor`), a peerless chain routed
     through Tor reads "Connecting to Tor… 40%" (chip "Tor 40%"), and health is read every 3 s. When
     its SOCKS port is off, Tor is blocked, or tor_module does not answer, Home says which, with
@@ -173,42 +179,53 @@ and each open allowed in the Signer app, and every send is approved there.
     rescans from its birthday and downloads more, and an enabled history server is asked about
     more addresses. The rescan shows on Home as a birthday's does; refusals (`invalid`, `busy`)
     are said in plain words.
-  - **Network privacy**, above the sources: **Use Tor for**, the first run's three options
-    (`set_tor_use`), each with its text behind "What this means". It changes only while no
-    account is open: with one open, opening or closing the options are off, with "Close your
-    open accounts to change this." Then which Tor: the one that comes with Logos (the node
-    module's default, `set_proxy("tor")`), with its state badge, join progress, what stops it,
-    Manage Tor…, and "Use my own Tor instead", which opens a `socks5h://` field ("Use it");
-    turning the switch off goes back to the built-in Tor. Which Tor applies to Everything and Only
-    what identifies you, so it is hidden under Nothing. The info button says what Tor, its absence
-    and a server on your own network each reveal.
-  - The sources follow, as three questions, then Advanced settings. No list of roles is shown.
-  - **Where the chain comes from**: one choice of **Bitcoin peers** (the default), **Your node**
-    or **Electrum servers**, read from what is switched on (local or RPC, else Kyoto, else every
-    Electrum server, as the node module routes the chain). Picking one makes the `set_source`
-    calls that make it so, one after another: Bitcoin peers turns Kyoto on and your node off;
-    Your node turns the other node off first (the node module allows one), then the chosen one on,
-    then Kyoto off; Electrum servers turns Kyoto and your node off. Electrum servers keep their
-    switches either way, for fees. The one-peer and one-operator notice sits under the choice.
-  - **Your node** is in Logos (the bundled node) or at an address (Bitcoin Core over RPC, with
-    an optional login). An address is checked for its network and block filters, and is added
-    off, with Tor off; turning it on with Use turns the other node off first. Details offers Tor
-    and certificate pinning. The wallet checks headers and scans payments locally, using block
-    filters where available and full blocks otherwise. Full-block restores can be very slow.
-  - **Fees**: "From your node." while it decides the chain, else from the Electrum servers
-    switched on, else signet's relay floor under Bitcoin peers. **Change** opens the Electrum
-    servers' list, which stays open while they decide the chain; adding a server opens it too.
-  - **Payments before they confirm**: under Bitcoin peers, a switch that turns History on at the
-    Electrum server picked (`set_source` `{ use, history }`); others with History on are its
-    failover, and turning it off turns History off on each. With your node it is automatic and
-    private; under Electrum servers a server with History on is how the wallet finds payments.
+  - **Where the wallet gets Bitcoin's chain**: one decision, top to bottom. The radio is the
+    state, read from what is switched on (your node, else Kyoto, else the Electrum servers); there
+    is no Use your node button, In use badge or Use without Tor list. The info button says what
+    each choice reveals.
+  - **Your own node** (Most private), with one Benefits/Costs note. Choosing it turns the chosen
+    node on and the other node off, and leaves Kyoto's and the servers' switches as they are: the
+    node module then asks your node alone and keeps them for a switch back. Under it, **In Logos**
+    or **At an address**:
+    - In Logos: **Open Bitcoin Node…** (`bitcoin.node.configure`), the node's state, and a line
+      that its own connections are set in the Bitcoin Node app. No Tor settings: the wallet's
+      traffic never leaves the computer.
+    - At an address: Bitcoin Core over RPC, with an optional login. The address decides Tor, by
+      the node module's rules for your own network: on your network, "Reached directly. Tor can't
+      reach your network."; an onion address, "Always reached through Tor." and Which Tor; elsewhere
+      on the internet, a **Reach it through Tor** switch, on by default, and Which Tor while it is
+      on. **Add and use** sends `addRpcSource(..., tor)`: the address is added on, with that Tor
+      switch, and the other node off in the same `set_sources` write, then probed. An address
+      already added has the same line or switch (`set_source` `tor`); a Use switch shows only
+      beside a second address. Use Tor for does not apply to your own node.
+  - **Public sources** ("Nodes or servers run by other people"). Choosing it turns your node off,
+    which brings back the switches from before it; with nothing public on, it turns Kyoto on.
+    Under it:
+    - **Bitcoin peers** (the default: block filters, no server learns your addresses) or
+      **Electrum servers** (faster; servers with History on learn your addresses). Bitcoin peers
+      turns Kyoto on, Electrum servers turns it off; the servers keep their switches, for fees.
+      The no-chain and one-operator notices sit under the choice.
+    - **Use Tor for**, the first run's three options (`set_tor_use`), each with its text behind
+      "What this means", worded for the public source chosen: with Electrum servers, Only what
+      identifies you says it works like Everything. "Applies to every network that uses public
+      sources." It changes only while no account is open: with one open, opening or closing the
+      options are off, with "Close your open accounts to change this."
+    - **Which Tor**, unless Use Tor for is Nothing: **The Tor that comes with Logos** (the node
+      module's default, `set_proxy("tor")`) with its state badge, join progress, what stops it and
+      Manage Tor…, or **Your own Tor**, a `socks5h://` field with Use it. The same choice shows
+      under your node at an address when it goes through Tor.
+    - **Fees**: from the Electrum servers switched on, else signet's relay floor under Bitcoin
+      peers. **Change** opens the Electrum servers' list, which stays open while they decide the
+      chain; adding a server opens it too.
+    - **Payments before they confirm**: under Bitcoin peers, a switch that turns History on at the
+      Electrum server picked (`set_source` `{ use, history }`); others with History on are its
+      failover, and turning it off turns History off on each. Under Electrum servers a server with
+      History on is how the wallet finds payments.
   - Compact provider rows show Enabled/Disabled, route and health, even while settings are
-    locked. Details reveals History, optional Tor, certificates and removal. Expansion survives
-    health refreshes. History and Tor changes apply without extra privacy confirmations.
-  - The help popup explains Bitcoin peers, your node, Electrum servers and who runs them.
-  - **Use without Tor**, in the Electrum servers' list, selects a regular TLS server. `useDirectSource` enables
-    it with History on and Tor off and disables every other source in one `set_sources` call
-    against a freshly read list. Pins and credentials remain intact; a wallet must be closed.
+    locked. Details reveals History, Tor (hidden under Nothing, and for your node, whose Tor is
+    under its address), certificates and removal. Expansion survives health refreshes. History and
+    Tor changes apply without extra privacy confirmations.
+  - The help popup explains Bitcoin peers, Electrum servers and who runs them.
   - **Advanced settings** holds Bitcoin peers' row (Kyoto, with peers of your own), the custom
     Electrum server form and the connection record; pins are in each row's Details. Onion
     addresses require Tor. Kyoto does not automatically hand the chain to Electrum when it cannot
@@ -255,8 +272,8 @@ This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, rost
 ## Intents
 
 The app **uses** `evm.accounts.manage` (Keystore account management), `wallets.unlock` (the Signer
-app: unlock a wallet, allow an open), `evm.signing.approve` (the signer app) and `tor.manage` (the
-Tor app). Their answers are advisory: `wallet_status` and
+app: unlock a wallet, allow an open), `evm.signing.approve` (the signer app), `tor.manage` (the
+Tor app) and `bitcoin.node.configure` (the Bitcoin Node app). Their answers are advisory: `wallet_status` and
 `send_status` settle what happened. `unavailable` is shown with what to do by hand.
 
 ## Checks
@@ -274,8 +291,10 @@ SPECS=basecamp-e2e-node OUT=/a/big/disk3 doctests/run.sh                       #
 
 `ci/states.qml` drives the pure sync, send and activity functions through every state a live
 wallet will not hold on demand, then renders the view against a fake backend; that includes the
-first-run Tor choice (shown only while not chosen and no wallet is open, fresh versus existing
-preselection, the mode Continue sends) and the Settings choice locked while an account is open.
+first-run choice (shown only while not chosen and no wallet is open, fresh versus existing
+preselection, the mode Continue sends, your own node storing `identifying`), the sheet's one
+decision (your own node leaving the public switches alone, public sources bringing them back, the
+address deciding Tor) and the Settings choice locked while an account is open.
 
 Two doctests open the app in Basecamp's standalone mode, offscreen:
 
