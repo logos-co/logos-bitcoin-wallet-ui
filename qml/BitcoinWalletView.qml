@@ -733,7 +733,8 @@ Item {
         // Mid-scan, Kyoto's newer headers reach the chain with its next update: till then the tip
         // only looks old. Peers with nothing newer, or a finished scan, still read as a stall.
         var ahead = scan !== null && !caughtUp && root.isNum((st.kyoto || {}).headers) && Number(st.kyoto.headers) > scan.tip
-        if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600 && !ahead) return "stalled"
+        // The open's first catch-up, while news keeps coming (the core's `catchingUp`), is no stall yet.
+        if (root.isNum(a.tipAgeSecs) && Number(a.tipAgeSecs) > 3600 && !ahead) return a.catchingUp === true ? "catching_up" : "stalled"
         return caughtUp ? "synced" : "syncing"
     }
     // A Kyoto start whose dials are still out; it stops once they have all failed.
@@ -781,7 +782,7 @@ Item {
     function syncLabel(st) {
         var label = root.syncStateLabel(st)
         var s = root.syncState(st), name = root.authorityName(st)
-        var named = s === "stalled" || s === "syncing" || s === "local" || s === "synced"
+        var named = s === "stalled" || s === "catching_up" || s === "syncing" || s === "local" || s === "synced"
         return named && name !== "" ? label + " · from " + name : label
     }
     function syncStateLabel(st) {
@@ -806,6 +807,10 @@ Item {
         }
         case "isolated": return "Can't confirm the chain · " + root.noAnswer(st) + " · last block " + h + (age ? ", " + age + " old" : "")
         case "stalled": return "Stalled · block " + h + ", tip " + age + " old"
+        case "catching_up": {
+            var best = root.sourcesBest(st)
+            return "Catching up · block " + h + (best !== null && best > Number(a.height) ? " of " + root.group(best) : ", tip " + age + " old")
+        }
         case "syncing": {
             var scan = root.kyotoScan(st)
             if (scan !== null) return root.scanLine(scan)
@@ -817,6 +822,12 @@ Item {
         case "synced": return "Synchronized · block " + h
         }
         return ""
+    }
+    // The best height Kyoto's peers or the node showed, where the core says; null otherwise.
+    function sourcesBest(st) {
+        var a = st && st.authority ? st.authority : {}
+        var src = a.kind === "kyoto" ? st.kyoto : root.isNodeKind(a.kind) ? st.node : null
+        return src && typeof src === "object" && root.isNum(src.headers) ? Number(src.headers) : null
     }
     // A header download's progress: "84,000 of 157,000", or Kyoto's own height against the core's
     // estimate of the tip ("block 712,000 of about 973,900"), its peers' tips being unknown.
@@ -887,6 +898,7 @@ Item {
         case "connecting": return "Connecting…"
         case "isolated": return "No answer"
         case "stalled": return "Stalled"
+        case "catching_up": return "Catching up"
         case "syncing": {
             var scan = root.kyotoScan(st)
             if (scan !== null) return scan.share !== null ? "Filters " + scan.share + "%" : "Checking filters…"

@@ -83,6 +83,12 @@ and each open allowed in the Signer app, and every send is approved there.
     a tip older than an hour is not "Stalled" while Kyoto's best header (`kyoto.headers`) is past it:
     those headers reach the chain with the scan's next update. A core
     without `kyoto.scanned` keeps the old rule.
+  - Nor is an old tip "Stalled" during the open's first catch-up (`authority.catchingUp`): after
+    hours closed, Kyoto can take minutes to bring its first new header (6 on a mainnet reopen,
+    2026-11-04). It reads "Catching up · block 974,439, tip 18 hours old", or "… block 974,439 of
+    974,543" once Kyoto's peers or the node show a higher best header, and the chip "Catching up".
+    The core ends it at its sources' best height, or after 10 minutes with nothing new: then
+    "Stalled" again.
   - The history line says where payments are found: "Payments found on this device, through block
     filters" under Kyoto, "Payments found through your node", or "Payments looked up at <server>".
   - The core keeps each account's birthday: an account's first open on a network asks when it was

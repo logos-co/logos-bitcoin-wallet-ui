@@ -62,6 +62,11 @@ const FIRST_ANSWER: Duration = Duration::from_secs(4);
 /// The first open on a network then reads the chain's headers this long, at half the tip, from
 /// one server; later opens there find them stored.
 const HEADERS_TIME: Duration = Duration::from_secs(4);
+/// The first Kyoto reopen on a network finds its stored tip this far behind and this old, and
+/// catches up for this long, as on mainnet after hours closed.
+const CATCH_UP_TIME: Duration = Duration::from_secs(8);
+const CATCH_UP_BEHIND: u64 = 6;
+const CATCH_UP_TIP_AGE_SECS: u64 = 18 * 3600;
 /// testnet4's wallet was opened this often by an app that revealed an address at each open.
 const OLD_APP_OPENS: u32 = 20;
 /// The wallet's first payment, a fixed day so a birthday after it is refused the same way every run.
@@ -209,6 +214,9 @@ pub struct Sim {
     headers_until: Option<Instant>,
     /// Networks whose headers a wallet has read.
     headers_read: BTreeSet<String>,
+    /// A Kyoto reopen's catch-up runs until then; once per network.
+    catch_up_until: Option<Instant>,
+    kyoto_reopened: BTreeSet<String>,
     reorg_at: Option<Instant>,
     reorged: bool,
     last_reorg: Value,
@@ -497,6 +505,8 @@ impl Sim {
             rescan_until: None,
             headers_until: None,
             headers_read: BTreeSet::new(),
+            catch_up_until: None,
+            kyoto_reopened: BTreeSet::new(),
             reorg_at: None,
             reorged: false,
             last_reorg: Value::Null,
@@ -585,9 +595,19 @@ impl Sim {
         self.sources.get(&self.net()).map_or(0, |l| l.iter().filter(|s| s.enabled && s.kind == "electrum" && !s.suspect).count() as u64)
     }
 
+    /// The core's `catchingUp`: a Kyoto reopen whose chain still holds last session's tip.
+    fn catching_up(&self, now: Instant) -> bool {
+        self.open() && self.catch_up_until.is_some_and(|t| now < t)
+    }
+
+    /// The authority's tip: last session's during a catch-up.
+    fn chain_tip(&self, now: Instant) -> u64 {
+        tip(&self.network) - if self.catching_up(now) { CATCH_UP_BEHIND } else { 0 }
+    }
+
     fn wallet_tip(&self, now: Instant) -> Option<u64> {
         match self.state {
-            WState::Ready => Some(tip(&self.network)),
+            WState::Ready => Some(self.chain_tip(now)),
             WState::Syncing => {
                 let (b, t) = (birthday(&self.network), tip(&self.network));
                 let f = (now.saturating_duration_since(self.since).as_secs_f64() / SYNC_TIME.as_secs_f64()).min(1.0);
@@ -608,11 +628,12 @@ impl Sim {
         let authority = if let Some(have) = self.reading_headers(now) {
             json!({"kind": if kyoto { "kyoto" } else { "electrum_headers" }, "height": have,
                    "hash": "00000000000000000001a2b3fixture", "tipAgeSecs": TIP_AGE_SECS * 10_000, "peers": 1,
-                   "asked": true, "base": self.chain_base, "headers": {"have": have, "target": if kyoto { Value::Null } else { json!(tip(&self.network)) }}})
+                   "asked": true, "base": self.chain_base, "headers": {"have": have, "target": if kyoto { Value::Null } else { json!(tip(&self.network)) }}, "catchingUp": false})
         } else if open {
-            json!({"kind": if kyoto { "kyoto" } else { "electrum_headers" }, "height": tip(&self.network),
-                   "hash": "00000000000000000002f1c4fixture", "tipAgeSecs": TIP_AGE_SECS, "peers": if self.asked { self.peers() } else { 0 },
-                   "asked": self.asked, "base": self.chain_base, "headers": null})
+            let up = self.catching_up(now);
+            json!({"kind": if kyoto { "kyoto" } else { "electrum_headers" }, "height": self.chain_tip(now),
+                   "hash": "00000000000000000002f1c4fixture", "tipAgeSecs": if up { CATCH_UP_TIP_AGE_SECS } else { TIP_AGE_SECS },
+                   "peers": if self.asked { self.peers() } else { 0 }, "asked": self.asked, "base": self.chain_base, "headers": null, "catchingUp": up})
         } else {
             json!({"kind": null, "height": null, "hash": null, "tipAgeSecs": null, "peers": 0})
         };
@@ -627,7 +648,7 @@ impl Sim {
             "lastReorg": if open { self.last_reorg.clone() } else { Value::Null },
             "kyoto": if kyoto { self.kyoto_status() } else { Value::Null },
             "node": null,
-            "lastError": null, "synced": self.state == WState::Ready, "busy": false, "authority": authority,
+            "lastError": null, "synced": self.state == WState::Ready && !self.catching_up(now), "busy": false, "authority": authority,
             "activeNetwork": self.active, "label": self.label, "openSend": self.open_send(),
             "gapLimit": if open { json!(self.gap_limit) } else { Value::Null },
         });
@@ -1589,6 +1610,8 @@ impl Sim {
                 // The first wallet on a network reads the chain's headers once its server answers.
                 let first = self.headers_read.insert(self.network.clone());
                 self.headers_until = first.then(|| now + FIRST_ANSWER + HEADERS_TIME);
+                let reopen = !first && self.kyoto() && self.kyoto_reopened.insert(self.network.clone());
+                self.catch_up_until = reopen.then(|| now + FIRST_ANSWER + CATCH_UP_TIME);
                 self.seed_wallet();
                 // The open's birthday, a height or a day (any day reads as this network's fixed one).
                 let floor = activation(&self.network, &self.family);
@@ -1690,7 +1713,7 @@ impl Sim {
         }
         // Change events, as the backend sends them: on what the status says, and on amounts.
         let st = self.status(now);
-        let digest = json!([st["state"], st["openHandle"], st["walletTip"], st["authority"]["peers"], st["authority"]["asked"], st["authority"]["headers"], st["openSend"]]).to_string();
+        let digest = json!([st["state"], st["openHandle"], st["walletTip"], st["authority"]["peers"], st["authority"]["asked"], st["authority"]["headers"], st["authority"]["catchingUp"], st["openSend"]]).to_string();
         if digest != self.last_status {
             self.last_status = digest;
             out.push(Event::SyncProgress(json!({"state": st["state"], "network": st["network"], "walletTip": st["walletTip"],
@@ -2012,6 +2035,32 @@ mod tests {
                    (json!("floor"), json!([]), json!(1.0)));
         let (sim, _) = opened("testnet4");
         assert_eq!(sim.fee_rates(), json!({"ok": false, "error": "no fee estimate yet"}));
+    }
+
+    #[test]
+    fn a_first_kyoto_reopen_catches_up_from_an_old_tip() {
+        let (mut sim, t) = opened("signet");
+        let mut ev = vec![];
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        assert_eq!(sim.set_source("kyoto", r#"{"use":true}"#)["ok"], true);
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
+        // Approved at 4 s, syncing from 5 s, answered at 9 s: last session's tip, 18 hours old.
+        let t = run(&mut sim, t, 10);
+        let st = sim.status(t);
+        let a = &st["authority"];
+        assert_eq!((a["height"].clone(), a["tipAgeSecs"].clone(), a["catchingUp"].clone(), st["walletTip"].clone(), st["synced"].clone()),
+                   (json!(290_117), json!(64_800), json!(true), json!(290_117), json!(false)), "{st}");
+        // Caught up 8 s after the answer.
+        let t = run(&mut sim, t, 8);
+        let a = sim.status(t)["authority"].clone();
+        assert_eq!((a["height"].clone(), a["catchingUp"].clone()), (json!(290_123), json!(false)), "{a}");
+        // Once per network: the next reopen finds its tip current.
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        sim.open_wallet(r#"{"family":"bitcoin"}"#, t, &mut ev);
+        let t = run(&mut sim, t, 10);
+        assert_eq!(sim.status(t)["authority"]["catchingUp"], false);
     }
 
     #[test]
