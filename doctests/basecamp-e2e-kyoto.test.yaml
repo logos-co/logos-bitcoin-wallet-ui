@@ -40,9 +40,9 @@ sections:
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
           b backend 'github:logos-co/logos-bitcoin-wallet-backend/5ccc2b15c5fc1f632fa8ee1bbb613681ced0edee#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/226707c52b44f782a8007637066f48fcf2c51b08#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/226707c52b44f782a8007637066f48fcf2c51b08#regtest-chain'
-          b node 'github:logos-co/logos-bitcoin-node-module/46d8209b083c83e7ce370ddfd7bea72d00ce3718#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/98f50817967ad041b661157c97cefe37f6fa84ca#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/98f50817967ad041b661157c97cefe37f6fa84ca#regtest-chain'
+          b node 'github:logos-co/logos-bitcoin-node-module/c879cd42224f94a36c3c24f97ea8e284a74ea302#install-portable'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           ls e2e/build
         expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "chain", "node", "wallet"]

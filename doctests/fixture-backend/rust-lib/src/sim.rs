@@ -788,8 +788,9 @@ impl Sim {
     fn source_json(&self, s: &Source) -> Value {
         let lan = is_lan(&host_of(&s.url)) && s.kind != "kyoto";
         let onion = host_of(&s.url).ends_with(".onion");
-        // With Tor used for nothing every switch reads off, and an onion stays onion, unrouted.
-        let tor = s.tor && self.tor_use != "none";
+        // With Tor used for nothing every switch reads off, and an onion stays onion, unrouted;
+        // your node at an address keeps its own switch.
+        let tor = s.tor && (s.kind == "rpc" || self.tor_use != "none");
         let route = if lan { "direct" } else if onion { "onion" } else if tor { "tor" } else { "direct" };
         let mut v = json!({"id": s.id, "kind": s.kind, "url": s.url, "operator": s.operator, "label": s.label, "use": s.enabled,
                            "history": s.history, "tor": tor, "lan": lan, "hasCredentials": false, "route": route, "suspect": s.suspect});
@@ -809,8 +810,12 @@ impl Sim {
         let net = self.net();
         let list: Vec<Value> = self.sources.get(&net).map(|l| l.iter().map(|s| self.source_json(s)).collect()).unwrap_or_default();
         let named = |v: &Value| json!({"id": v["id"], "url": v["url"], "operator": v["operator"], "lan": v["lan"]});
-        let exposes: Vec<Value> = list.iter().filter(|v| v["use"] == true && v["history"] == true && v["kind"] == "electrum").map(named).collect();
-        let without: Vec<Value> = list.iter().filter(|v| v["use"] == true && v["route"] == "direct" && v["lan"] != true).map(named).collect();
+        // While your node is on it is asked alone, as the node module routes it; the other switches wait.
+        let node = |v: &Value| v["kind"] == "local" || v["kind"] == "rpc";
+        let own = list.iter().any(|v| v["use"] == true && node(v));
+        let in_use = |v: &Value| v["use"] == true && (!own || node(v));
+        let exposes: Vec<Value> = list.iter().filter(|v| in_use(v) && v["history"] == true && v["kind"] == "electrum").map(named).collect();
+        let without: Vec<Value> = list.iter().filter(|v| in_use(v) && v["kind"] != "local" && v["route"] == "direct" && v["lan"] != true).map(named).collect();
         json!({"ok": true, "network": net, "configured": true, "walletOpen": self.locked(), "proxy": self.proxy,
                "torUse": self.tor_use, "torUseChosen": self.tor_use_chosen,
                "sources": list, "exposes": exposes, "withoutTor": without})
@@ -2113,6 +2118,23 @@ mod tests {
         let mut ev = vec![];
         sim.open_wallet(r#"{"family":"bitcoin"}"#, t0, &mut ev);
         assert_eq!(sim.set_source("electrum.example", r#"{"use":false}"#)["error"], LOCKED);
+    }
+
+    #[test]
+    fn your_node_is_asked_alone_and_keeps_its_own_tor() {
+        let t0 = Instant::now();
+        let mut sim = Sim::new(false, t0);
+        assert!(sim.set_source("electrum.example", r#"{"history":true}"#)["exposes"].as_array().is_some_and(|e| !e.is_empty()));
+        let mut list = sim.sources()["sources"].as_array().unwrap().clone();
+        list.push(json!({"id": "node.example", "kind": "rpc", "url": "https://node.example:8332", "use": true, "tor": true}));
+        let r = sim.set_sources(&serde_json::to_string(&list).unwrap());
+        assert_eq!((r["exposes"].clone(), r["withoutTor"].clone()), (json!([]), json!([])), "the servers wait while your node is on");
+        sim.set_tor_use("none");
+        let r = sim.sources();
+        let mine = r["sources"].as_array().unwrap().iter().find(|s| s["id"] == "node.example").unwrap().clone();
+        assert_eq!((mine["tor"].clone(), mine["route"].clone()), (json!(true), json!("tor")), "Use Tor for is for public sources");
+        let r = sim.set_source("node.example", r#"{"use":false}"#);
+        assert_eq!(r["exposes"][0]["id"], "electrum.example", "back as they were");
     }
 
     #[test]
