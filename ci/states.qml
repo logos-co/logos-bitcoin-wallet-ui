@@ -243,6 +243,24 @@ Item {
                        authority: { kind: "kyoto", height: 974135, tipAgeSecs: 126000, peers: 3 },
                        kyoto: { scanned: 974134, phase: "synced", headers: 974330 } }),
              "Stalled · block 974,135, tip 35 hours old · from 3 Bitcoin peers"],
+            // The open's first catch-up (the core's `catchingUp`): an old tip with news still coming,
+            // as on 2026-11-04 after 18 hours closed. Past the core's grace it is a stall again.
+            [mainnet({ state: "syncing", synced: false, walletTip: 974439, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974439, tipAgeSecs: 64800, peers: 3, catchingUp: true },
+                       kyoto: { scanned: 974439, phase: "syncing", headers: 974431 } }),
+             "Catching up · block 974,439, tip 18 hours old · from 3 Bitcoin peers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: 974439, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974439, tipAgeSecs: 64800, peers: 3, catchingUp: true },
+                       kyoto: { scanned: 974439, phase: "filters", headers: 974543 } }),
+             "Catching up · block 974,439 of 974,543 · from 3 Bitcoin peers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: 974439, birthday: 481824,
+                       authority: { kind: "kyoto", height: 974439, tipAgeSecs: 64800, peers: 3, catchingUp: false },
+                       kyoto: { scanned: 974439, phase: "filters", headers: 974543 } }),
+             "Stalled · block 974,439, tip 18 hours old · from 3 Bitcoin peers"],
+            [mainnet({ state: "syncing", synced: false, walletTip: 974439,
+                       authority: { kind: "local_node", height: 974439, tipAgeSecs: 64800, peers: 1, catchingUp: true },
+                       node: { blocks: 974500, headers: 974543 } }),
+             "Catching up · block 974,439 of 974,543 · from your node"],
             // The newest block or two still being checked is caught up.
             [mainnet({ state: "syncing", synced: false, walletTip: 973920, birthday: 481824,
                        authority: { kind: "kyoto", height: 973920, tipAgeSecs: 1500, peers: 3 }, kyoto: { scanned: 973918, phase: "synced" } }),
@@ -262,6 +280,7 @@ Item {
         ]
         for (var i = 0; i < sync.length; i++) expect("sync " + i, v.syncLabel(sync[i][0]), sync[i][1])
         expect("chip synced", v.syncChip(mainnet({})), "Synced · 935,500")
+        expect("chip catching up", v.syncChip(mainnet({ authority: { kind: "kyoto", height: 974439, tipAgeSecs: 64800, peers: 3, catchingUp: true } })), "Catching up")
         expect("chip no peers", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } })), "No answer")
         expect("chip not asked yet", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: false } })), "Connecting…")
         expect("chip reading headers", v.syncChip(mainnet({ authority: { height: 84000, tipAgeSecs: 50000000, peers: 1, headers: { have: 84000, target: 157000 } } })), "Headers 53%")
