@@ -1790,7 +1790,7 @@ sections:
               action: expect_property
               find_value: "accountPicker"
               property: "displayText"
-              value: "Card account · shell-cdcd…d-84-1-0"
+              value: "Card account · Native SegWit · account 0 — Wallet “Black Card” · cdcdcdcd — Keycard · reader"
             - name: "Open is off"
               action: expect_property
               find_value: "openWalletButton"
