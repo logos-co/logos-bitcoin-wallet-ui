@@ -23,9 +23,9 @@ sections:
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
           b backend 'github:logos-co/logos-bitcoin-wallet-backend/5ccc2b15c5fc1f632fa8ee1bbb613681ced0edee#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/226707c52b44f782a8007637066f48fcf2c51b08#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/226707c52b44f782a8007637066f48fcf2c51b08#regtest-chain'
-          b node 'github:logos-co/logos-bitcoin-node-module/46d8209b083c83e7ce370ddfd7bea72d00ce3718#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/10aaec30d1060d0127c65ad4260f0644e7bb5c38#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/10aaec30d1060d0127c65ad4260f0644e7bb5c38#regtest-chain'
+          b node 'github:logos-co/logos-bitcoin-node-module/4b6d4ec06cfdc46065788b48ca16c0a372ff2016#install-portable'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           b bitcoind 'github:logos-co/logos-bitcoind-module/1b7ee77707524885ee94d2f3113127ce5a6f4057#install-portable'
           b bitcoindui 'github:logos-co/logos-bitcoind-ui/9ca43fae3e0495bd84b9bceba04c9a2d5f20dc74#install-portable'

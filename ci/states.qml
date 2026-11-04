@@ -91,7 +91,7 @@ Item {
         function showHistoryPage(p) {}
         function dismissAlerts() { alertsJson = "[]" }
         function setSource(id, changes) { note("setSource", [id, changes]); return "" }
-        function addRpcSource(a,u,p,n) { note("addRpcSource", [a,u,p,n]); return "" }
+        function addRpcSource(a,u,p,n,t) { note("addRpcSource", [a,u,p,n,t]); return "" }
         function useDirectSource(id) { note("useDirectSource", [id]); return "" }
         function addSource(a, k, n) { note("addSource", [a, k, n]); return "" }
         function removeSource(id) { note("removeSource", [id]); return "" }
@@ -457,7 +457,7 @@ Item {
                  origin:{devices:[{kind:"keycard",id:"ab".repeat(32),name:"Keycard"}],phrase:{id:"seed:"+"cd".repeat(32),name:"Black Card"}}},
                 {id:"g_gone",family:"bitcoin",chain:"test",label:"Gone",signer:"keystore_module",available:false},
                 {id:"0x123",family:"evm",chain:"test",available:true}])
-            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "socks5h://127.0.0.1:9050", walletOpen: false,
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "socks5h://127.0.0.1:9050", walletOpen: false, torUse: "identifying", torUseChosen: true,
                 sources: [{ id: "kyoto", kind: "kyoto", url: "p2p://peer-list", operator: "peers", label: "Bitcoin peers", use: false, history: false, tor: true, lan: false, route: "tor" },
                           { id: "electrum.example", kind: "electrum", url: "ssl://electrum.example:50002", operator: "example", label: "Example Electrum", use: true, history: false, tor: true, lan: false, route: "tor" }],
                 exposes: [], withoutTor: [] })
@@ -572,6 +572,9 @@ Item {
             expect("home speed up", shown("homeSpeedUp_" + "bb".repeat(32)), true)
             expect("the tip watch, in the servers' words", v.alertMessage({ kind: "authority_behind", source: "electrum.example" }),
                    "Example Electrum has seen blocks the Electrum servers haven't sent for 30 minutes; the Electrum servers may be cut off from the network.")
+            expect("your node, asked alone, in its own report's words",
+                   v.alertMessage({ kind: "authority_behind", source: "local", detail: "your node has had no new block for 120 minutes" }),
+                   "Your node has had no new block for 120 minutes; it may be cut off from the network.")
             var st = JSON.parse(scene.syncedMainnet)
             st.authority = { kind: "kyoto", height: 935500, tipAgeSecs: 240, peers: 8 }
             fake.statusJson = JSON.stringify(st)
@@ -899,11 +902,20 @@ Item {
         function (v) {
             expect("details survive a source refresh", shown("sourceOptions_electrum.example"), true)
             expect("without tor badge", shown("withoutTorBadge_electrum.example"), true)
-            // The screen's order: privacy, where the chain comes from, fees, payments before they confirm, advanced.
+            // One decision top to bottom: your own node, then public sources and everything under them.
             var y = function (name) { var o = find(view.item, name, 0); return o.mapToItem(view.item, 0, 0).y }
-            expect("sections in order", [y("privacyLine") < y("chainHeading"), y("chainHeading") < y("feesHeading"),
-                                         y("feesHeading") < y("pendingHeading"), y("pendingHeading") < y("advancedSourcesButton")], [true, true, true, true])
-            expect("the chain comes from the Electrum servers in use", prop("chainChoice_electrum", "checked"), true)
+            expect("sections in order", [y("chainHeading") < y("chainChoice_node"), y("chainChoice_node") < y("chainChoice_public"),
+                                         y("chainChoice_public") < y("chainChoice_peers"), y("chainChoice_electrum") < y("torUse_all"),
+                                         y("torUse_none") < y("whichTor_builtIn"), y("whichTor_own") < y("feesHeading"),
+                                         y("feesHeading") < y("pendingHeading"), y("pendingHeading") < y("advancedSourcesButton")],
+                   [true, true, true, true, true, true, true, true])
+            expect("public sources: the Electrum servers in use", [prop("chainChoice_public", "checked"), prop("chainChoice_electrum", "checked")], [true, true])
+            expect("...your own node's pane closed", shown("ownNodePane"), false)
+            expect("...one line on where Use Tor for applies", prop("torUseScope", "text"), "Applies to every network that uses public sources.")
+            expect("with Electrum servers, Only what identifies you says it is Everything",
+                   v.torUseCopyOf("identifying", "electrum").happens.indexOf("With Electrum servers this works like Everything"), 0)
+            expect("...and the options read so", findAll(view.item, "torUse_identifying", 0, []).length > 0
+                   && find(view.item, "torUseSettings", 0).visible, true)
             expect("...listed under Fees, open", shown("electrumPane"), true)
             expect("fees from the server in use", prop("feeSourceLine", "text"), "From Example Electrum.")
             expect("payments need a server with History on", prop("pendingLine", "text"),
@@ -937,18 +949,39 @@ Item {
             expect("...no payments before they confirm until a server is picked", prop("pendingSwitch", "checked"), false)
             var sets = function (from) { return fake.calls.filter(function (c) { return c[0] === "setSource" }).slice(from) }
             var before = fake.count("setSource")
-            expect("Use your node offered at the top", shown("useOwnNodeButton") + " " + shown("ownNodeInUse"), "true false")
-            find(view.item, "useOwnNodeButton", 0).clicked()
-            expect("...the same as its radio: on, then Kyoto off", sets(before),
-                   [["setSource", "local", JSON.stringify({ use: true })], ["setSource", "kyoto", JSON.stringify({ use: false })]])
-            expect("...then gone, with nothing left to add", shown("useOwnNodeButton") + " " + shown("ownNodeFinish"), "false false")
-            v.chainPicked = ""
-            before = fake.count("setSource")
+            expect("no Use your node button nor In use badge: the radio is the state",
+                   [find(view.item, "useOwnNodeButton", 0), find(view.item, "ownNodeInUse", 0), find(view.item, "ownNodeFinish", 0)], [null, null, null])
             find(view.item, "chainChoice_node", 0).clicked()
-            expect("Your node, in Logos: on, then Kyoto off", sets(before),
-                   [["setSource", "local", JSON.stringify({ use: true })], ["setSource", "kyoto", JSON.stringify({ use: false })]])
-            expect("...its place shown", prop("nodePlace_local", "checked") && shown("localNodeSources"), true)
-            expect("...with no switch for payments before they confirm", shown("pendingChoice"), false)
+            expect("Your own node, in Logos: on, the public switches left as they are", sets(before), [["setSource", "local", JSON.stringify({ use: true })]])
+            expect("...its pane under it, In Logos", [shown("ownNodePane"), prop("nodePlace_local", "checked"), shown("localNodePane")], [true, true, true])
+            expect("...one note of benefits and costs", prop("ownNodeNote", "text").indexOf("<b>Benefits:</b>") === 0
+                   && prop("ownNodeNote", "text").indexOf("<b>Costs:</b>") > 0, true)
+            expect("...no Tor in Logos", [shown("torUseSettings"), shown("whichTor_builtIn"), shown("node_whichTor_builtIn"), shown("torBadge"),
+                                          shown("manageTorLink")], [false, false, false, false, false])
+            expect("...the node app for its own connections", shown("openNodeAppButton") && shown("localNodePeersLine"), true)
+            expect("...and nothing of public sources", [shown("publicPane"), shown("feesHeading"), shown("pendingChoice"), shown("advancedSourcesButton")],
+                   [false, false, false, false])
+            // The engine turns the node on: the public switches stay as they were, Kyoto on.
+            var on = JSON.parse(fake.sourcesJson)
+            on.sources[2].use = true
+            fake.sourcesJson = JSON.stringify(on)
+            v.chainPicked = ""
+            expect("...the node's state from its health", prop("localNodeState", "text"), "not checked yet")
+            before = fake.count("setSource")
+            find(view.item, "chainChoice_public", 0).clicked()
+            expect("Public sources: your node off, the switches before it back", sets(before), [["setSource", "local", JSON.stringify({ use: false })]])
+            expect("...Bitcoin peers as they were", [prop("chainChoice_public", "checked"), prop("chainChoice_peers", "checked")], [true, true])
+            v.chainPicked = ""
+            on.sources[0].use = false
+            fake.sourcesJson = JSON.stringify(on)
+            before = fake.count("setSource")
+            find(view.item, "chainChoice_public", 0).clicked()
+            expect("...and Bitcoin peers when nothing public was on", sets(before),
+                   [["setSource", "kyoto", JSON.stringify({ use: true })], ["setSource", "local", JSON.stringify({ use: false })]])
+            v.chainPicked = ""
+            on.sources[0].use = true
+            on.sources[2].use = false
+            fake.sourcesJson = JSON.stringify(on)
             before = fake.count("setSource")
             find(view.item, "chainChoice_electrum", 0).clicked()
             expect("Electrum servers: Kyoto off, the servers left as they are", sets(before), [["setSource", "kyoto", JSON.stringify({ use: false })]])
@@ -1402,7 +1435,7 @@ Item {
             var info = find(view.item, "operatorsInfo", 0)
             info.open()
             expect("sources help opens", info.opened, true)
-            expect("sources help title", info.title, "How Bitcoin sources work")
+            expect("sources help title", info.title, "How public sources work")
             expect("sources help has scrollable content", info.dialogContentItem !== null, true)
             info.close()
             // A peer already answering overrides an older failed server health probe.
@@ -1427,24 +1460,44 @@ Item {
         function (v) {
             expect("healthy probe clears warning", shown("torConnectionNotice"), false)
             expect("healthy probe clears settings warning", shown("torSettingsNotice"), false)
-            expect("direct mode needs a closed wallet", prop("connectDirectButton", "enabled"), false)
+            expect("no Use without Tor control: Use Tor for decides", find(view.item, "connectDirectButton", 0), null)
             fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "mainnet" })
         },
         function (v) {
             find(view.item, "networkSettingsButton", 0).clicked()
         },
         function (v) {
-            expect("direct choice includes regular TLS Electrum only", v.directServers.map(function (s) { return s.id }), ["backup"])
-            expect("direct mode available without a wallet", prop("connectDirectButton", "enabled"), true)
-            find(view.item, "connectDirectButton", 0).clicked()
-            expect("direct setup is one atomic backend call", fake.last("useDirectSource"), ["useDirectSource", "backup"])
+            var before = fake.count("setSource")
+            find(view.item, "chainChoice_node", 0).clicked()
+            expect("your own node with none on this network: nothing to switch, the address form", [fake.count("setSource") - before,
+                   prop("nodePlace_rpc", "checked"), shown("rpcAddress")], [0, true, true])
             find(view.item, "rpcAddress", 0).text = "http://192.168.1.20:8332"
+            expect("on your network: reached directly, no Tor switch, no Which Tor", [prop("rpcAddressLine", "text"), shown("rpcAddTorSwitch"),
+                   shown("node_whichTor_builtIn")], ["Reached directly. Tor can't reach your network.", false, false])
             find(view.item, "rpcUser", 0).text = "rpc-user"
             find(view.item, "rpcPass", 0).text = "rpc-test-password"
             find(view.item, "rpcName", 0).text = "My Core"
             find(view.item, "addRpcButton", 0).clicked()
-            expect("RPC configuration reaches backend", fake.last("addRpcSource"), ["addRpcSource", "http://192.168.1.20:8332", "rpc-user", "rpc-test-password", "My Core"])
+            expect("RPC configuration reaches backend, without Tor on your network", fake.last("addRpcSource"),
+                   ["addRpcSource", "http://192.168.1.20:8332", "rpc-user", "rpc-test-password", "My Core", false])
             expect("RPC password cleared after submission", prop("rpcPass", "text"), "")
+            find(view.item, "rpcAddress", 0).text = "https://node.example:8332"
+            expect("on the internet: Reach it through Tor, on, with Which Tor", [shown("rpcAddressLine"), shown("rpcAddTorSwitch"),
+                   prop("rpcAddTorSwitch", "checked"), shown("node_whichTor_builtIn"), shown("node_whichTor_own")], [false, true, true, true, true])
+            find(view.item, "addRpcButton", 0).clicked()
+            expect("...added through Tor", fake.last("addRpcSource")[5], true)
+            find(view.item, "rpcAddTorSwitch", 0).clicked()
+            expect("...off: no Which Tor", [prop("rpcAddTorSwitch", "checked"), shown("node_whichTor_builtIn")], [false, false])
+            find(view.item, "rpcAddress", 0).text = "https://node.example:8332"
+            find(view.item, "addRpcButton", 0).clicked()
+            expect("...added direct", fake.last("addRpcSource")[5], false)
+            find(view.item, "rpcAddTorSwitch", 0).clicked()
+            find(view.item, "rpcAddress", 0).text = "http://" + "a".repeat(56) + ".onion:8332"
+            expect("an onion address: always through Tor, with Which Tor", [prop("rpcAddressLine", "text"), shown("rpcAddTorSwitch"),
+                   shown("node_whichTor_builtIn")], ["Always reached through Tor.", false, true])
+            find(view.item, "rpcAddress", 0).text = ""
+            expect("host classes", ["[fd00::2]:8332", "10.0.0.5", "100.64.1.1", "nas.lan", "rpc:pw@172.20.0.1:8332", "8.8.8.8", "[2001:db8::1]"]
+                   .map(v.addressPlace), ["lan", "lan", "lan", "lan", "lan", "internet", "internet"])
             fake.sourcesJson = JSON.stringify({sources:[
                 {id:"rpc-public",kind:"rpc",url:"https://rpc.example",use:false,tor:false,route:"direct"},
                 {id:"rpc-home",kind:"rpc",url:"http://192.168.1.20:8332",lan:true,use:true,tor:false,route:"direct"}]})
@@ -1459,10 +1512,24 @@ Item {
             find(view.item, "useSwitch_rpc-public", 0).clicked()
             expect("one node at a time: the other goes off first", fake.calls.filter(function (c) { return c[0] === "setSource" }).slice(before),
                    [["setSource", "rpc-home", JSON.stringify({ use: false })], ["setSource", "rpc-public", JSON.stringify({ use: true })]])
+            expect("the address in use decides Tor: on your network, directly", [prop("rpcRouteLine", "text"), shown("rpcTorSwitch")],
+                   ["Reached directly. Tor can't reach your network.", false])
+            fake.sourcesJson = JSON.stringify({sources:[
+                {id:"rpc-public",kind:"rpc",url:"https://rpc.example",use:true,tor:false,route:"direct"}]})
+            expect("one address: no Use switch, the radio is the state", shown("useSwitch_rpc-public"), false)
+            expect("an internet address: Reach it through Tor, off, and no Which Tor", [shown("rpcTorSwitch"), prop("rpcTorSwitch", "checked"),
+                   shown("node_whichTor_builtIn")], [true, false, false])
+            expect("...its card has no second Tor switch", shown("torSwitch_rpc-public"), false)
+            find(view.item, "rpcTorSwitch", 0).clicked()
+            expect("...turning it on asks for Tor", fake.last("setSource"), ["setSource", "rpc-public", JSON.stringify({ tor: true })])
+            fake.sourcesJson = JSON.stringify({sources:[
+                {id:"rpc-public",kind:"rpc",url:"https://rpc.example",use:true,tor:true,route:"tor"}]})
+            expect("...then Which Tor under it", shown("node_whichTor_builtIn"), true)
             find(view.item, "nodePlace_local", 0).clicked()
             expect("In Logos, picked", prop("nodePlace_local", "checked"), true)
             expect("...hides the address form", shown("rpcAddress"), false)
             v.nodePlacePicked = ""
+            v.chainPicked = ""
             expect("RPC names your node as the chain's source", v.authorityName({authority:{kind:"rpc_node"}}), "your node")
             // The Tor that comes with Logos, joining: the badge, Home and the sync chip follow it.
             scene.keptSources = fake.sourcesJson
@@ -1481,7 +1548,8 @@ Item {
             expect("a peerless Kyoto waits for Tor", v.syncChip(peerless), "Tor 40%")
             expect("...and says so", v.syncStateLabel(peerless).indexOf("Connecting to Tor… 40%"), 0)
             expect("Manage Tor for the built-in one", shownAny("manageTorLink"), true)
-            expect("own Tor offered, closed", shownAny("ownTorSwitch") && !shownAny("ownTorPane"), true)
+            expect("Which Tor: the built-in one picked, your own offered, closed", [prop("whichTor_builtIn", "checked"), shown("whichTor_own"),
+                   prop("whichTor_own", "checked"), shown("ownTorPane")], [true, true, false, false])
             find(view.item, "manageTorLink", 0).activated("")
             expect("Manage Tor raises tor.manage", logos.requests[logos.requests.length - 1].intent, "tor.manage")
             logos.lastCallback({ ok: false, error: "unavailable" })
@@ -1490,7 +1558,7 @@ Item {
                 tor: { state: "ready", progress: 100, detail: "", socks: null, answered: true } })
         },
         function (v) {
-            expect("a SOCKS port turned off is named", prop("torBadge", "text"), "Tor's SOCKS port is off")
+            expect("Tor closed to apps is named", prop("torBadge", "text"), "Tor is off for apps")
             expect("...with what to do", shownAny("torTroubleNotice")
                    && prop("torTroubleNotice", "message").indexOf("Turn it on in the Tor app") >= 0, true)
             expect("...and Kyoto cannot connect", v.syncChip({ state: "syncing", authority: { kind: "kyoto", peers: 0 } }), "Tor unavailable")
@@ -1507,7 +1575,7 @@ Item {
         function (v) {
             expect("connected", prop("torBadge", "text"), "Connected to Tor")
             expect("...no trouble", shownAny("torTroubleNotice"), false)
-            find(view.item, "ownTorSwitch", 0).clicked()
+            find(view.item, "whichTor_own", 0).clicked()
         },
         function (v) {
             expect("own Tor opens its field first", shownAny("ownTorPane"), true)
@@ -1522,8 +1590,8 @@ Item {
         function (v) {
             expect("own Tor: no built-in badge", shownAny("torBadge"), false)
             expect("...nor Manage Tor", shownAny("manageTorLink"), false)
-            expect("...the line names it", prop("privacyLine", "text").indexOf("your own Tor at socks5h://127.0.0.1:9150") >= 0, true)
-            find(view.item, "ownTorSwitch", 0).clicked()
+            expect("...your own picked, with its address", [prop("whichTor_own", "checked"), prop("proxyField", "text")], [true, "socks5h://127.0.0.1:9150"])
+            find(view.item, "whichTor_builtIn", 0).clicked()
             expect("switching back uses the built-in Tor", fake.last("setProxy"), ["setProxy", "tor"])
             fake.sourcesJson = scene.keptSources
             fake.healthJson = scene.keptHealth
@@ -1706,7 +1774,11 @@ Item {
             expect("a choice not made yet replaces the account start", shown("torUsePage"), true)
             expect("...the picker hidden", shown("accountSelectorRow"), false)
             expect("...and the open page", shown("openPage"), false)
-            expect("the intro", prop("torUseIntro", "text").indexOf("How should this wallet use Tor? Tor hides your IP address"), 0)
+            expect("the intro", prop("torUseIntro", "text").indexOf("Your own node is the most private"), 0)
+            expect("the same top choice, Public sources preselected", [prop("startChoice_node", "text"), prop("startChoice_node", "checked"),
+                   prop("startChoice_public", "text"), prop("startChoice_public", "checked")], ["Your own node", false, "Public sources", true])
+            expect("...Use Tor for under it, for every network", shown("startTorUse") && prop("torUseStartScope", "text"),
+                   "Applies to every network that uses public sources.")
             expect("three options", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "text") }),
                    ["Only what identifies you", "Everything", "Nothing"])
             expect("each says what happens, pros and cons", ["identifying", "all", "none"].every(function (m) {
@@ -1754,6 +1826,23 @@ Item {
             expect("chosen: the screen is gone", shown("torUsePage"), false)
             v.torUseAnswered = false
             expect("...and never shows again", shown("torUsePage"), false)
+            // Your own node at first run: the recommended mode is still stored, then the node is set up under Sources.
+            fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "all", torUseChosen: false, sources: [
+                { id: "kyoto", kind: "kyoto", use: true, route: "tor" },
+                { id: "local", kind: "local", url: "logos://bitcoind_module", label: "Your node", use: false, route: "direct" }] })
+        },
+        function (v) {
+            find(view.item, "startChoice_node", 0).clicked()
+            expect("your own node: no Use Tor for to answer", [prop("startChoice_node", "checked"), shown("startTorUse")], [true, false])
+            var before = fake.count("setSource")
+            find(view.item, "torUseContinue", 0).clicked()
+            expect("...Continue still stores the recommended mode", fake.last("setTorUse"), ["setTorUse", "identifying"])
+            expect("...turns your node in Logos on", fake.calls.filter(function (c) { return c[0] === "setSource" }).slice(before),
+                   [["setSource", "local", JSON.stringify({ use: true })]])
+            expect("...and opens Sources on it", [prop("networkSheet", "visible"), v.chainChoice], [true, "node"])
+            v.closeSheets()
+            v.chainPicked = ""
+            v.startChoice = "public"
             // Only while not chosen and no wallet is open: an older node without the key never shows it.
             fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", sources: [] })
             fake.healthJson = JSON.stringify({ overall: "ok", sources: [] })
@@ -1799,34 +1888,35 @@ Item {
             var all = findAll(view.item, "torUse_all", 0, []).filter(function (o) { return o.visible })[0]
             expect("closed: enabled", all ? all.enabled : "<none>", true)
             expect("...no lock line", shownAny("torUseLocked"), false)
-            expect("identifying: which Tor shows", shownAny("ownTorSwitch") && shownAny("manageTorLink"), true)
-            expect("...and what goes where", prop("privacyLine", "text").indexOf("Block headers and filters come straight from Bitcoin nodes; "
-                   + "what identifies you goes through Tor, which comes with Logos"), 0)
+            expect("identifying: which Tor shows", shownAny("whichTor_builtIn") && shownAny("manageTorLink"), true)
             var vis = function (n) { return findAll(view.item, n, 0, []).filter(function (o) { return o.visible })[0] || null }
-            var ys = ["ownNodeOption", "torUse_all", "torUse_identifying", "torUse_none"].map(function (n) {
+            var ys = ["ownNodeOption", "chainChoice_public", "torUse_all", "torUse_identifying", "torUse_none"].map(function (n) {
                 var o = vis(n); return o ? Math.round(o.mapToItem(null, 0, 0).y) : -1 })
-            expect("most private first: your own node, then Everything to Nothing",
+            expect("most private first: your own node, then public sources, Everything to Nothing",
                    ys.every(function (y, i) { return y >= 0 && (i === 0 || y > ys[i - 1]) }) ? "in order" : JSON.stringify(ys), "in order")
-            expect("...and the chain's choices too", v.chainOptions.map(function (o) { return o.mode }), ["node", "peers", "electrum"])
-            expect("...with its benefits and costs", [vis("ownNodeBenefits"), vis("ownNodeCosts")].every(function (o) { return o !== null }), true)
+            expect("...the public choices, Bitcoin peers first", v.publicOptions.map(function (o) { return o.mode }), ["peers", "electrum"])
+            v.chainPicked = "node"
+            v.nodePlacePicked = "local"
+            expect("your own node shows one note, once", findAll(view.item, "ownNodeNote", 0, []).filter(function (o) { return o.visible }).length, 1)
             vis("openNodeAppButton").clicked()
             var asked = logos.requests[logos.requests.length - 1]
             expect("Open Bitcoin Node raises bitcoin.node.configure", asked.intent + " " + asked.params.network, "bitcoin.node.configure regtest")
             logos.lastCallback({ ok: false, error: "unavailable" })
             expect("...and says when the app is missing", vis("nodeAppNote") ? vis("nodeAppNote").text : "", "The Bitcoin Node app is not installed.")
+            v.chainPicked = ""
+            v.nodePlacePicked = ""
             all.clicked()
             expect("Settings sends the mode", fake.last("setTorUse"), ["setTorUse", "all"])
         },
         function (v) {
             expect("...and shows it", prop("torUse_all", "checked"), true)
-            expect("all: the line it had", prop("privacyLine", "text").indexOf("Sources are reached through Tor, which comes with Logos"), 0)
+            expect("all: Which Tor stays", shownAny("whichTor_builtIn"), true)
             findAll(view.item, "torUse_none", 0, []).filter(function (o) { return o.visible })[0].clicked()
         },
         function (v) {
             expect("none taken", fake.last("setTorUse"), ["setTorUse", "none"])
-            expect("none: no which-Tor", shownAny("ownTorSwitch") || shownAny("ownTorPane") || shownAny("manageTorLink")
-                   || shownAny("useBuiltInTorButton"), false)
-            expect("...and says so", prop("privacyLine", "text"), "Tor isn't used: every source is reached directly, and onion sources are off.")
+            expect("none: no Which Tor", shownAny("whichTor_builtIn") || shownAny("whichTor_own") || shownAny("ownTorPane")
+                   || shownAny("manageTorLink") || shownAny("torBadge"), false)
             fake.torUseReply = "Close the wallet to change these settings."
             findAll(view.item, "torUse_identifying", 0, []).filter(function (o) { return o.visible })[0].clicked()
         },

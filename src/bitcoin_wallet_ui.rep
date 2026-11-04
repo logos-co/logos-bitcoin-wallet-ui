@@ -106,7 +106,7 @@ class BitcoinWalletUi
     SLOT(QString useDirectSource(QString sourceId))
     // kind is electrum; the node module normalizes the address. The new server is probed.
     SLOT(QString addSource(QString address, QString kind, QString name))
-    SLOT(QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name))
+    SLOT(QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name, bool tor))
     SLOT(QString removeSource(QString sourceId))
     SLOT(QString setProxy(QString proxy))
     // "Use Tor for": all, identifying or none. The node module marks it chosen; sourcesJson and

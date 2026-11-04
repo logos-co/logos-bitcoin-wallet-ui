@@ -46,7 +46,7 @@ public:
     QString setSource(QString sourceId, QString changesJson) override;
     QString useDirectSource(QString sourceId) override;
     QString addSource(QString address, QString kind, QString name) override;
-    QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name) override;
+    QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name, bool tor) override;
     QString removeSource(QString sourceId) override;
     QString setProxy(QString proxy) override;
     QString setTorUse(QString mode) override;
@@ -60,7 +60,7 @@ protected:
     void onContextReady() override;
 
 private:
-    QString addServer(QString address, QString kind, QString name, const QJsonObject &credentials);
+    QString addServer(QString address, QString kind, QString name, const QJsonObject &credentials, bool tor = true);
     // A reply lost for kStaleReadMs no longer holds up the next read of its kind.
     struct Read {
         bool inFlight = false;
