@@ -14,14 +14,17 @@ intro: |
   sync line never claims "Synchronized" once no source agrees with the wallet's chain, nor "Can't
   confirm the chain" before its sources first answered, counts the chain's headers while the
   first wallet on a network reads them, says "Catching up", not "Stalled", while a reopen's chain
-  catches up from last session's tip, and names where the chain comes from. Opens show the first unused address, New
-  address at the gap limit says why it gives no new one, and the fee presets need an estimate. An
+  catches up from last session's tip, and names where the chain comes from. Opens show the first unused address;
+  Receive lists every receive address, newest first, where one is labelled and shown in place of the
+  new one, and where those already paid wait behind a toggle; at the gap limit a note takes New
+  address's place. The fee presets need an estimate. An
   amount below what the address can receive says so under the amount and keeps Review off.
   While a wallet is open the account picker stays on it and Open is off until it is closed; an
   open asked for past the picker is refused too.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
-  (its trait, copied from logos-bitcoin-wallet-backend 95b8f0c, plus set_tor_use) with a script behind it, and no
+  (its trait, copied from logos-bitcoin-wallet-backend 95b8f0c, plus set_tor_use,
+  receive_addresses and set_address_label) with a script behind it, and no
   wallet core, keystore, chain or network. The signer manager is one too, doctests/fixture-manager:
   its `accounts` answers a keystore wallet on each chain and a Keycard account with no card
   inserted, which the account picker names by its seed wallet and still opens: only sending needs
@@ -41,7 +44,8 @@ intro: |
   your own replaces Kyoto's curated list, and a switch asked for while the wallet closes waits for
   the close, and an open asked for meanwhile is refused until the switch applies. Under Kyoto on signet a
   payment the Electrum server reports below the chain's start shows unchecked, apart from the balance, until an
-  earlier birthday checks it; on testnet4 one peer decides the chain, and the sources say so. A coin
+  earlier birthday checks it; on testnet4 one peer decides the chain, and the sources say so, and an older app left
+  20 unused addresses there and two paid after them. A coin
   past the 20-address gap limit shows apart and spendable, a small send spends it and its review
   says so, and a gap limit raised to 30 (asked first) rescans and takes it into the balance.
 
@@ -718,6 +722,79 @@ sections:
               value: "bitcoin:tb1qmyt0kg3tn9edlzmqd365whe98wq4jln56mwgjs?amount=0.0015"
               timeout: 10000
               screenshot: "wallet-receive.png"
+            - name: "Beside New address, the unused addresses against the gap limit"
+              action: expect_property
+              find_value: "receiveUnusedCount"
+              property: "text"
+              value: "2 of 20 unused"
+              timeout: 10000
+            - name: "Below, your receive addresses, newest first: the one on screen"
+              action: expect_property
+              find_value: "receiveRowState_1"
+              property: "text"
+              value: "Shown"
+              timeout: 10000
+            - name: "...and the first, unused, with no label yet"
+              action: expect_property
+              find_value: "receiveRowLabel_0"
+              property: "text"
+              value: "No label"
+            - name: "Label the first"
+              action: call_method
+              find_value: "receiveRowLabelButton_0"
+              method: "clicked"
+              args: []
+            - name: "Its editor opens in the row"
+              action: expect_property
+              find_value: "labelEditor_0"
+              property: "visible"
+              value: true
+              timeout: 5000
+            - name: "Who pays into it"
+              action: set_text
+              find_by: "objectName"
+              find_value: "labelField_0"
+              value: "Rent from Ana"
+            - name: "Save it"
+              action: call_method
+              find_value: "saveLabelButton_0"
+              method: "clicked"
+              args: []
+            - name: "The row shows the label"
+              action: expect_property
+              find_value: "receiveRowLabel_0"
+              property: "text"
+              value: "Rent from Ana"
+              timeout: 10000
+            - name: "...and the editor closes"
+              action: expect_property
+              find_value: "labelEditor_0"
+              property: "visible"
+              value: false
+            - name: "Show the first instead"
+              action: call_method
+              find_value: "receiveRowShow_0"
+              method: "clicked"
+              args: []
+            - name: "The address and its QR switch to it"
+              action: expect_property
+              find_value: "receiveAddress"
+              property: "text"
+              value: "tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r"
+              timeout: 10000
+            - name: "...keeping the amount asked for"
+              action: expect_property
+              find_value: "receiveUri"
+              property: "text"
+              value: "bitcoin:tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r?amount=0.0015"
+              timeout: 10000
+            - name: "...and its row is the one shown"
+              action: expect_property
+              find_value: "receiveRowState_0"
+              property: "text"
+              value: "Shown"
+              timeout: 10000
+              screenshot: "wallet-receive-list.png"
 
             - name: "Go to Send"
               action: call_method
@@ -1394,6 +1471,12 @@ sections:
               property: "text"
               value: "tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r"
               timeout: 10000
+            - name: "...with its label kept in the wallet"
+              action: expect_property
+              find_value: "receiveRowLabel_0"
+              property: "text"
+              value: "Rent from Ana"
+              timeout: 10000
             - name: "Send, under Kyoto"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -1663,21 +1746,66 @@ sections:
               property: "text"
               value: "tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r"
               timeout: 10000
-            - name: "Ask for another"
-              action: click_object
-              find_value: "newAddressButton"
-            - name: "None past the gap limit: the app says why, and what to do"
+            - name: "At the gap limit no New address: the app says what to do in its place"
               action: expect_property
-              find_value: "receiveGapNote"
+              find_value: "receiveAtGapNote"
               property: "text"
-              value: "You already have 20 unused addresses. This one is shown until one receives coins; raise the gap limit in Settings for more."
+              value: "Pay into one of these first, or raise the gap limit in Settings."
               timeout: 10000
+            - name: "...shown"
+              action: expect_property
+              find_value: "receiveAtGapNote"
+              property: "visible"
+              value: true
+              timeout: 10000
+            - name: "...where the button was"
+              action: expect_property
+              find_value: "newAddressButton"
+              property: "visible"
+              value: false
+            - name: "...beside the count"
+              action: expect_property
+              find_value: "receiveUnusedCount"
+              property: "text"
+              value: "20 of 20 unused"
               screenshot: "wallet-receive-gap.png"
             - name: "...and keeps showing the first unused one"
               action: expect_property
               find_value: "receiveAddress"
               property: "text"
               value: "tb1qw4aq6uwu07jxg44l4lhqtmjj8j8ncd4qpmpm3r"
+            - name: "The two addresses already paid wait behind a toggle"
+              action: expect_property
+              find_value: "showUsedButton"
+              property: "text"
+              value: "Show used (2)"
+            - name: "Show them"
+              action: call_method
+              find_value: "showUsedButton"
+              method: "clicked"
+              args: []
+            - name: "A paid one says what it received"
+              action: expect_property
+              find_value: "receiveRowState_20"
+              property: "text"
+              value: "Received 1.25 BTC"
+              timeout: 5000
+            - name: "...dimmed"
+              action: expect_property
+              find_value: "receiveRow_20"
+              property: "opacity"
+              value: 0.6
+            - name: "...offering no Show"
+              action: expect_property
+              find_value: "receiveRowShow_20"
+              property: "visible"
+              value: false
+            - name: "...under a note on reusing it"
+              action: expect_property
+              find_value: "usedNote"
+              property: "text"
+              value: "Reusing an address that was paid links your payments to each other on-chain."
+              screenshot: "wallet-receive-used.png"
             - name: "Send on testnet4, where Kyoto estimates no fee"
               action: call_method
               find_value: "bitcoinWalletRoot"

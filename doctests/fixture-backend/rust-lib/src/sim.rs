@@ -7,8 +7,8 @@
 //! decides the chain. A signet wallet holds a coin past a 20-address gap limit: listed apart and
 //! spendable, small sends spend it, and a gap limit of 30 or more takes it into the balance after
 //! its rescan. Each open shows last session's chain for 4 s before its sources answer. Opens show the
-//! first unused address and reveal none; testnet4's wallet already has 20 unused, so a new one is
-//! refused there. Fee estimates: none on testnet4; under Kyoto on signet a quiet 1 sat/vB from the
+//! first unused address and reveal none; testnet4's wallet already has 20 unused and two paid after
+//! them, so a new one is refused there. Labels are checked as the core checks them. Fee estimates: none on testnet4; under Kyoto on signet a quiet 1 sat/vB from the
 //! Electrum server, or the relay floor with no server on. An
 //! amount below the address's dust limit (294 sats, taproot and P2WSH 330) fails at build with code
 //! dust, as the core refuses it. "Use Tor for" starts as a fresh node store's, identifying and not
@@ -67,8 +67,11 @@ const HEADERS_TIME: Duration = Duration::from_secs(4);
 const CATCH_UP_TIME: Duration = Duration::from_secs(8);
 const CATCH_UP_BEHIND: u64 = 6;
 const CATCH_UP_TIP_AGE_SECS: u64 = 18 * 3600;
-/// testnet4's wallet was opened this often by an app that revealed an address at each open.
-const OLD_APP_OPENS: u32 = 20;
+/// testnet4's wallet was opened this often by an app that revealed an address at each open, and then
+/// paid at the two addresses after those.
+const OLD_APP_OPENS: usize = 20;
+const OLD_APP_PAID: [u64; 2] = [125_000_000, 80_000];
+const MAX_LABEL_CHARS: usize = 64;
 /// The wallet's first payment, a fixed day so a birthday after it is refused the same way every run.
 const FIRST_TX_DAY: &str = "2026-05-31";
 // The core's own refusals.
@@ -195,8 +198,8 @@ pub struct Sim {
     tor_use: String,
     tor_use_chosen: bool,
     wallets: Vec<Value>,
-    /// Receive addresses revealed, none of them paid, by network and group.
-    revealed: BTreeMap<String, u32>,
+    /// Receive addresses revealed, by network and group, in index order.
+    revealed: BTreeMap<String, Vec<Revealed>>,
     /// The open's first round of asking the chain's sources has ended, or ends then.
     asked: bool,
     answer_at: Option<Instant>,
@@ -327,6 +330,13 @@ fn unchecked_txid() -> String {
 /// A block hash for a height: fake, and plain about it.
 fn block_hash(height: u64) -> String {
     format!("{:064x}", 0xb10c_0000_0000u64 + height)
+}
+
+/// A revealed receive address: what it was paid, in satoshis, and its label.
+#[derive(Clone, Default)]
+struct Revealed {
+    received: u64,
+    label: String,
 }
 
 fn birthday(network: &str) -> u64 {
@@ -737,9 +747,15 @@ impl Sim {
         json!({"ok": true, "fast": fast, "normal": normal, "slow": slow, "minimum": 1.0, "sources": servers, "estimated": true, "basis": "estimate"})
     }
 
-    fn revealed_mut(&mut self) -> &mut u32 {
-        let old = if self.network == "testnet4" { OLD_APP_OPENS } else { 0 };
-        self.revealed.entry(format!("{}/{}", self.network, self.group)).or_insert(old)
+    fn revealed_mut(&mut self) -> &mut Vec<Revealed> {
+        let old = self.network == "testnet4";
+        self.revealed.entry(format!("{}/{}", self.network, self.group)).or_insert_with(|| {
+            let mut book = vec![Revealed::default(); if old { OLD_APP_OPENS } else { 0 }];
+            if old {
+                book.extend(OLD_APP_PAID.iter().map(|&received| Revealed { received, label: String::new() }));
+            }
+            book
+        })
     }
 
     /// A new address, unless as many unused ones as the gap limit stand: then the first, not fresh.
@@ -747,25 +763,67 @@ impl Sim {
         if !self.open() {
             return json!({"ok": false, "error": "no wallet is open"});
         }
-        let (net, gap) = (self.network.clone(), self.gap_limit as u32);
-        let n = self.revealed_mut();
-        if *n >= gap {
-            return json!({"ok": true, "address": address(&net, 'q', 1000), "index": 0, "fresh": false, "unused": *n, "gapLimit": gap});
+        let (net, gap) = (self.network.clone(), self.gap_limit);
+        let book = self.revealed_mut();
+        let unused = book.iter().filter(|r| r.received == 0).count() as u64;
+        if unused >= gap {
+            let first = book.iter().position(|r| r.received == 0).unwrap_or(0) as u64;
+            return json!({"ok": true, "address": address(&net, 'q', 1000 + first), "index": first, "fresh": false, "unused": unused, "gapLimit": gap});
         }
-        let i = *n;
-        *n += 1;
-        json!({"ok": true, "address": address(&net, 'q', 1000 + u64::from(i)), "index": i, "fresh": true, "unused": i + 1, "gapLimit": gap})
+        book.push(Revealed::default());
+        let i = (book.len() - 1) as u64;
+        json!({"ok": true, "address": address(&net, 'q', 1000 + i), "index": i, "fresh": true, "unused": unused + 1, "gapLimit": gap})
     }
 
-    /// The first unused address, revealed only when none is; none of the fixture's is ever paid.
+    /// The first unused address, revealed only when none is.
     pub fn current_address(&mut self) -> Value {
         if !self.open() {
             return json!({"ok": false, "error": "no wallet is open"});
         }
         let net = self.network.clone();
-        let n = self.revealed_mut();
-        *n = (*n).max(1);
-        json!({"ok": true, "address": address(&net, 'q', 1000), "index": 0})
+        let book = self.revealed_mut();
+        let i = book.iter().position(|r| r.received == 0).unwrap_or_else(|| {
+            book.push(Revealed::default());
+            book.len() - 1
+        });
+        json!({"ok": true, "address": address(&net, 'q', 1000 + i as u64), "index": i})
+    }
+
+    /// Every revealed receive address by index, as the backend relays the core's.
+    pub fn receive_addresses(&mut self) -> Value {
+        if !self.open() {
+            return json!({"ok": false, "error": "no wallet is open"});
+        }
+        let (net, gap) = (self.network.clone(), self.gap_limit);
+        let rows: Vec<Value> = self.revealed_mut().iter().enumerate()
+            .map(|(i, r)| json!({"index": i, "address": address(&net, 'q', 1000 + i as u64), "used": r.received > 0,
+                                 "receivedSat": r.received.to_string(), "receivedBtc": btc_of(r.received), "label": r.label}))
+            .collect();
+        let unused = rows.iter().filter(|r| r["used"] == false).count();
+        json!({"ok": true, "addresses": rows, "unused": unused, "gapLimit": gap})
+    }
+
+    /// `{ index, label }`: trimmed, at most 64 characters, "" removes it; refused as the core refuses it.
+    pub fn set_address_label(&mut self, params: &str) -> Value {
+        if !self.open() {
+            return json!({"ok": false, "error": "no wallet is open"});
+        }
+        let p: Value = serde_json::from_str(params).unwrap_or(Value::Null);
+        let (Some(index), Some(label)) = (p["index"].as_u64(), p["label"].as_str()) else {
+            return json!({"ok": false, "code": "invalid", "error": "set_address_label takes { index, label }"});
+        };
+        let label = label.trim().to_string();
+        if label.chars().count() > MAX_LABEL_CHARS {
+            return json!({"ok": false, "error": "a label is at most 64 characters"});
+        }
+        if label.chars().any(char::is_control) {
+            return json!({"ok": false, "error": "a label can't hold control characters"});
+        }
+        let Some(row) = self.revealed_mut().get_mut(index as usize) else {
+            return json!({"ok": false, "error": format!("no receive address #{index} yet")});
+        };
+        row.label = label.clone();
+        json!({"ok": true, "index": index, "label": label})
     }
 
     pub fn address_valid(&self, text: &str) -> Value {
@@ -2017,6 +2075,44 @@ mod tests {
         sim.open_wallet(r#"{"family":"bitcoin","group":"g_fixture2"}"#, t, &mut ev);
         run(&mut sim, t, 10);
         assert_eq!(sim.receive_address(), json!({"ok": true, "address": address("testnet4", 'q', 1000), "index": 0, "fresh": false, "unused": 20, "gapLimit": 20}));
+    }
+
+    #[test]
+    fn the_receive_list_counts_what_receive_address_counts() {
+        let (mut sim, t) = opened("signet");
+        sim.current_address();
+        sim.receive_address();
+        let l = sim.receive_addresses();
+        assert_eq!((l["unused"].clone(), l["gapLimit"].clone()), (json!(2), json!(20)));
+        assert_eq!(l["addresses"][1], json!({"index": 1, "address": address("signet", 'q', 1001), "used": false,
+                                              "receivedSat": "0", "receivedBtc": btc_of(0), "label": ""}));
+        let mut ev = vec![];
+        sim.close_wallet(t, &mut ev);
+        let t = run(&mut sim, t, 4);
+        sim.set_active_network("testnet4");
+        let t = run(&mut sim, t, 1);
+        sim.open_wallet(r#"{"family":"bitcoin","group":"g_fixture"}"#, t, &mut ev);
+        run(&mut sim, t, 10);
+        let l = sim.receive_addresses();
+        let rows = l["addresses"].as_array().unwrap();
+        assert_eq!((rows.len(), l["unused"].clone()), (22, json!(20)), "20 unused, then two paid");
+        assert_eq!((rows[20]["used"].clone(), rows[20]["receivedSat"].clone(), rows[21]["receivedSat"].clone()), (json!(true), json!("125000000"), json!("80000")));
+        assert_eq!(sim.current_address()["index"], 0, "the first unused one, not the newest");
+        assert_eq!(sim.receive_address()["unused"], l["unused"], "the gap stops at the same count");
+    }
+
+    #[test]
+    fn a_label_is_checked_as_the_core_checks_it() {
+        let (mut sim, _) = opened("signet");
+        sim.current_address();
+        assert_eq!(sim.set_address_label(r#"{"index":0,"label":"  Rent from Ana "}"#), json!({"ok": true, "index": 0, "label": "Rent from Ana"}));
+        assert_eq!(sim.receive_addresses()["addresses"][0]["label"], "Rent from Ana");
+        assert_eq!(sim.set_address_label(r#"{"index":1,"label":"x"}"#)["error"], "no receive address #1 yet");
+        assert_eq!(sim.set_address_label(&json!({"index": 0, "label": "é".repeat(65)}).to_string())["error"], "a label is at most 64 characters");
+        assert_eq!(sim.set_address_label(r#"{"index":0,"label":"two\nlines"}"#)["error"], "a label can't hold control characters");
+        assert_eq!(sim.set_address_label(r#"{"index":0}"#)["code"], "invalid");
+        assert_eq!(sim.set_address_label(r#"{"index":0,"label":" "}"#)["label"], "", "blank removes it");
+        assert_eq!(sim.receive_addresses()["addresses"][0]["label"], "");
     }
 
     #[test]

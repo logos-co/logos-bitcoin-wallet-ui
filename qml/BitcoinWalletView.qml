@@ -211,6 +211,35 @@ Item {
     }
     // New address at the gap limit hands back the first unused one: { unused, gapLimit }.
     readonly property var receiveGap: receive.gap && typeof receive.gap === "object" ? receive.gap : null
+    // Every receive address revealed, newest first; change addresses are never listed.
+    readonly property bool addressesRead: ready && backend.addressesJson !== ""
+    readonly property var addressesInfo: addressesRead ? j(backend.addressesJson, "{}") : ({})
+    readonly property var addressRows: (Array.isArray(addressesInfo.addresses) ? addressesInfo.addresses.slice() : [])
+                                       .sort(function (a, b) { return b.index - a.index })
+    readonly property var unusedRows: addressRows.filter(function (r) { return r.used !== true })
+    readonly property var usedRows: addressRows.filter(function (r) { return r.used === true })
+    readonly property int unusedCount: addressesRead ? (isNum(addressesInfo.unused) ? Number(addressesInfo.unused) : unusedRows.length)
+                                                     : receiveGap && isNum(receiveGap.unused) ? Number(receiveGap.unused) : -1
+    readonly property int gapShown: isNum(addressesInfo.gapLimit) ? Number(addressesInfo.gapLimit)
+                                    : receiveGap && isNum(receiveGap.gapLimit) ? Number(receiveGap.gapLimit)
+                                    : isNum(status.gapLimit) ? Number(status.gapLimit) : 0
+    // As many unused as the gap limit: New address would only hand one of them back.
+    readonly property bool atGap: unusedCount >= 0 && gapShown > 0 && unusedCount >= gapShown
+    property bool showUsed: false
+    property int labelIndex: -1
+    property string labelDraft: ""
+    property string labelNote: ""
+    function addressState(r) {
+        if (r.used === true) return isNum(r.receivedSat) && Number(r.receivedSat) > 0 ? "Received " + btcOf(r.receivedSat) + " BTC" : "Used"
+        return r.index === receive.index ? "Shown" : "Unused"
+    }
+    function editLabel(r) { root.labelNote = ""; root.labelDraft = r.label || ""; root.labelIndex = r.index }
+    function saveLabel(index, text) {
+        root.labelNote = ""
+        logos.watch(backend.setAddressLabel(index, text),
+                    function (e) { if (e) root.labelNote = e; else root.labelIndex = -1 },
+                    function () { root.labelNote = "The wallet backend did not answer." })
+    }
 
     // ---- sources ----
     readonly property bool sourcesRead: ready && backend.sourcesJson !== ""
@@ -642,6 +671,8 @@ Item {
         root.shownDescriptors = null
         root.closeSheets()
         root.openTx = ""
+        root.labelIndex = -1
+        root.showUsed = false
         root.recipientCheck = ({})
         if (sendTo.text.trim() !== "") recipientCheckTimer.restart()
         if (root.walletOpen) root.selectTab(0)
@@ -3085,10 +3116,6 @@ Item {
                     }
                     LogosText { visible: root.isNum(root.receive.index); color: Theme.palette.textTertiary; font.pixelSize: 12
                                 textFormat: Text.PlainText; text: "Receive address #" + root.receive.index }
-                    LogosText { objectName: "receiveGapNote"; visible: !!root.receiveGap; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                textFormat: Text.PlainText; color: Theme.palette.warning
-                                text: root.receiveGap ? "You already have " + root.receiveGap.unused + " unused addresses. This one is shown until one "
-                                                        + "receives coins; raise the gap limit in Settings for more." : "" }
                     RowLayout {
                         Layout.fillWidth: true
                         LogosText { text: "Ask for an amount (BTC, optional)"; color: Theme.palette.textSecondary }
@@ -3111,12 +3138,37 @@ Item {
                         copyText: root.receive.uri || ""
                         onCopied: root.notify("Payment request copied", "")
                     }
-                    LogosButton {
-                        objectName: "newAddressButton"
-                        text: "New address"
-                        enabled: root.ready && root.walletOpen
-                        onClicked: backend.newAddress()
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacing.small
+                        LogosButton {
+                            objectName: "newAddressButton"
+                            visible: !root.atGap
+                            text: "New address"
+                            enabled: root.ready && root.walletOpen
+                            onClicked: backend.newAddress()
+                        }
+                        LogosText { objectName: "receiveAtGapNote"; visible: root.atGap; Layout.fillWidth: true; Layout.maximumWidth: implicitWidth; wrapMode: Text.Wrap
+                                    textFormat: Text.PlainText; color: Theme.palette.warning
+                                    text: "Pay into one of these first, or raise the gap limit in Settings." }
+                        LogosText { objectName: "receiveUnusedCount"; visible: root.unusedCount >= 0 && root.gapShown > 0
+                                    textFormat: Text.PlainText; color: Theme.palette.textSecondary
+                                    text: root.unusedCount + " of " + root.gapShown + " unused" }
+                        Item { Layout.fillWidth: true }
                     }
+                    LogosText { objectName: "receiveListTitle"; visible: root.addressesRead; text: "Your receive addresses"; font.pixelSize: 15
+                                font.weight: Theme.typography.weightBold; Layout.topMargin: Theme.spacing.medium }
+                    Repeater { model: root.unusedRows; AddressRow {} }
+                    LogosButton {
+                        objectName: "showUsedButton"
+                        visible: root.usedRows.length > 0
+                        text: root.showUsed ? "Hide used" : "Show used (" + root.usedRows.length + ")"
+                        onClicked: root.showUsed = !root.showUsed
+                    }
+                    LogosText { objectName: "usedNote"; visible: root.showUsed && root.usedRows.length > 0; Layout.fillWidth: true
+                                wrapMode: Text.Wrap; textFormat: Text.PlainText; color: Theme.palette.textSecondary; font.pixelSize: 12
+                                text: "Reusing an address that was paid links your payments to each other on-chain." }
+                    Repeater { model: root.showUsed ? root.usedRows : []; AddressRow {} }
                 }
             }
 
@@ -3361,6 +3413,60 @@ Item {
                         color: Theme.palette.textSecondary; text: row.note }
             ColumnLayout { id: extraHolder; Layout.fillWidth: true; spacing: Theme.spacing.tiny }
         }
+    }
+
+    // A receive address on Receive; used ones dimmed. The label editor opens in place.
+    component AddressRow: ColumnLayout {
+        id: addrRow
+        required property var modelData
+        readonly property int idx: modelData.index
+        readonly property bool shown: modelData.used !== true && idx === root.receive.index
+        readonly property bool editing: root.labelIndex === idx
+        objectName: "receiveRow_" + idx
+        Layout.fillWidth: true
+        spacing: Theme.spacing.tiny
+        opacity: modelData.used === true ? 0.6 : 1
+        onEditingChanged: if (editing) { labelField.text = root.labelDraft; labelField.textInput.forceActiveFocus() }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacing.small
+            LogosText { objectName: "receiveRowIndex_" + addrRow.idx; textFormat: Text.PlainText; font.pixelSize: 12
+                        color: Theme.palette.textTertiary; text: "#" + addrRow.idx }
+            LogosText { objectName: "receiveRowLabel_" + addrRow.idx; textFormat: Text.PlainText; Layout.preferredWidth: 150
+                        elide: Text.ElideRight; color: addrRow.modelData.label ? Theme.palette.text : Theme.palette.textTertiary
+                        text: addrRow.modelData.label || "No label" }
+            LogosText { objectName: "receiveRowAddress_" + addrRow.idx; textFormat: Text.PlainText; font.pixelSize: 12
+                        Layout.fillWidth: true; Layout.preferredWidth: 1; elide: Text.ElideMiddle; text: addrRow.modelData.address || "" }
+            LogosText { objectName: "receiveRowState_" + addrRow.idx; textFormat: Text.PlainText; font.pixelSize: 12
+                        color: addrRow.shown ? Theme.palette.success : Theme.palette.textSecondary; text: root.addressState(addrRow.modelData) }
+            LogosButton { objectName: "receiveRowShow_" + addrRow.idx; visible: addrRow.modelData.used !== true && !addrRow.shown
+                          compact: true; text: "Show"; enabled: root.ready && root.walletOpen; onClicked: backend.showAddress(addrRow.idx) }
+            LogosCopyButton { objectName: "receiveRowCopy_" + addrRow.idx; value: addrRow.modelData.address || ""
+                              onCopied: root.notify("Address copied", "") }
+            LogosButton { objectName: "receiveRowLabelButton_" + addrRow.idx; visible: !addrRow.editing; compact: true; text: "Label"
+                          enabled: root.ready && root.walletOpen; onClicked: root.editLabel(addrRow.modelData) }
+        }
+        RowLayout {
+            objectName: "labelEditor_" + addrRow.idx
+            visible: addrRow.editing
+            Layout.fillWidth: true
+            spacing: Theme.spacing.small
+            LogosTextField {
+                id: labelField
+                objectName: "labelField_" + addrRow.idx
+                Layout.fillWidth: true
+                placeholderText: "Who or what it is for"
+                onTextChanged: if (addrRow.editing) root.labelDraft = text
+                // A list read again rebuilds the rows: the draft carries over.
+                Component.onCompleted: { textInput.maximumLength = 64; if (addrRow.editing) text = root.labelDraft }
+            }
+            LogosButton { objectName: "saveLabelButton_" + addrRow.idx; compact: true; text: "Save"; variant: LogosButton.Variant.Primary
+                          onClicked: root.saveLabel(addrRow.idx, root.labelDraft) }
+            LogosButton { objectName: "clearLabelButton_" + addrRow.idx; compact: true; text: "Clear"; onClicked: root.saveLabel(addrRow.idx, "") }
+            LogosButton { objectName: "cancelLabelButton_" + addrRow.idx; compact: true; text: "Cancel"; onClicked: root.labelIndex = -1 }
+        }
+        LogosText { objectName: "labelNote_" + addrRow.idx; visible: addrRow.editing && root.labelNote !== ""; Layout.fillWidth: true
+                    wrapMode: Text.Wrap; textFormat: Text.PlainText; color: Theme.palette.error; text: root.labelNote }
     }
 
     // ── QR codes: rectangles from a qrcodegen matrix (the sandbox refuses data: URIs and Canvas) ──

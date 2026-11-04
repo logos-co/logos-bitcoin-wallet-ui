@@ -170,6 +170,8 @@ void BitcoinWalletUiBackend::poll() {
         loadBalances();
         if (due(m_feeAge, feeRatesJson().isEmpty() ? kFeeRetryMs : kFeePollMs)) loadFeeRates();
         if (due(m_exposureAge, kExposurePollMs)) loadExposure();
+        // A list the busy core did not answer at open is asked for again.
+        if (addressesJson().isEmpty()) loadAddresses();
         syncHistory();
     }
     // Until the backend has filled the network's defaults, the list is read again on every tick.
@@ -243,6 +245,7 @@ void BitcoinWalletUiBackend::walletBecameReady() {
     loadExposure();
     // Receive starts on the first unused address: an open reveals none.
     showCurrentAddress();
+    loadAddresses();
 }
 
 // Nothing of a closed wallet may stay on screen for the next one.
@@ -255,6 +258,7 @@ void BitcoinWalletUiBackend::clearWalletReads() {
     m_historyAge.invalidate();
     m_receiveGap = {};
     setReceive({}, -1, {});
+    setAddressesJson({});
     setFeeRatesJson({});
     m_feeAge.invalidate();
     setExposureJson({});
@@ -395,7 +399,10 @@ void BitcoinWalletUiBackend::applyBalances(const QString &reply, quint64 epoch) 
     if (epoch != m_epoch || !walletReady()) return;
     const QJsonObject o = parse(reply);
     if (!o.value("ok").toBool() || o.value("busy").toBool()) return;
+    const QString was = balancesJson();
     setBalancesJson(stripOk(reply));
+    // A payment marks its receive address used.
+    if (!was.isEmpty() && was != balancesJson()) loadAddresses();
 }
 
 void BitcoinWalletUiBackend::refreshHistory() { readHistory(false); }
@@ -768,6 +775,7 @@ void BitcoinWalletUiBackend::newAddress() {
     m_receiveGap = o.value("fresh").toBool(true) ? QJsonObject{}
                                                  : QJsonObject{{"unused", o.value("unused")}, {"gapLimit", o.value("gapLimit")}};
     setReceive(o.value("address").toString(), o.value("index").toInteger(-1), m_receiveAmount);
+    loadAddresses();
 }
 
 void BitcoinWalletUiBackend::showCurrentAddress() {
@@ -777,6 +785,59 @@ void BitcoinWalletUiBackend::showCurrentAddress() {
     const QJsonObject o = parse(r);
     m_receiveGap = {};
     setReceive(o.value("address").toString(), o.value("index").toInteger(-1), m_receiveAmount);
+}
+
+void BitcoinWalletUiBackend::refreshAddresses() { loadAddresses(); }
+
+// The receive addresses by index; a busy core's answer keeps the last list on screen.
+void BitcoinWalletUiBackend::loadAddresses() {
+    if (!walletReady()) return;
+    const quint64 seq = begin(m_addressesRead);
+    if (!seq) return;
+    const quint64 epoch = m_epoch;
+    modules().bitcoin_wallet_backend.receive_addressesAsync([this, seq, epoch](QString r) {
+        QTimer::singleShot(0, this, [this, seq, epoch, r] {
+            if (!finish(m_addressesRead, seq)) return;
+            const QJsonObject o = parse(r);
+            if (epoch == m_epoch && walletReady() && o.value("ok").toBool() && !o.value("busy").toBool())
+                setAddressesJson(stripOk(r));
+            if (m_addressesRead.again) loadAddresses();
+        });
+    });
+}
+
+// The row shows its new label at once; the read after confirms it.
+QString BitcoinWalletUiBackend::setAddressLabel(int index, QString label) {
+    if (!walletReady()) return QStringLiteral("no wallet is open");
+    const QJsonObject params{{"index", index}, {"label", label}};
+    const QJsonObject o = parse(modules().bitcoin_wallet_backend.set_address_label(compact(params)));
+    if (!o.value("ok").toBool()) return errorOf(o);
+    QJsonObject list = parse(addressesJson());
+    QJsonArray rows = list.value("addresses").toArray();
+    for (qsizetype i = 0; i < rows.size(); ++i) {
+        QJsonObject row = rows.at(i).toObject();
+        if (row.value("index").toInteger() != index) continue;
+        row.insert("label", o.value("label"));
+        rows.replace(i, row);
+    }
+    if (!list.isEmpty()) {
+        list.insert("addresses", rows);
+        setAddressesJson(compact(list));
+    }
+    loadAddresses();
+    return {};
+}
+
+// Only an unused address is shown again: a paid one would link the payments.
+void BitcoinWalletUiBackend::showAddress(int index) {
+    if (!walletReady()) return;
+    for (const QJsonValue &v : parse(addressesJson()).value("addresses").toArray()) {
+        const QJsonObject row = v.toObject();
+        if (row.value("index").toInteger() != index || row.value("used").toBool()) continue;
+        m_receiveGap = {};
+        setReceive(row.value("address").toString(), index, m_receiveAmount);
+        return;
+    }
 }
 
 void BitcoinWalletUiBackend::setReceiveAmount(QString amountBtc) {
@@ -878,6 +939,7 @@ void BitcoinWalletUiBackend::pollJobs() {
                 g.insert("code", st.value("code").toString());
             }
             setGapLimitJson(compact(g));
+            loadAddresses();
         } else if (job.kind == "birthday") {
             // Said in the birthday sheet, beside the date it refused.
             QJsonObject b = st.value("result").toObject();

@@ -159,9 +159,18 @@ and each open allowed in the Signer app, and every send is approved there.
     refusal must not leave the form wedged.
 - **Receive:** a fresh address per request, with a BIP21 QR (an optional amount goes in the URI)
   drawn as rectangles. Copy the address or the payment request. An open shows the first unused
-  address (`current_address`) and reveals none. New address at the gap limit (`fresh` false) keeps
-  showing the first unused one and says so: "You already have N unused addresses…", with the gap
-  limit setting as the way to more.
+  address (`current_address`) and reveals none. Beside New address, "N of G unused" counts the
+  unused addresses against the gap limit; once they reach it, "Pay into one of these first, or
+  raise the gap limit in Settings." takes the button's place.
+  - "Your receive addresses" (`receive_addresses`, read at open, after New address, after a label
+    change and when the balances change; never change addresses) lists them newest first: `#index`,
+    the label or "No label", the address shortened in the middle, and Unused, Shown (the one on
+    screen) or "Received X BTC". Show puts an unused one and its QR on screen, keeping the amount.
+  - Label opens an editor in the row: Save, Clear or Cancel, 64 characters at most
+    (`set_address_label`). The label stays in the wallet's encrypted database, and a refusal is
+    said under the field.
+  - Addresses already paid wait behind "Show used (N)", dimmed, with a note that reusing one links
+    your payments.
 - **Activity:** one row per transaction saying what it was for: "−X · fee F", "X to yourself ·
   fee F", "N coins combined · fee F", "Fee raised to F" and "+X". Each shows its state, and an
   unconfirmed send has Speed up (`request_fee_bump`). Details list the addresses paid, what it
@@ -263,8 +272,9 @@ are a SLOT's return value, shown on Settings and dropped when it is left.
 by `dependency_overrides` in `metadata.json`: the generated client comes from it, so the app builds
 without the backend's repository. Replace it with the backend's `nix build .#lidl` output when its
 interface changes; this copy is from logos-bitcoin-wallet-backend 95b8f0c, plus `set_tor_use` and
-`torUse`/`torUseChosen` in `sources()` and `source_health()`, and `fee_rates`' signet floor
-(logos-co/logos-bitcoin-wallet-backend#10), ahead of the backend's release.
+`torUse`/`torUseChosen` in `sources()` and `source_health()`, `fee_rates`' signet floor
+(logos-co/logos-bitcoin-wallet-backend#10), and `receive_addresses` and `set_address_label` as the
+backend's `feat/receive-address-labels` generates them, ahead of the backend's release.
 `contracts/signer_manager_module.lidl` supplies the account-read API (`accounts`, `roster`) and
 the `accounts_changed` event; only public identity fields are copied into the view's account roster.
 This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, roster).
@@ -294,7 +304,8 @@ wallet will not hold on demand, then renders the view against a fake backend; th
 first-run choice (shown only while not chosen and no wallet is open, fresh versus existing
 preselection, the mode Continue sends, your own node storing `identifying`), the sheet's one
 decision (your own node leaving the public switches alone, public sources bringing them back, the
-address deciding Tor) and the Settings choice locked while an account is open.
+address deciding Tor), the Settings choice locked while an account is open, and Receive's list: the
+unused count, the gap note in New address's place, the label editor and the used toggle.
 
 Two doctests open the app in Basecamp's standalone mode, offscreen:
 
@@ -310,7 +321,8 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   deciding the chain on testnet4, and a coin past the 20-address gap limit that a small send spends
   and a gap limit of 30 takes into the balance. Each open shows last session's chain as connecting for
   its first 4 s, and the first open on a network then reads the chain's headers for 4 s; reopens show the first unused address again; testnet4's wallet already holds 20 unused
-  ones, so New address there says so; Kyoto on testnet4 has no fee estimate and the Electrum server's
+  ones and two paid after them, so the gap note takes New address's place there; labels are checked
+  as the core checks them; Kyoto on testnet4 has no fee estimate and the Electrum server's
   under Kyoto on signet is a quiet network's. An amount below the address's dust limit keeps Review off. A send's
   fate is picked by its amount; the header of `sim.rs` says how.
 - `real-backend-open.test.yaml` runs against the real backend, wallet core, node module, signer
