@@ -4,7 +4,7 @@ project_name: logos-bitcoin-wallet-ui-e2e
 intro: |
   The wallet app in the full Basecamp bundle, not standalone mode, beside the real keys app
   (evm_keystore_ui f3fdc18) and signer app (evm_signer_ui 05cf10b), with keystore_module 1f3d62f,
-  signer_manager_module d2548c6, bitcoin_wallet_backend 5ccc2b1, bitcoin_wallet_core_module 98f5081
+  signer_manager_module d2548c6, bitcoin_wallet_backend 5ccc2b1, bitcoin_wallet_core_module 35f09b2
   and bitcoin_node_module c879cd4. Opens and sends go through Basecamp's intents, and every send
   is approved, rejected or left unapproved in the signer app as a person would. The chain is the
   Electrum servers' headers here; basecamp-e2e-kyoto and basecamp-e2e-node run Kyoto and the
@@ -42,8 +42,8 @@ sections:
           b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
           b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
           b backend 'github:logos-co/logos-bitcoin-wallet-backend/5ccc2b15c5fc1f632fa8ee1bbb613681ced0edee#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/98f50817967ad041b661157c97cefe37f6fa84ca#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/98f50817967ad041b661157c97cefe37f6fa84ca#regtest-chain'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/35f09b25aa2e2c47cb4922c751efe4a0e7f70eff#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/35f09b25aa2e2c47cb4922c751efe4a0e7f70eff#regtest-chain'
           b node 'github:logos-co/logos-bitcoin-node-module/c879cd42224f94a36c3c24f97ea8e284a74ea302#install-portable'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
           ls e2e/build
