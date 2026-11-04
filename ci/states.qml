@@ -937,6 +937,13 @@ Item {
             expect("...no payments before they confirm until a server is picked", prop("pendingSwitch", "checked"), false)
             var sets = function (from) { return fake.calls.filter(function (c) { return c[0] === "setSource" }).slice(from) }
             var before = fake.count("setSource")
+            expect("Use your node offered at the top", shown("useOwnNodeButton") + " " + shown("ownNodeInUse"), "true false")
+            find(view.item, "useOwnNodeButton", 0).clicked()
+            expect("...the same as its radio: on, then Kyoto off", sets(before),
+                   [["setSource", "local", JSON.stringify({ use: true })], ["setSource", "kyoto", JSON.stringify({ use: false })]])
+            expect("...then gone, with nothing left to add", shown("useOwnNodeButton") + " " + shown("ownNodeFinish"), "false false")
+            v.chainPicked = ""
+            before = fake.count("setSource")
             find(view.item, "chainChoice_node", 0).clicked()
             expect("Your node, in Logos: on, then Kyoto off", sets(before),
                    [["setSource", "local", JSON.stringify({ use: true })], ["setSource", "kyoto", JSON.stringify({ use: false })]])
@@ -1795,6 +1802,18 @@ Item {
             expect("identifying: which Tor shows", shownAny("ownTorSwitch") && shownAny("manageTorLink"), true)
             expect("...and what goes where", prop("privacyLine", "text").indexOf("Block headers and filters come straight from Bitcoin nodes; "
                    + "what identifies you goes through Tor, which comes with Logos"), 0)
+            var vis = function (n) { return findAll(view.item, n, 0, []).filter(function (o) { return o.visible })[0] || null }
+            var ys = ["ownNodeOption", "torUse_all", "torUse_identifying", "torUse_none"].map(function (n) {
+                var o = vis(n); return o ? Math.round(o.mapToItem(null, 0, 0).y) : -1 })
+            expect("most private first: your own node, then Everything to Nothing",
+                   ys.every(function (y, i) { return y >= 0 && (i === 0 || y > ys[i - 1]) }) ? "in order" : JSON.stringify(ys), "in order")
+            expect("...and the chain's choices too", v.chainOptions.map(function (o) { return o.mode }), ["node", "peers", "electrum"])
+            expect("...with its benefits and costs", [vis("ownNodeBenefits"), vis("ownNodeCosts")].every(function (o) { return o !== null }), true)
+            vis("openNodeAppButton").clicked()
+            var asked = logos.requests[logos.requests.length - 1]
+            expect("Open Bitcoin Node raises bitcoin.node.configure", asked.intent + " " + asked.params.network, "bitcoin.node.configure regtest")
+            logos.lastCallback({ ok: false, error: "unavailable" })
+            expect("...and says when the app is missing", vis("nodeAppNote") ? vis("nodeAppNote").text : "", "The Bitcoin Node app is not installed.")
             all.clicked()
             expect("Settings sends the mode", fake.last("setTorUse"), ["setTorUse", "all"])
         },

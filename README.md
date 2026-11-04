@@ -7,9 +7,9 @@ holds no key material: wallets are created and restored in the keys app, each wa
 and each open allowed in the Signer app, and every send is approved there.
 
 - **Use Tor for, asked once:** while the node module's `torUseChosen` is false, the app shows this
-  choice in place of the account start, before any account is opened. Each option, Only what
-  identifies you (`identifying`), Everything (`all`) and Nothing (`none`), says what happens, its
-  pros and its cons. The node module's current `torUse` is preselected: a fresh install's
+  choice in place of the account start, before any account is opened. Each option, most private
+  first, Everything (`all`), Only what identifies you (`identifying`) and Nothing (`none`), says
+  what happens, its pros and its cons. The node module's current `torUse` is preselected: a fresh install's
   `identifying`, tagged Recommended, or an existing install's routing, tagged Current, so Continue
   never weakens it. Continue sends `set_tor_use(mode)`; a refusal shows on the screen, and once
   it is taken the account start appears and the screen does not come back. A node module without
@@ -167,8 +167,10 @@ and each open allowed in the Signer app, and every send is approved there.
     rescans from its birthday and downloads more, and an enabled history server is asked about
     more addresses. The rescan shows on Home as a birthday's does; refusals (`invalid`, `busy`)
     are said in plain words.
-  - **Network privacy**, above the sources: **Use Tor for**, the first run's three options
-    (`set_tor_use`), each with its text behind "What this means". It changes only while no
+  - **Network privacy**, above the sources, most private first. **Run your own node** comes first,
+    with its benefits and costs, **Open Bitcoin Node…** (`bitcoin.node.configure`) and **Use your
+    node**, which makes the same calls as Your node under Where the chain comes from. Then **Use
+    Tor for**, the first run's three options (`set_tor_use`), each with its text behind "What this means". It changes only while no
     account is open: with one open, opening or closing the options are off, with "Close your
     open accounts to change this." Then which Tor: the one that comes with Logos (the node
     module's default, `set_proxy("tor")`), with its state badge, join progress, what stops it,
@@ -177,8 +179,8 @@ and each open allowed in the Signer app, and every send is approved there.
     what identifies you, so it is hidden under Nothing. The info button says what Tor, its absence
     and a server on your own network each reveal.
   - The sources follow, as three questions, then Advanced settings. No list of roles is shown.
-  - **Where the chain comes from**: one choice of **Bitcoin peers** (the default), **Your node**
-    or **Electrum servers**, read from what is switched on (local or RPC, else Kyoto, else every
+  - **Where the chain comes from**: one choice, most private first, of **Your node**, **Bitcoin
+    peers** (the default) or **Electrum servers**, read from what is switched on (local or RPC, else Kyoto, else every
     Electrum server, as the node module routes the chain). Picking one makes the `set_source`
     calls that make it so, one after another: Bitcoin peers turns Kyoto on and your node off;
     Your node turns the other node off first (the node module allows one), then the chosen one on,
@@ -249,8 +251,8 @@ This copy is logos-signer-manager-module cd661b5's `nix build .#lidl` (#11, rost
 ## Intents
 
 The app **uses** `evm.accounts.manage` (Keystore account management), `wallets.unlock` (the Signer
-app: unlock a wallet, allow an open), `evm.signing.approve` (the signer app) and `tor.manage` (the
-Tor app). Their answers are advisory: `wallet_status` and
+app: unlock a wallet, allow an open), `evm.signing.approve` (the signer app), `tor.manage` (the
+Tor app) and `bitcoin.node.configure` (the Bitcoin Node app). Their answers are advisory: `wallet_status` and
 `send_status` settle what happened. `unavailable` is shown with what to do by hand.
 
 ## Checks

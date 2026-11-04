@@ -38,6 +38,10 @@
     {
       "intent": "tor.manage",
       "cardinality": "single"
+    },
+    {
+      "intent": "bitcoin.node.configure",
+      "cardinality": "single"
     }
   ],
   "codegen": {

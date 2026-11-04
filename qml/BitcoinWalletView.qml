@@ -259,6 +259,7 @@ Item {
     // "Use my own Tor" opened, before an address is saved.
     property bool ownTorOpen: false
     property string torNote: ""
+    property string nodeAppNote: ""
     // A failed server probe can explain why Kyoto is peerless too: both use this proxy.
     // Match a proxy connection failure, not a remote server refusing or timing out over Tor.
     readonly property var torFailureSource: sourceList.find(function (s) {
@@ -282,10 +283,11 @@ Item {
     // The radio the user picked stays while its sources are not on yet, such as a node not added.
     property string chainPicked: ""
     readonly property string chainChoice: !networkLocked && chainPicked !== "" ? chainPicked : chainMode
+    // Most private first.
     readonly property var chainOptions: [
+        { mode: "node", label: "Your node", note: "Bitcoin Core, in Logos or at an address. It checks the chain and finds your payments itself." },
         { mode: "peers", label: "Bitcoin peers",
           note: "The default. Block filters from Bitcoin peers: your payments are found on this device, and no server learns your addresses." },
-        { mode: "node", label: "Your node", note: "Bitcoin Core, in Logos or at an address. It checks the chain and finds your payments itself." },
         { mode: "electrum", label: "Electrum servers",
           note: "The servers switched on under Fees send the chain's headers, checked here. Pick servers run by different people." }
     ]
@@ -309,7 +311,8 @@ Item {
     onNetworkLockedChanged: { networkNote = ""; ownTorOpen = false }
 
     // ---- "Use Tor for": the node module's all, identifying or none, asked once before any account ----
-    readonly property var torUseModes: ["identifying", "all", "none"]
+    // Most private first; identifying stays the default.
+    readonly property var torUseModes: ["all", "identifying", "none"]
     readonly property string torUse: {
         var m = sourcesInfo.torUse !== undefined ? sourcesInfo.torUse : health.torUse
         return torUseModes.indexOf(m) >= 0 ? m : ""
@@ -1146,6 +1149,15 @@ Item {
                                                         : "That request did not go through (" + res.error + ")."
         })
     }
+    // The node in Logos has its own app.
+    function manageNode() {
+        root.nodeAppNote = ""
+        logos.request("bitcoin.node.configure", ({ network: root.sourcesNetwork || root.activeNetwork }), function (res) {
+            if (res.ok || res.error === "cancelled") return
+            root.nodeAppNote = res.error === "unavailable" ? "The Bitcoin Node app is not installed."
+                                                           : "That request did not go through (" + res.error + ")."
+        })
+    }
     function alertTitle(a) {
         if (a.kind === "suspect") return "A source is suspect"
         if (a.kind === "authority_behind") return "Your wallet may be behind"
@@ -1764,6 +1776,52 @@ Item {
             }
             LogosText { objectName: "torNote"; visible: text !== ""; Layout.fillWidth: true; textFormat: Text.PlainText
                         wrapMode: Text.Wrap; color: Theme.palette.error; text: root.torNote }
+            // Most private first: your own node, then Use Tor for from Everything to Nothing.
+            ColumnLayout {
+                objectName: "ownNodeOption"
+                Layout.fillWidth: true
+                Layout.bottomMargin: Theme.spacing.small
+                spacing: Theme.spacing.tiny
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.small
+                    LogosText { text: "Run your own node"; font.weight: Theme.typography.weightBold }
+                    LogosBadge { text: "Most private"; color: Theme.palette.success }
+                    LogosBadge { objectName: "ownNodeInUse"; visible: root.chainMode === "node"; text: "In use"; color: Theme.palette.textSecondary }
+                    Item { Layout.fillWidth: true }
+                }
+                LogosText {
+                    objectName: "ownNodeBenefits"
+                    Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.StyledText; color: Theme.palette.textSecondary
+                    text: "<b>Benefits:</b> the wallet asks only your Bitcoin Core, in Logos or at an address. It checks the "
+                          + "chain and finds your payments itself, and gives fees and pending payments, so no peer or server "
+                          + "learns your addresses or balance. Other nodes see only that this computer runs a node; the Bitcoin "
+                          + "Node app can connect it over Tor."
+                }
+                LogosText {
+                    objectName: "ownNodeCosts"
+                    Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.StyledText; color: Theme.palette.textSecondary
+                    text: "<b>Costs:</b> about 30 GB of disk when pruned, after a first sync that downloads every block, over "
+                          + "770 GB, and takes hours to days. It must be running and synced whenever you use the wallet. A pruned "
+                          + "node can't find payments in blocks it no longer keeps, and without block filters restores are slow."
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.small
+                    LogosButton { objectName: "openNodeAppButton"; text: "Open Bitcoin Node…"; enabled: root.ready; onClicked: root.manageNode() }
+                    LogosButton { objectName: "useOwnNodeButton"; text: "Use your node"
+                                  visible: root.chainChoice !== "node" && !root.networkLocked && root.sourceList.length > 0
+                                  enabled: root.ready; onClicked: root.chooseChain("node") }
+                    // No node to turn on yet: one at an address is added below.
+                    LogosText { id: ownNodeFinish; objectName: "ownNodeFinish"
+                                visible: root.chainChoice === "node" && root.chainMode !== "node" && !root.nodeTarget()
+                                Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
+                                text: "Add your node under Where the chain comes from, below." }
+                    Item { Layout.fillWidth: true; visible: !ownNodeFinish.visible }
+                }
+                LogosText { objectName: "nodeAppNote"; visible: text !== ""; Layout.fillWidth: true; textFormat: Text.PlainText
+                            wrapMode: Text.Wrap; color: Theme.palette.error; text: root.nodeAppNote }
+            }
             // The first-run choice, changed here only while no account is open. Absent from an older node module.
             ColumnLayout {
                 id: torUseSettings
