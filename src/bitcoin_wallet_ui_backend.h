@@ -37,6 +37,9 @@ public:
     QString abandonSend(QString txid) override;
 
     void newAddress() override;
+    void refreshAddresses() override;
+    QString setAddressLabel(int index, QString label) override;
+    void showAddress(int index) override;
     void setReceiveAmount(QString amountBtc) override;
     QString addressValid(QString text) override;
     void refreshHistory() override;
@@ -103,6 +106,7 @@ private:
     void loadExposure();
     void addAlert(const QString &payload);
     void setReceive(const QString &address, qint64 index, const QString &amount);
+    void loadAddresses();
     void showCurrentAddress();
     QString qrModulesJson(const QString &text) const;
 
@@ -126,7 +130,7 @@ private:
     Read m_accountsRead;
     QElapsedTimer m_accountsAge;
     Read m_statusRead, m_walletsRead, m_balanceRead, m_historyRead, m_feeRead;
-    Read m_sourcesRead, m_healthRead, m_exposureRead, m_sendRead;
+    Read m_sourcesRead, m_healthRead, m_exposureRead, m_sendRead, m_addressesRead;
     QElapsedTimer m_feeAge, m_sourcesAge, m_healthAge, m_exposureAge, m_historyAge, m_readySince;
     QList<Job> m_jobs;
     // The person withdrew an open still waiting in the keys app: its failure is no error.

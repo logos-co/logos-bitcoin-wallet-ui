@@ -1,5 +1,6 @@
 //! A stand-in for `bitcoin_wallet_backend` in the wallet app's doctest. The trait is the real
-//! backend's (logos-bitcoin-wallet-backend 95b8f0c), so the contract matches; behind it, sim.rs.
+//! backend's (logos-bitcoin-wallet-backend 95b8f0c, with receive_addresses and set_address_label), so the
+//! contract matches; behind it, sim.rs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -60,6 +61,13 @@ pub trait BitcoinWalletBackendModule: Send + Sync + 'static {
     fn receive_address(&self) -> String;
     /// `{ ok, address, index }`: the first unused receive address, revealed only when none is.
     fn current_address(&self) -> String;
+    /// CUSTODIAN. The open wallet's revealed receive addresses, by index: `{ ok, addresses: [{ index, address,
+    /// used, receivedSat, receivedBtc, label }], unused, gapLimit }`; `unused` counts the rows not used, as
+    /// receive_address does. Never change addresses. `{ ok, busy }` while the core is busy.
+    fn receive_addresses(&self) -> String;
+    /// CUSTODIAN. `{ index, label }` for a revealed receive address: at most 64 characters, trimmed, "" removes
+    /// it; the core keeps it in the wallet's encrypted database. `{ ok, index, label }`.
+    fn set_address_label(&self, params_json: String) -> String;
     /// `{ ok, fast, normal, slow, minimum, sources, estimated }` in sat/vB, or `{ ok: false, error }` until
     /// every level has an estimate.
     fn fee_rates(&self) -> String;
@@ -261,6 +269,14 @@ impl BitcoinWalletBackendModule for BitcoinWalletBackendModuleImpl {
 
     fn current_address(&self) -> String {
         self.with(|s, _, _| s.current_address())
+    }
+
+    fn receive_addresses(&self) -> String {
+        self.gated(|s, _, _| s.receive_addresses())
+    }
+
+    fn set_address_label(&self, params_json: String) -> String {
+        self.gated(|s, _, _| s.set_address_label(&params_json))
     }
 
     fn fee_rates(&self) -> String {

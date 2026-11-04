@@ -37,6 +37,9 @@ class BitcoinWalletUi
     // { unused, gapLimit } when New address met the gap limit and showed the first unused one.
     PROP(QString receiveJson="" READONLY)
     PROP(QString receiveQrJson="" READONLY)
+    // receive_addresses() without ok: { addresses: [{ index, address, used, receivedSat, receivedBtc,
+    // label }], unused, gapLimit? }, by index; never a change address. Empty until read.
+    PROP(QString addressesJson="" READONLY)
     // fee_rates(): { fast, normal, slow, minimum, sources, estimated } in sat/vB; empty with no estimate.
     PROP(QString feeRatesJson="" READONLY)
     // peer_list({ network }) without ok: counts, the signed list, ownPeers, usable, route, kyotoTor.
@@ -91,6 +94,11 @@ class BitcoinWalletUi
 
     // ---- receiving and activity ----
     SLOT(void newAddress())
+    SLOT(void refreshAddresses())
+    // A label for a listed receive address, at most 64 characters; "" removes it. "" or the refusal.
+    SLOT(QString setAddressLabel(int index, QString label))
+    // Shows an unused listed address and its QR in place of the one on screen, keeping the amount.
+    SLOT(void showAddress(int index))
     // Puts an amount in the BIP21 URI and its QR; empty for none.
     SLOT(void setReceiveAmount(QString amountBtc))
     // address_valid(): { ok, valid, address, type, amountSat?, reason? }

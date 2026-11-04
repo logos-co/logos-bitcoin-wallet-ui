@@ -39,6 +39,9 @@ Item {
         property int historyPage: 0
         property string receiveJson: ""
         property string receiveQrJson: ""
+        property string addressesJson: ""
+        // What setAddressLabel answers: "" saves it, as the backend patches the row.
+        property string addressLabelReply: ""
         property string feeRatesJson: ""
         property string sourcesJson: ""
         property string healthJson: ""
@@ -81,6 +84,16 @@ Item {
             return JSON.stringify({ ok: true, jobId: "j9", requestId: "s2", txid: t, note: "Abandoned: its coins are free to spend again." })
         }
         function newAddress() { note("newAddress", []) }
+        function refreshAddresses() { note("refreshAddresses", []) }
+        function showAddress(i) { note("showAddress", [i]) }
+        function setAddressLabel(i, l) {
+            note("setAddressLabel", [i, l])
+            if (addressLabelReply !== "") return addressLabelReply
+            var o = JSON.parse(addressesJson || "{}")
+            o.addresses = (o.addresses || []).map(function (r) { if (r.index === i) r.label = l.trim(); return r })
+            addressesJson = JSON.stringify(o)
+            return ""
+        }
         function setReceiveAmount(a) { note("setReceiveAmount", [a]) }
         function addressValid(t) {
             if (t.indexOf("bcrt1q") === 0) return JSON.stringify({ ok: true, valid: true, address: t, type: "p2wpkh", dustSat: "294" })
@@ -704,15 +717,97 @@ Item {
             fake.receiveJson = JSON.stringify({ address: "bcrt1qfirst", index: 0, uri: "bitcoin:bcrt1qfirst", amount: "", gap: { unused: 20, gapLimit: 20 } })
         },
         function (v) {
-            expect("New address at the gap limit says so", prop("receiveGapNote", "text"),
-                   "You already have 20 unused addresses. This one is shown until one receives coins; raise the gap limit in Settings for more.")
+            expect("New address at the gap limit, before the list is read: said in the button's place", prop("receiveAtGapNote", "text"),
+                   "Pay into one of these first, or raise the gap limit in Settings.")
+            expect("...no button", shown("newAddressButton"), false)
+            expect("...the count beside it", prop("receiveUnusedCount", "text"), "20 of 20 unused")
             expect("...and shows the first unused one", prop("receiveAddress", "text"), "bcrt1qfirst")
+            fake.receiveJson = JSON.stringify({ address: "bcrt1qfirst", index: 0, uri: "bitcoin:bcrt1qfirst", amount: "" })
+            fake.addressesJson = JSON.stringify({ unused: 2, gapLimit: 20, addresses: [
+                { index: 0, address: "bcrt1qfirst", used: false, receivedSat: "0", receivedBtc: "0.00000000", label: "" },
+                { index: 1, address: "bcrt1qsecond", used: false, receivedSat: "0", receivedBtc: "0.00000000", label: "Rent from Ana" },
+                { index: 2, address: "bcrt1qpaid", used: true, receivedSat: "125000000", receivedBtc: "1.25000000", label: "Salary" }] })
+        },
+        function (v) {
+            expect("the list read: New address back", shown("newAddressButton") && !shown("receiveAtGapNote"), true)
+            expect("...the count from it", prop("receiveUnusedCount", "text"), "2 of 20 unused")
+            expect("the list's title", shown("receiveListTitle"), true)
+            expect("the one on screen is Shown", prop("receiveRowState_0", "text"), "Shown")
+            expect("...with no Show", shown("receiveRowShow_0"), false)
+            expect("another unused one", prop("receiveRowState_1", "text"), "Unused")
+            expect("...offers Show", shown("receiveRowShow_1"), true)
+            expect("a label", prop("receiveRowLabel_1", "text"), "Rent from Ana")
+            expect("...or none", prop("receiveRowLabel_0", "text"), "No label")
+            expect("the index", prop("receiveRowIndex_1", "text"), "#1")
+            expect("the address, shortened in the middle", prop("receiveRowAddress_1", "elide"), Text.ElideMiddle)
+            expect("copy carries the address", prop("receiveRowCopy_1", "value"), "bcrt1qsecond")
+            expect("used rows wait behind the toggle", find(view.item, "receiveRow_2", 0), null)
+            expect("...which counts them", prop("showUsedButton", "text"), "Show used (1)")
+            expect("...no reuse note yet", shown("usedNote"), false)
+            find(view.item, "receiveRowShow_1", 0).clicked()
+            expect("Show asks for that address", fake.last("showAddress"), ["showAddress", 1])
             find(view.item, "newAddressButton", 0).clicked()
             expect("New address asks the backend", fake.count("newAddress"), 1)
+            find(view.item, "showUsedButton", 0).clicked()
+        },
+        function (v) {
+            expect("newest first", prop("receiveRow_1", "y") < prop("receiveRow_0", "y"), true)
+            expect("the toggle, open", prop("showUsedButton", "text"), "Hide used")
+            expect("...the reuse note", prop("usedNote", "text"), "Reusing an address that was paid links your payments to each other on-chain.")
+            expect("a used row says what it received", prop("receiveRowState_2", "text"), "Received 1.25 BTC")
+            expect("...dimmed", prop("receiveRow_2", "opacity") < 1, true)
+            expect("...below the toggle", prop("receiveRow_2", "y") > prop("showUsedButton", "y"), true)
+            expect("...never offered to show again", shown("receiveRowShow_2"), false)
+            expect("no editor open", shown("labelEditor_0") || shown("labelEditor_1"), false)
+            find(view.item, "receiveRowLabelButton_0", 0).clicked()
+        },
+        function (v) {
+            expect("Label opens its editor in the row", shown("labelEditor_0"), true)
+            expect("...only that row's", shown("labelEditor_1"), false)
+            expect("...empty for an unlabelled one", prop("labelField_0", "text"), "")
+            expect("...64 characters at most", find(view.item, "labelField_0", 0).textInput.maximumLength, 64)
+            find(view.item, "labelField_0", 0).text = " Savings jar "
+            find(view.item, "saveLabelButton_0", 0).clicked()
+            expect("Save sends the label", fake.last("setAddressLabel"), ["setAddressLabel", 0, " Savings jar "])
+        },
+        function (v) {
+            expect("saved: the editor closes", shown("labelEditor_0"), false)
+            expect("...and the row shows it", prop("receiveRowLabel_0", "text"), "Savings jar")
+            fake.addressLabelReply = "a label is at most 64 characters"
+            find(view.item, "receiveRowLabelButton_1", 0).clicked()
+        },
+        function (v) {
+            expect("the editor starts from the label", prop("labelField_1", "text"), "Rent from Ana")
+            find(view.item, "saveLabelButton_1", 0).clicked()
+        },
+        function (v) {
+            expect("a refusal is said in the editor", prop("labelNote_1", "text"), "a label is at most 64 characters")
+            expect("...which stays open", shown("labelEditor_1") && shown("labelNote_1"), true)
+            fake.addressLabelReply = ""
+            find(view.item, "clearLabelButton_1", 0).clicked()
+            expect("Clear sends no label", fake.last("setAddressLabel"), ["setAddressLabel", 1, ""])
+        },
+        function (v) {
+            expect("cleared", prop("receiveRowLabel_1", "text"), "No label")
+            expect("...the editor closed", shown("labelEditor_1"), false)
+            var n = fake.count("setAddressLabel")
+            find(view.item, "receiveRowLabelButton_0", 0).clicked()
+            find(view.item, "cancelLabelButton_0", 0).clicked()
+            expect("Cancel closes it and saves nothing", [shown("labelEditor_0"), fake.count("setAddressLabel")], [false, n])
+            var rows = []
+            for (var i = 0; i < 20; i++) rows.push({ index: i, address: "bcrt1qunused" + i, used: false, receivedSat: "0", receivedBtc: "0.00000000", label: "" })
+            fake.addressesJson = JSON.stringify({ unused: 20, gapLimit: 20, addresses: rows })
+        },
+        function (v) {
+            expect("the list at the gap limit: said in the button's place", shown("receiveAtGapNote") && !shown("newAddressButton"), true)
+            expect("...the count", prop("receiveUnusedCount", "text"), "20 of 20 unused")
+            expect("...no used toggle without used rows", shown("showUsedButton"), false)
+            fake.addressesJson = ""
             fake.receiveJson = JSON.stringify({ address: "bcrt1qnext", index: 1, uri: "bitcoin:bcrt1qnext", amount: "" })
         },
         function (v) {
-            expect("a fresh one: no note", shown("receiveGapNote"), false)
+            expect("a fresh one: no note", shown("receiveAtGapNote"), false)
+            expect("...no count before the list is read", shown("receiveUnusedCount"), false)
             v.selectTab(1)
             find(view.item, "sendRecipientField", 0).text = "bcrt1qrecipient"
             v.checkRecipient()
