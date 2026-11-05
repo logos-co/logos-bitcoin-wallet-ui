@@ -18,17 +18,17 @@ sections:
           mkdir -p e2e/build
           b() { nix build "$2" --no-write-lock-file -o "e2e/build/$1"; }
           b basecamp 'github:logos-co/logos-basecamp/0b5cd2ee6c6dd83c6a5022fbb30e1778e6a61da9#bin-bundle-dir-inspector'
-          b keystore 'github:logos-co/logos-evm-keystore-module/1f3d62f306f0e4dc7e5d96d478f9770ab3713ce6#install-portable'
-          b manager 'github:logos-co/logos-signer-manager-module/9be21c3aeaa68ba915d36bfb67b5ed563585b9b7#install-portable'
-          b keys 'github:logos-co/logos-evm-keystore-ui/f3fdc18f382887905c761312098203506e357c75#install-portable'
-          b signer 'github:logos-co/logos-evm-signer-ui/05cf10b2039dd33da1134736280952274b3fc385#install-portable'
-          b backend 'github:logos-co/logos-bitcoin-wallet-backend/4cfc5a03ee9ecd0325db83f212385bc18939495f#install-portable'
-          b core 'github:logos-co/logos-bitcoin-wallet-core-module/289828a1a4050f0d2e89cd0b759a326abade0e60#install-portable'
-          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/289828a1a4050f0d2e89cd0b759a326abade0e60#regtest-chain'
-          b node 'github:logos-co/logos-bitcoin-node-module/c879cd42224f94a36c3c24f97ea8e284a74ea302#install-portable'
+          b keystore 'github:logos-co/logos-evm-keystore-module/e83a899a1718ed52e3173dc85d06b15b9c68f41a#install-portable'
+          b manager 'github:logos-co/logos-signer-manager-module/bd5c84d21ced71246c4bf44d137aa1c597496fb0#install-portable'
+          b keys 'github:logos-co/logos-evm-keystore-ui/e272145c61e537c01632f03120a6e70fc5d22a9b#install-portable'
+          b signer 'github:logos-co/logos-evm-signer-ui/d3cf9bbb2381c2a703ce8ccdf83ec265ca693506#install-portable'
+          b backend 'github:logos-co/logos-bitcoin-wallet-backend/7ce6e503cd65116d39b536c67751fa7f1a889773#install-portable'
+          b core 'github:logos-co/logos-bitcoin-wallet-core-module/c356d2662d363554e35e49660b6badf05cf2c09f#install-portable'
+          b chain 'github:logos-co/logos-bitcoin-wallet-core-module/c356d2662d363554e35e49660b6badf05cf2c09f#regtest-chain'
+          b node 'github:logos-co/logos-bitcoin-node-module/56e4bda1c3e37df409e71177cf11ac1825dd488b#install-portable'
           b wallet "git+file://${E2E_REPO:?run this spec through doctests/run.sh}#install-portable"
-          b bitcoind 'github:logos-co/logos-bitcoind-module/1b7ee77707524885ee94d2f3113127ce5a6f4057#install-portable'
-          b bitcoindui 'github:logos-co/logos-bitcoind-ui/9ca43fae3e0495bd84b9bceba04c9a2d5f20dc74#install-portable'
+          b bitcoind 'github:logos-co/logos-bitcoind-module/56a7997a258c8520be3c40aea5cf51299cd31684#install-portable'
+          b bitcoindui 'github:logos-co/logos-bitcoind-ui/e3766cfca1012e07ecc5c7d080b54b5c9fc8f8c3#install-portable'
           ls e2e/build
         expect_contains: ["basecamp", "keystore", "manager", "keys", "signer", "backend", "core", "chain", "node", "wallet", "bitcoind", "bitcoindui"]
       - title: "On Windows, the same builds cross-built and staged under e2e/build; the chain runs on its host"
