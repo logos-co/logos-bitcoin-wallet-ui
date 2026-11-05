@@ -1,7 +1,7 @@
 {
   "name": "bitcoin_wallet_ui",
   "display_name": "Bitcoin Wallet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "ui_qml",
   "interface": "universal",
   "category": "wallet",
@@ -11,8 +11,8 @@
   "icon": "src/icons/bitcoin_wallet.png",
   "view": "qml/BitcoinWalletView.qml",
   "dependencies": [
-    "bitcoin_wallet_backend",
-    "signer_manager_module"
+    { "name": "bitcoin_wallet_backend", "version": "~0.2.0" },
+    { "name": "signer_manager_module", "version": "~0.2.0" }
   ],
   "dependency_overrides": {
     "bitcoin_wallet_backend": {

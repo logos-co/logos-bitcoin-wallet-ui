@@ -1,5 +1,5 @@
 module signer_manager_module {
-  version "0.1.0"
+  version "0.2.0"
   depends []
 
   method configure(config_json: tstr) -> tstr description "Name the roles and the signer modules consulted: `{ approvers?, custodians?, signers? }` →\n`{ ok, approvers, custodians, signers }`. TOTAL — what the document doesn't name is held by\nnobody — and effective at once. UNGATED for now, as keystore_module's: see docs/specs.md."
