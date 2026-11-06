@@ -2069,6 +2069,21 @@ Item {
             expect("...the mode unchanged", prop("torUse_none", "checked"), true)
             fake.torUseReply = ""
             v.closeSheets()
+        },
+        function (v) {
+            // A short window: the Node sheet scrolls, and its bar must leave the right-aligned "i" clear.
+            fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
+            scene.height = 560
+            find(view.item, "networkSheet", 0).open()
+        },
+        function (v) {
+            var sv = find(view.item, "networkSheet", 0).contentItem
+            var info = findAll(view.item, "privacyInfo", 0, []).filter(function (o) { return o.visible })[0]
+            expect("a short window: the Node sheet scrolls", sv.effectiveScrollBarWidth > 0, true)
+            expect("...and its bar leaves the info button clear",
+                   info ? Math.round(info.mapToItem(sv, info.width, 0).x) <= sv.width - sv.effectiveScrollBarWidth : "<no privacyInfo>", true)
+            v.closeSheets()
+            scene.height = 900
         }
     ]
     property int step: 0

@@ -2142,7 +2142,7 @@ Item {
                         clip: true
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                         ColumnLayout {
-                            width: sourceHelpScroll.availableWidth
+                            width: sourceHelpScroll.availableWidth - sourceHelpScroll.effectiveScrollBarWidth
                             spacing: Theme.spacing.large
                             Repeater {
                                 model: [
@@ -2720,7 +2720,7 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: homeScroll.availableWidth
+                    width: homeScroll.availableWidth - homeScroll.effectiveScrollBarWidth
                     spacing: Theme.spacing.medium
 
                     LogosStatCard {
@@ -2916,7 +2916,7 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: sendScroll.availableWidth
+                    width: sendScroll.availableWidth - sendScroll.effectiveScrollBarWidth
                     spacing: Theme.spacing.small
 
                     LogosText {
@@ -3062,7 +3062,7 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: receiveScroll.availableWidth
+                    width: receiveScroll.availableWidth - receiveScroll.effectiveScrollBarWidth
                     spacing: Theme.spacing.small
                     LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
                                 text: "A new address for each payment you ask for: every one pays into this wallet, and using each "
@@ -3252,7 +3252,7 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: settingsScroll.availableWidth
+                    width: settingsScroll.availableWidth - settingsScroll.effectiveScrollBarWidth
                     spacing: Theme.spacing.small
 
                     LogosText { text: "Wallet"; font.pixelSize: 16 }
@@ -3506,7 +3506,7 @@ Item {
             implicitHeight: Math.min(reviewCol.implicitHeight, Math.max(200, root.height - 240))
             ColumnLayout {
                 id: reviewCol
-                width: reviewScroll.availableWidth
+                width: reviewScroll.availableWidth - reviewScroll.effectiveScrollBarWidth
                 spacing: Theme.spacing.small
 
                 // ---- before the request ----
@@ -3887,8 +3887,9 @@ Item {
             contentWidth: availableWidth
             implicitHeight: Math.min(networkSheetLoader.implicitHeight, Math.max(200, root.height - 200))
             Loader {
+                // Less the bar: it is drawn over the content and would take clicks meant for the right edge.
                 id: networkSheetLoader
-                width: networkSheetScroll.availableWidth
+                width: networkSheetScroll.availableWidth - networkSheetScroll.effectiveScrollBarWidth
                 active: networkSheet.visible
                 sourceComponent: networkPane
             }
