@@ -141,7 +141,7 @@ Item {
         if (!root.canOpenAccount(a) || root.busy || root.accountLocked) return
         root.selectedAccountId = a.id
     }
-    readonly property bool canOpenSelectedAccount: ready && statusRead && !busy && !accountLocked
+    readonly property bool canOpenSelectedAccount: ready && statusRead && !busy && !accountLocked && !nodeSetupNeeded
         && status.unavailable !== true && backend.accountsError === "" && canOpenAccount(selectedAccount)
     // The wallet keeps each account's birthday itself: an account's first open on a network asks for it.
     function openedBefore(id) { return root.walletsOnNetwork.some(function (w) { return w.group === id }) }
@@ -342,7 +342,7 @@ Item {
     property string networkNoteAt: ""
     onNetworkLockedChanged: { networkNote = ""; ownTorOpen = false }
 
-    // ---- "Use Tor for": the node module's all, identifying or none, asked per network before any account ----
+    // ---- "Use Tor for": the node module's all, identifying or none, saved per network in Node before any account ----
     // Most private first; identifying stays the default.
     readonly property var torUseModes: ["all", "identifying", "none"]
     readonly property string torUse: {
@@ -351,36 +351,24 @@ Item {
     }
     // True only from a node module that keeps the choice and has not been given it yet.
     readonly property bool torUseUnchosen: (sourcesInfo.torUseChosen !== undefined ? sourcesInfo.torUseChosen : health.torUseChosen) === false
-    // Continue was answered: the account start shows before the reads catch up. Each network asks anew.
+    // Saved in Node: accounts open before the reads catch up. Each network asks anew.
     property bool torUseAnswered: false
-    onActiveNetworkChanged: { torUseAnswered = false; torChoice = ""; startChoice = "public"; torUseStartNote = "" }
+    onActiveNetworkChanged: { torUseAnswered = false; nodeSetupNote = "" }
     // The network the shown setting belongs to.
     readonly property string torUseNetwork: sourcesInfo.network || activeNetwork
-    // In place of the account start; never while a wallet is open, opening or closing.
-    readonly property bool torChoiceShown: statusRead && torUseUnchosen && !torUseAnswered && !networkLocked
-    // The first-run screen's top choice, public sources until picked.
-    property string startChoice: "public"
-    // Picked on the first-run screen; until then the node's current routing, so Continue never weakens it.
-    property string torChoice: ""
-    readonly property string torChoiceMode: torChoice !== "" ? torChoice : (torUse !== "" ? torUse : "identifying")
+    // Opening waits for Node to be saved; never while a wallet is open, opening or closing.
+    readonly property bool nodeSetupNeeded: statusRead && torUseUnchosen && !torUseAnswered && !networkLocked
     property bool torUseSending: false
-    property string torUseStartNote: ""
-    // The first-run screen and the Node sheet share these words, as the Monero and Zcash wallets do.
-    readonly property string torUseIntro: "Your own node is the most private. Public sources are run by other people. "
-                                          + "You can change this later under Node, while no account is open."
-    function torUseNetworkLine(asked) {
-        var n = root.torUseNetwork || "this network"
-        return asked ? "For " + n + ". Each network has its own setting, asked the first time you use it."
-                     : "For " + n + ". Each network has its own."
-    }
+    property string nodeSetupNote: ""
+    // The Node sheet's words, shared with the Monero and Zcash wallets.
+    readonly property string torUseIntro: "Your own node is the most private. Public sources are run by other people."
+    function torUseNetworkLine() { return "For " + (root.torUseNetwork || "this network") + ". Each network has its own setting." }
     readonly property string ownNodeSummary: "Bitcoin Core, in Logos or at an address."
     readonly property string ownNodeNote: "<b>Benefits:</b> the wallet asks only your node, for the chain, your payments, fees and "
                                           + "payments before they confirm, so no one else learns your addresses or balance. "
                                           + "<b>Costs:</b> about 30 GB of disk when pruned, over 770 GB when not, a first sync of "
                                           + "hours to days, and it must be running whenever you use the wallet. A pruned node asks its "
                                           + "peers for old blocks that hold your payments, so those peers learn which blocks they are."
-    readonly property string ownNodeNext: "Continue opens Node, where you pick the node in Logos or one at an address. Until "
-                                          + "one is set up, the wallet uses public sources."
     readonly property string publicSummary: "Bitcoin nodes and servers run by other people. By default Bitcoin peers, which learn "
                                             + "none of your addresses, only which blocks the wallet fetches."
     readonly property string torUseTorIntro: "Tor hides your IP address, which can reveal where you are, from public sources, but "
@@ -438,23 +426,20 @@ Item {
         }
     })
     function torUseCopyOf(mode, source) { return (source === "electrum" ? root.torUseElectrumCopy : root.torUseCopy)[mode] || ({}) }
-    // Your own node still stores the recommended mode, for a later switch to public sources.
-    function continueTorUse() {
-        var node = root.startChoice === "node"
-        root.torUseStartNote = ""
+    // Save keeps the checked mode, so a network's first save never weakens an existing routing.
+    function saveNodeSetup() {
+        root.nodeSetupNote = ""
         root.torUseSending = true
-        logos.watch(backend.setTorUse(node ? "identifying" : root.torChoiceMode),
+        logos.watch(backend.setTorUse(root.torUse !== "" ? root.torUse : "identifying"),
                     function (e) {
                         root.torUseSending = false
-                        if (e) { root.torUseStartNote = e; return }
+                        if (e) { root.nodeSetupNote = e; return }
                         root.torUseAnswered = true
-                        if (!node) return
-                        root.chooseChain("node")
-                        networkSheet.open()
+                        networkSheet.close()
                     },
                     function () {
                         root.torUseSending = false
-                        root.torUseStartNote = "The wallet backend did not answer."
+                        root.nodeSetupNote = "The wallet backend did not answer."
                     })
     }
     // While Kyoto's matched blocks wait for their Tor errands: nothing goes direct meanwhile.
@@ -1836,8 +1821,6 @@ Item {
         property bool checked: false
         // "peers" or "electrum": the descriptions fit the public source chosen.
         property string source: "peers"
-        // The first-run screen tags the node's current routing; Settings shows it checked.
-        property bool withCurrent: false
         signal picked()
         readonly property var copy: root.torUseCopyOf(mode, source)
         Layout.fillWidth: true
@@ -1849,9 +1832,6 @@ Item {
                                text: option.copy.label || ""; onClicked: option.picked() }
             LogosBadge { objectName: option.prefix + "recommended_" + option.mode; visible: option.mode === "identifying"
                          text: "Recommended"; color: Theme.palette.success }
-            LogosBadge { objectName: option.prefix + "current_" + option.mode
-                         visible: option.withCurrent && option.mode === root.torUse && option.mode !== "identifying"
-                         text: "Current"; color: Theme.palette.textSecondary }
             Item { Layout.fillWidth: true }
         }
         Repeater {
@@ -1992,7 +1972,24 @@ Item {
                 }
             }
             LogosText { objectName: "chainNetworkLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                        color: Theme.palette.textSecondary; text: root.torUseNetworkLine(false) }
+                        color: Theme.palette.textSecondary; text: root.torUseNetworkLine() }
+            LogosText { objectName: "torUseIntro"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        color: Theme.palette.textSecondary; text: root.torUseIntro }
+            LogosNotice {
+                objectName: "nodeSetupSheetNotice"
+                Layout.fillWidth: true
+                shown: root.nodeSetupNeeded
+                title: "Not saved for " + (root.torUseNetwork || "this network") + " yet"
+                message: "Accounts open on " + (root.torUseNetwork || "this network") + " once you save. Check where the "
+                         + "wallet gets the chain and what to use Tor for, then press Save."
+            }
+            LogosNotice {
+                objectName: "nodeSetupNote"
+                Layout.fillWidth: true
+                severity: LogosNotice.Error
+                shown: root.nodeSetupNote !== ""
+                message: root.nodeSetupNote
+            }
             LogosNotice {
                 objectName: "sourcesNote"
                 Layout.fillWidth: true
@@ -2203,7 +2200,7 @@ Item {
                                  + root.chainOperators[0] + " runs them all: nothing checks them. Turn on Bitcoin peers, or a server run by someone else."
                 }
 
-                // The first-run choice, changed here only while no account is open. Absent from an older node module.
+                // Changed only while no account is open. Absent from an older node module.
                 ColumnLayout {
                     id: torUseSettings
                     objectName: "torUseSettings"
@@ -2222,7 +2219,10 @@ Item {
                             source: root.publicMode === "electrum" ? "electrum" : "peers"
                             checked: root.torUse === modelData
                             enabled: root.ready && !root.networkLocked
-                            onPicked: { if (modelData !== root.torUse) root.networkCall(backend.setTorUse(modelData), "torUse") }
+                            onPicked: {
+                                if (modelData !== root.torUse)
+                                    root.networkCall(backend.setTorUse(modelData), "torUse", null, function () { root.torUseAnswered = true })
+                            }
                         }
                     }
                     LogosText { objectName: "torUseEveryMode"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
@@ -2420,14 +2420,14 @@ Item {
         Accounts.LockedBanner {
             namePrefix: "accounts"
             Layout.fillWidth: true
-            visible: root.ready && shown && !root.torChoiceShown
+            visible: root.ready && shown
             wallets: root.signerWallets
             onUnlock: function (seeds) { root.unlockWallets(seeds) }
         }
 
         RowLayout {
             objectName: "accountSelectorRow"
-            visible: root.ready && !root.torChoiceShown
+            visible: root.ready
             Layout.fillWidth: true
             spacing: Theme.spacing.small
             // The account kit's picker: one row per account, with the wallet it comes from and every
@@ -2470,11 +2470,11 @@ Item {
             }
             Item { Layout.fillWidth: true }
         }
-        LogosText { objectName: "deviceAbsentNote"; visible: text !== "" && !root.torChoiceShown; Layout.fillWidth: true; wrapMode: Text.Wrap
+        LogosText { objectName: "deviceAbsentNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.deviceAbsent(root.selectedAccount)
                           ? root.deviceName(root.selectedAccount) + " not connected · you can view this wallet; sending needs the device" : "" }
-        LogosText { objectName: "deviceReasonLine"; visible: text !== "" && !root.torChoiceShown; Layout.fillWidth: true; wrapMode: Text.Wrap
+        LogosText { objectName: "deviceReasonLine"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.reasonLine(root.selectedAccount) }
         LogosText { objectName: "accountLockedNote"; visible: root.walletOpen; Layout.fillWidth: true; wrapMode: Text.Wrap
@@ -2482,7 +2482,7 @@ Item {
                     text: "Close this wallet to open another." }
         LogosText { objectName: "accountsErrorLine"; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.warning
-                    visible: root.ready && backend.accountsError !== "" && !root.torChoiceShown
+                    visible: root.ready && backend.accountsError !== ""
                     text: root.ready ? backend.accountsError : "" }
 
         LogosText {
@@ -2617,7 +2617,7 @@ Item {
         // ================= NO WALLET OPEN =================
         ColumnLayout {
             objectName: "openPage"
-            visible: root.ready && !root.walletOpen && !root.torChoiceShown
+            visible: root.ready && !root.walletOpen
             Layout.fillWidth: true; Layout.fillHeight: true
             spacing: Theme.spacing.small
 
@@ -2625,6 +2625,17 @@ Item {
                 Layout.fillWidth: true
                 LogosText { text: "Choose an account"; font.pixelSize: 22 }
                 Item { Layout.fillWidth: true }
+            }
+            // A network's first visit: Node is the one place this is set, and accounts wait for it.
+            LogosNotice {
+                objectName: "nodeSetupNotice"
+                Layout.fillWidth: true
+                shown: root.nodeSetupNeeded
+                title: "Set up Node for " + (root.torUseNetwork || "this network")
+                message: "Before an account opens on " + (root.torUseNetwork || "this network") + ", choose where the wallet "
+                         + "gets Bitcoin's chain and what to use Tor for. Each network has its own setting."
+                actions: [ LogosButton { objectName: "nodeSetupButton"; text: "Open Node"; variant: LogosButton.Variant.Primary
+                                         enabled: root.ready; onClicked: networkSheet.open() } ]
             }
 
             // While the person decides in the Signer app.
@@ -2673,92 +2684,6 @@ Item {
             }
             // Holds the page at the top while the form is hidden.
             Item { visible: root.opening; Layout.fillHeight: true }
-        }
-
-        // ================= FIRST RUN: where the chain comes from, and Tor for public sources, asked per network =================
-        // The Node sheet's top part, in the same words and order.
-        ScrollView {
-            id: torUseScroll
-            objectName: "torUsePage"
-            visible: root.ready && root.torChoiceShown
-            Layout.fillWidth: true; Layout.fillHeight: true
-            clip: true
-            contentWidth: availableWidth
-            ColumnLayout {
-                width: torUseScroll.availableWidth
-                spacing: Theme.spacing.medium
-                LogosText { text: "Where the wallet gets Bitcoin's chain"; font.pixelSize: 22 }
-                LogosText { objectName: "torUseNetworkLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                            text: root.torUseNetworkLine(true) }
-                LogosText { objectName: "torUseIntro"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            text: root.torUseIntro }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacing.small
-                    LogosRadioButton { objectName: "startChoice_node"; checkable: false; checked: root.startChoice === "node"
-                                       enabled: !root.torUseSending; text: "Your own node"; onClicked: root.startChoice = "node" }
-                    LogosBadge { text: "Most private"; color: Theme.palette.success }
-                    Item { Layout.fillWidth: true }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 28
-                    spacing: Theme.spacing.small
-                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary; text: root.ownNodeSummary }
-                    LogosText { objectName: "startNodeNote"; visible: root.startChoice === "node"; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                textFormat: Text.StyledText; color: Theme.palette.textSecondary; text: root.ownNodeNote }
-                    LogosText { objectName: "startNodeNext"; visible: root.startChoice === "node"; Layout.fillWidth: true; wrapMode: Text.Wrap
-                                color: Theme.palette.textSecondary; text: root.ownNodeNext }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    LogosRadioButton { objectName: "startChoice_public"; checkable: false; checked: root.startChoice === "public"
-                                       enabled: !root.torUseSending; text: "Public sources"; onClicked: root.startChoice = "public" }
-                    Item { Layout.fillWidth: true }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 28
-                    spacing: Theme.spacing.small
-                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary; text: root.publicSummary }
-                    ColumnLayout {
-                        objectName: "startTorUse"
-                        visible: root.startChoice === "public"
-                        Layout.fillWidth: true
-                        Layout.topMargin: Theme.spacing.small
-                        spacing: Theme.spacing.small
-                        LogosText { text: "Use Tor for"; font.weight: Theme.typography.weightBold }
-                        LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary; text: root.torUseTorIntro }
-                        Repeater {
-                            model: root.torUseModes
-                            TorUseOption {
-                                required property string modelData
-                                prefix: "torUseStart_"
-                                mode: modelData
-                                checked: root.torChoiceMode === modelData
-                                withCurrent: true
-                                enabled: !root.torUseSending
-                                onPicked: root.torChoice = modelData
-                            }
-                        }
-                        LogosText { objectName: "torUseStartEveryMode"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12
-                                    color: Theme.palette.textTertiary; text: root.torUseEveryMode }
-                    }
-                }
-                LogosText { objectName: "torUseStartNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                            textFormat: Text.PlainText; color: Theme.palette.error; text: root.torUseStartNote }
-                RowLayout {
-                    Layout.fillWidth: true
-                    Item { Layout.fillWidth: true }
-                    LogosButton {
-                        objectName: "torUseContinue"
-                        text: root.torUseSending ? "Saving…" : "Continue"
-                        variant: LogosButton.Variant.Primary
-                        enabled: root.ready && !root.torUseSending
-                        onClicked: root.continueTorUse()
-                    }
-                }
-            }
         }
 
         // ================= A WALLET IS OPEN =================
@@ -3960,6 +3885,13 @@ Item {
                 sourceComponent: networkPane
             }
         }
-        rightActions: [ LogosButton { objectName: "networkSheetDone"; text: "Done"; onClicked: networkSheet.close() } ]
+        // On a network's first visit, Save stores the checked choice; accounts open after it.
+        rightActions: [ LogosButton {
+            objectName: "networkSheetDone"
+            text: !root.nodeSetupNeeded ? "Done" : root.torUseSending ? "Saving…" : "Save"
+            variant: root.nodeSetupNeeded ? LogosButton.Variant.Primary : LogosButton.Variant.Secondary
+            enabled: !root.nodeSetupNeeded || (root.ready && !root.torUseSending)
+            onClicked: root.nodeSetupNeeded ? root.saveNodeSetup() : networkSheet.close()
+        } ]
     }
 }

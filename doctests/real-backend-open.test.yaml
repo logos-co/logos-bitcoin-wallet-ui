@@ -264,10 +264,10 @@ sections:
               find_value: "ownPeersNote"
               property: "visible"
               value: false
-            - name: "Close the sheet"
+            - name: "Close the sheet with its button: Save on the network's first visit, Done after"
               action: call_method
-              find_value: "bitcoinWalletRoot"
-              method: "closeSheets"
+              find_value: "networkSheetDone"
+              method: "clicked"
               args: []
             - name: "The sheet is closed"
               action: expect_property

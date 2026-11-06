@@ -6,20 +6,15 @@ from `signer_manager_module`. It takes no signing password and
 holds no key material: wallets are created and restored in the keys app, each wallet is unlocked
 and each open allowed in the Signer app, and every send is approved there.
 
-- **Where the wallet gets Bitcoin's chain, asked per network:** while the node module's
-  `torUseChosen` for the active network is false, the app shows the Node sheet's top choice in
-  place of the account start, before any account is opened there, the first time and again the
-  first time the person switches to another network: "For signet. Each network has its own
-  setting, asked the first time you use it." **Your own node** (Most private) or **Public
-  sources**, preselected, with **Use Tor for** under it, in the Node sheet's words and order. Each Tor option, most private first, Everything (`all`), Only what
-  identifies you (`identifying`) and Nothing (`none`), says what happens, its pros and its cons.
-  The node module's current `torUse` is preselected: a fresh install's `identifying`, tagged
-  Recommended, or an existing install's routing, tagged Current, so Continue never weakens it.
-  Continue sends `set_tor_use(mode)`. With your own node it sends `identifying`, so a later switch
-  to public sources has a sane mode, then turns the node in Logos on and opens Node on it. A
-  refusal shows on the screen; once taken, the account start appears and the screen does not come
-  back on that network. A node module without `torUseChosen` never shows it, nor does an open, opening or closing
-  wallet.
+- **Node first, per network:** while the node module's `torUseChosen` for the active network is
+  false, the account start shows a notice, "Set up Node for signet", with **Open Node**, and Open
+  waits: the first time, and again the first time the person switches to another network. Node is
+  the one place this is set. On that first visit its button reads **Save** and a notice says the
+  network's choice isn't saved yet. Save sends `set_tor_use(mode)` with the checked **Use Tor
+  for**, the node module's current `torUse`: a fresh install's `identifying`, or an existing
+  install's routing, so a first save never weakens it. Picking another mode saves it at once. A
+  refusal shows in the sheet, which stays open. A node module without `torUseChosen` never asks,
+  nor does an open, opening or closing wallet.
 - **Account selector:** [logos-account-kit](https://github.com/logos-co/logos-account-kit)'s
   picker, vendored in `qml/accountkit`, over `signer_manager.roster()`. It lists each Bitcoin and
   Taproot account once, never once per signer, including accounts never opened in this app. Mainnet
@@ -195,7 +190,8 @@ and each open allowed in the Signer app, and every send is approved there.
   - **Where the wallet gets Bitcoin's chain**: one decision, top to bottom. The radio is the
     state, read from what is switched on (your node, else Kyoto, else the Electrum servers); there
     is no Use your node button, In use badge or Use without Tor list. A line names the network it
-    applies to ("For signet. Each network has its own."). The info button says what each choice
+    applies to ("For signet. Each network has its own setting."), then "Your own node is the most
+    private. Public sources are run by other people." The info button says what each choice
     reveals.
   - **Your own node** (Most private), with one Benefits/Costs note. Choosing it turns the chosen
     node on and the other node off, and leaves Kyoto's and the servers' switches as they are: the
@@ -220,7 +216,7 @@ and each open allowed in the Signer app, and every send is approved there.
       **Electrum servers** (faster; servers with History on learn your addresses). Bitcoin peers
       turns Kyoto on, Electrum servers turns it off; the servers keep their switches, for fees.
       The no-chain and one-operator notices sit under the choice.
-    - **Use Tor for**, the first run's three options (`set_tor_use`) for this network, each with what
+    - **Use Tor for**, three options (`set_tor_use`) for this network, each with what
       happens, its pros and its cons, worded for the public source chosen: with Electrum servers,
       Only what identifies you says it works like Everything. Under them, what holds in every mode:
       your own network direct, onion addresses only through Tor, your own node outside Use Tor for.
@@ -309,8 +305,9 @@ SPECS=basecamp-e2e-node OUT=/a/big/disk3 doctests/run.sh                       #
 
 `ci/states.qml` drives the pure sync, send and activity functions through every state a live
 wallet will not hold on demand, then renders the view against a fake backend; that includes the
-first-run choice (shown only while not chosen and no wallet is open, fresh versus existing
-preselection, the mode Continue sends, your own node storing `identifying`), the sheet's one
+Node-first notice (shown only while not chosen and no wallet is open, Open waiting for it, fresh
+versus existing preselection, the mode Save sends, a refusal keeping the sheet open, your own node
+still storing the mode), the sheet's one
 decision (your own node leaving the public switches alone, public sources bringing them back, the
 address deciding Tor), the Settings choice locked while an account is open, and Receive's list: the
 unused count, the gap note in New address's place, the label editor and the used toggle.

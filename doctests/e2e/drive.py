@@ -849,7 +849,8 @@ def node_routes_nothing(ins):
         ins.press("useSwitch_kyoto")
         ins.wait("useSwitch_kyoto", "checked", False, 20, "Kyoto off in the node module")
     passed("the node module routes nothing on regtest, so the core takes regtest.json's sources")
-    ins.call(ROOT, "closeSheets")
+    # On a network's first visit the button is Save, which the account start waits for.
+    ins.press("networkSheetDone")
     ins.wait("networkSheet", "visible", False, 10)
 
 
