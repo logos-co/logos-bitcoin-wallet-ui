@@ -384,9 +384,7 @@ Item {
                   + "with your payments don't see your IP address.",
             cons: "Your internet provider and the nodes you sync from can see that you use Bitcoin. Someone watching both your "
                   + "connection and the Tor side could try to match them by timing; the wallet waits a random time, up to a "
-                  + "minute, before fetching each of those blocks to make that harder. Transactions you send go out at once. "
-                  + "If syncing restarts while one of those blocks is still on its way, the nodes it resumes from directly can "
-                  + "tell roughly which block it is."
+                  + "minute, before fetching each of those blocks to make that harder. Transactions you send go out at once."
         },
         all: {
             label: "Everything",
@@ -1655,6 +1653,7 @@ Item {
                         onClicked: root.setSource(modelData.id, { history: !(modelData.history === true) })
                     }
                     LogosSwitch {
+                        id: torSwitch
                         objectName: "torSwitch_" + modelData.id
                         // Your node's Tor is under its address; a public source's means nothing under Nothing.
                         visible: !root.networkLocked && modelData.kind !== "local" && modelData.kind !== "rpc" && modelData.lan !== true
@@ -1698,6 +1697,12 @@ Item {
                 LogosText { visible: sourceRow.server && modelData.kind !== "rpc"; Layout.fillWidth: true; wrapMode: Text.Wrap
                             font.pixelSize: 12; color: Theme.palette.textTertiary
                             text: "History looks up your payments. Tor is optional and hides your IP, but not your queries." }
+                // Off, the node module routes Kyoto directly with no split: Nothing, whatever Use Tor for says.
+                LogosText { objectName: modelData.kind === "kyoto" ? "kyotoTorNote" : ""
+                            visible: modelData.kind === "kyoto" && torSwitch.visible; Layout.fillWidth: true; wrapMode: Text.Wrap
+                            font.pixelSize: 12; color: Theme.palette.textTertiary
+                            text: "With Tor off, Kyoto takes everything directly, as with Nothing: the blocks with your payments "
+                                  + "and your sends too." }
                 LogosText { objectName: modelData.kind === "kyoto" ? "kyotoConflictLine" : ""
                             visible: modelData.kind === "kyoto" && root.kyotoConflict !== null
                             Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
