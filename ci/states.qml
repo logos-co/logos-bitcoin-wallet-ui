@@ -1905,9 +1905,19 @@ Item {
             expect("the intro", vis("torUseIntro") ? vis("torUseIntro").text : "", v.torUseIntro)
             expect("three options", modes.map(function (m) { return vis("torUse_" + m) ? vis("torUse_" + m).text : "" }),
                    ["Only what identifies you", "Everything", "Nothing"])
-            expect("each says what happens, pros and cons", modes.every(function (m) {
-                return ["happens_", "pros_", "cons_"].every(function (k) { return vis("torUse_" + k + m) !== null }) }), true)
+            expect("each has an i beside it, nothing spelled out under it", modes.map(function (m) {
+                return vis("torUse_info_" + m) !== null && ["happens_", "pros_", "cons_"].every(function (k) {
+                    return find(view.item, "torUse_" + k + m, 0) !== null && vis("torUse_" + k + m) === null }) }), [true, true, true])
+            var noneInfo = vis("torUse_info_none")
+            noneInfo.clicked()
+            expect("the i opens what happens, pros and cons", [noneInfo.opened, noneInfo.title, ["happens_", "pros_", "cons_"].every(function (k) {
+                return vis("torUse_" + k + "none") !== null })], [true, "Nothing", true])
             expect("...in the plan's words", vis("torUse_happens_none").text, "<b>What happens:</b> Every connection is direct; Tor isn't used.")
+            noneInfo.close()
+            expect("the source choices' notes are behind an i too", ["ownNodeInfo", "chainInfo_peers", "chainInfo_electrum"].map(function (n) {
+                return vis(n) !== null }), [true, true, true])
+            expect("...Bitcoin peers' note", prop("chainNote_peers", "text").indexOf("The default. Block filters from Bitcoin peers") === 0
+                   && !shown("chainNote_peers"), true)
             expect("fresh: identifying checked", modes.map(function (m) { return vis("torUse_" + m).checked }), [true, false, false])
             expect("...and Recommended", vis("torUse_recommended_identifying") !== null, true)
             expect("the button saves", prop("networkSheetDone", "text"), "Save")
@@ -2030,7 +2040,8 @@ Item {
             expect("...the public choices, Bitcoin peers first", v.publicOptions.map(function (o) { return o.mode }), ["peers", "electrum"])
             v.chainPicked = "node"
             v.nodePlacePicked = "local"
-            expect("your own node shows one note, once", findAll(view.item, "ownNodeNote", 0, []).filter(function (o) { return o.visible }).length, 1)
+            expect("your own node keeps one note, behind its i", [findAll(view.item, "ownNodeNote", 0, []).length,
+                   findAll(view.item, "ownNodeNote", 0, []).filter(function (o) { return o.visible }).length, vis("ownNodeInfo") !== null], [1, 0, true])
             vis("openNodeAppButton").clicked()
             var asked = logos.requests[logos.requests.length - 1]
             expect("Open Bitcoin Node raises bitcoin.node.configure", asked.intent + " " + asked.params.network, "bitcoin.node.configure regtest")

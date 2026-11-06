@@ -365,7 +365,7 @@ Item {
     function torUseNetworkLine() { return "For " + (root.torUseNetwork || "this network") + ". Each network has its own setting." }
     readonly property string ownNodeSummary: "Bitcoin Core, in Logos or at an address."
     readonly property string ownNodeNote: "<b>Benefits:</b> the wallet asks only your node, for the chain, your payments, fees and "
-                                          + "payments before they confirm, so no one else learns your addresses or balance. "
+                                          + "payments before they confirm, so no one else learns your addresses or balance.<br><br>"
                                           + "<b>Costs:</b> about 30 GB of disk when pruned, over 770 GB when not, a first sync of "
                                           + "hours to days, and it must be running whenever you use the wallet. A pruned node asks its "
                                           + "peers for old blocks that hold your payments, so those peers learn which blocks they are."
@@ -1813,37 +1813,48 @@ Item {
         }
     }
 
-    // One "Use Tor for" option: its label and tags, then what happens, pros and cons.
-    component TorUseOption: ColumnLayout {
+    // An "i" beside a choice; its dialog holds the explanation, one paragraph per line.
+    component ChoiceInfo: LogosInfoButton {
+        id: choiceInfo
+        property var lines: []   // [{ name: objectName, text: StyledText }]
+        dialogContentItem: ColumnLayout {
+            spacing: Theme.spacing.medium
+            Repeater {
+                model: choiceInfo.lines
+                LogosText {
+                    required property var modelData
+                    objectName: modelData.name || ""
+                    Layout.fillWidth: true; Layout.preferredWidth: 1; wrapMode: Text.Wrap; textFormat: Text.StyledText
+                    color: Theme.palette.textSecondary; text: modelData.text || ""
+                }
+            }
+        }
+    }
+
+    // One "Use Tor for" option: its label and tags; what happens, pros and cons behind its "i".
+    component TorUseOption: RowLayout {
         id: option
         property string prefix: ""
         property string mode: ""
         property bool checked: false
+        property bool choosable: true
         // "peers" or "electrum": the descriptions fit the public source chosen.
         property string source: "peers"
         signal picked()
         readonly property var copy: root.torUseCopyOf(mode, source)
         Layout.fillWidth: true
-        spacing: Theme.spacing.tiny
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacing.small
-            LogosRadioButton { objectName: option.prefix + option.mode; checkable: false; checked: option.checked
-                               text: option.copy.label || ""; onClicked: option.picked() }
-            LogosBadge { objectName: option.prefix + "recommended_" + option.mode; visible: option.mode === "identifying"
-                         text: "Recommended"; color: Theme.palette.success }
-            Item { Layout.fillWidth: true }
+        spacing: Theme.spacing.small
+        LogosRadioButton { objectName: option.prefix + option.mode; checkable: false; checked: option.checked
+                           enabled: option.choosable; text: option.copy.label || ""; onClicked: option.picked() }
+        LogosBadge { objectName: option.prefix + "recommended_" + option.mode; visible: option.mode === "identifying"
+                     text: "Recommended"; color: Theme.palette.success }
+        ChoiceInfo {
+            objectName: option.prefix + "info_" + option.mode
+            title: option.copy.label || ""
+            lines: [["What happens", "happens_", option.copy.happens], ["Pros", "pros_", option.copy.pros], ["Cons", "cons_", option.copy.cons]]
+                   .map(function (l) { return { name: option.prefix + l[1] + option.mode, text: "<b>" + l[0] + ":</b> " + (l[2] || "") } })
         }
-        Repeater {
-            model: [["What happens", option.copy.happens], ["Pros", option.copy.pros], ["Cons", option.copy.cons]]
-            LogosText {
-                required property var modelData
-                required property int index
-                objectName: option.prefix + ["happens_", "pros_", "cons_"][index] + option.mode
-                Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.StyledText; color: Theme.palette.textSecondary
-                text: "<b>" + modelData[0] + ":</b> " + (modelData[1] || "")
-            }
-        }
+        Item { Layout.fillWidth: true }
     }
 
     // Which Tor: the one that comes with Logos, with its state, or one you run. Shown only where Tor is used.
@@ -2011,6 +2022,7 @@ Item {
                 LogosRadioButton { objectName: "chainChoice_node"; checkable: false; checked: root.chainTop === "node"
                                    enabled: root.ready && !root.networkLocked; text: "Your own node"; onClicked: root.chooseChain("node") }
                 LogosBadge { text: "Most private"; color: Theme.palette.success }
+                ChoiceInfo { objectName: "ownNodeInfo"; title: "Your own node"; lines: [{ name: "ownNodeNote", text: root.ownNodeNote }] }
                 Item { Layout.fillWidth: true }
             }
             LogosText { visible: root.sourcesRead; Layout.fillWidth: true; Layout.leftMargin: 28; wrapMode: Text.Wrap
@@ -2021,11 +2033,6 @@ Item {
                 Layout.fillWidth: true
                 Layout.leftMargin: 28
                 spacing: Theme.spacing.small
-                LogosText {
-                    objectName: "ownNodeNote"
-                    Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.StyledText; color: Theme.palette.textSecondary
-                    text: root.ownNodeNote
-                }
                 RowLayout {
                     objectName: "nodePlaceChoice"
                     spacing: Theme.spacing.medium
@@ -2167,15 +2174,16 @@ Item {
                 spacing: Theme.spacing.small
                 Repeater {
                     model: root.sourceList.length > 0 ? root.publicOptions : []
-                    ColumnLayout {
+                    RowLayout {
                         required property var modelData
                         Layout.fillWidth: true
-                        spacing: 0
+                        spacing: Theme.spacing.small
                         LogosRadioButton { objectName: "chainChoice_" + modelData.mode; checkable: false
                                            checked: root.publicMode === modelData.mode; enabled: root.ready && !root.networkLocked
                                            text: modelData.label; onClicked: root.chooseChain(modelData.mode) }
-                        LogosText { Layout.fillWidth: true; Layout.leftMargin: 28; wrapMode: Text.Wrap; font.pixelSize: 12
-                                    color: Theme.palette.textSecondary; text: modelData.note }
+                        ChoiceInfo { objectName: "chainInfo_" + modelData.mode; title: modelData.label
+                                     lines: [{ name: "chainNote_" + modelData.mode, text: modelData.note }] }
+                        Item { Layout.fillWidth: true }
                     }
                 }
                 LogosNotice {
@@ -2218,7 +2226,7 @@ Item {
                             mode: modelData
                             source: root.publicMode === "electrum" ? "electrum" : "peers"
                             checked: root.torUse === modelData
-                            enabled: root.ready && !root.networkLocked
+                            choosable: root.ready && !root.networkLocked
                             onPicked: {
                                 if (modelData !== root.torUse)
                                     root.networkCall(backend.setTorUse(modelData), "torUse", null, function () { root.torUseAnswered = true })

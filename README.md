@@ -193,7 +193,7 @@ and each open allowed in the Signer app, and every send is approved there.
     applies to ("For signet. Each network has its own setting."), then "Your own node is the most
     private. Public sources are run by other people." The info button says what each choice
     reveals.
-  - **Your own node** (Most private), with one Benefits/Costs note. Choosing it turns the chosen
+  - **Your own node** (Most private), its Benefits/Costs behind an "i". Choosing it turns the chosen
     node on and the other node off, and leaves Kyoto's and the servers' switches as they are: the
     node module then asks your node alone and keeps them for a switch back. Under it, **In Logos**
     or **At an address**:
@@ -213,11 +213,12 @@ and each open allowed in the Signer app, and every send is approved there.
     which brings back the switches from before it; with nothing public on, it turns Kyoto on.
     Under it:
     - **Bitcoin peers** (the default: block filters, no server learns your addresses) or
-      **Electrum servers** (faster; servers with History on learn your addresses). Bitcoin peers
+      **Electrum servers** (faster; servers with History on learn your addresses), each note
+      behind an "i". Bitcoin peers
       turns Kyoto on, Electrum servers turns it off; the servers keep their switches, for fees.
       The no-chain and one-operator notices sit under the choice.
     - **Use Tor for**, three options (`set_tor_use`) for this network, each with what
-      happens, its pros and its cons, worded for the public source chosen: with Electrum servers,
+      happens, its pros and its cons behind an "i", worded for the public source chosen: with Electrum servers,
       Only what identifies you says it works like Everything. Under them, what holds in every mode:
       your own network direct, onion addresses only through Tor, your own node outside Use Tor for.
       It changes only while no account is open: with one open, opening or closing the options are
