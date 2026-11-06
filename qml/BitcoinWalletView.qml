@@ -1369,9 +1369,12 @@ Item {
     }
     function feeSourceLine() {
         if (root.chainMode === "node") return "From your node."
-        var on = root.sourcesOn("electrum").filter(function (s) { return s.suspect !== true })
+        var all = root.sourcesOn("electrum").filter(function (s) { return s.suspect !== true })
+        // With Nothing, the node module gives an onion server no route.
+        var on = all.filter(function (s) { return root.torUse !== "none" || !root.isOnion(s) })
         if (on.length) return "From " + on.map(function (s) { return s.label || s.id }).join(", ") + "."
         if (root.sourcesNetwork === "signet" && root.chainMode === "peers") return "The lowest rate peers relay: signet has no useful fee estimates."
+        if (all.length) return "No server gives fees: onion servers aren't reached with Use Tor for Nothing, so you give a rate of your own when you send."
         return "No server gives fees: you give a rate of your own when you send."
     }
     function pendingLine() {
