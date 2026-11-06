@@ -117,8 +117,8 @@ class BitcoinWalletUi
     SLOT(QString addRpcSource(QString address, QString rpcUser, QString rpcPass, QString name, bool tor))
     SLOT(QString removeSource(QString sourceId))
     SLOT(QString setProxy(QString proxy))
-    // "Use Tor for": all, identifying or none. The node module marks it chosen; sourcesJson and
-    // healthJson carry torUse and torUseChosen.
+    // "Use Tor for" on the active network: all, identifying or none. The node module marks it chosen
+    // there; sourcesJson and healthJson carry that network's torUse and torUseChosen.
     SLOT(QString setTorUse(QString mode))
     // Kyoto's own peers, a JSON array of host[:port], at most 64; [] restores the peer book.
     SLOT(QString setOwnPeers(QString peersJson))
