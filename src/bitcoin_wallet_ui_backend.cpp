@@ -596,6 +596,28 @@ void BitcoinWalletUiBackend::adoptTorUse(const QJsonObject &reply) {
     if (!healthJson().isEmpty()) setHealthJson(patch(healthJson()));
 }
 
+QString BitcoinWalletUiBackend::setLocalSends(QString via) {
+    if (settingsLocked()) return kLocked;
+    const QString reply = modules().bitcoin_wallet_backend.set_local_sends(via.trimmed());
+    adoptSends(parse(reply));
+    return settingsReply(reply);
+}
+
+// The pick shows at once, as adoptTorUse does.
+void BitcoinWalletUiBackend::adoptSends(const QJsonObject &reply) {
+    if (!reply.value("ok").toBool() || !reply.value("localSends").isString()) return;
+    QJsonObject sends;
+    for (const char *k : {"localSends", "localSendsChosen", "localSendsRecommended", "sendServers"})
+        sends.insert(QLatin1String(k), reply.value(QLatin1String(k)));
+    const auto patch = [&sends](const QString &json) {
+        QJsonObject o = parse(json);
+        o.insert("sends", sends);
+        return compact(o);
+    };
+    if (!sourcesJson().isEmpty()) setSourcesJson(patch(sourcesJson()));
+    if (!healthJson().isEmpty()) setHealthJson(patch(healthJson()));
+}
+
 // Answers as peer_list; refused while a wallet is open, like every source setting.
 QString BitcoinWalletUiBackend::setOwnPeers(QString peersJson) {
     if (settingsLocked()) return kLocked;
