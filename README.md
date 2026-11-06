@@ -6,17 +6,19 @@ from `signer_manager_module`. It takes no signing password and
 holds no key material: wallets are created and restored in the keys app, each wallet is unlocked
 and each open allowed in the Signer app, and every send is approved there.
 
-- **Where the wallet gets Bitcoin's chain, asked once:** while the node module's `torUseChosen` is
-  false, the app shows the Sources sheet's top choice in place of the account start, before any
-  account is opened: **Your own node** (Most private) or **Public sources**, preselected, with
-  **Use Tor for** under it. Each Tor option, most private first, Everything (`all`), Only what
+- **Where the wallet gets Bitcoin's chain, asked per network:** while the node module's
+  `torUseChosen` for the active network is false, the app shows the Node sheet's top choice in
+  place of the account start, before any account is opened there, the first time and again the
+  first time the person switches to another network: "For signet. Each network has its own
+  setting, asked the first time you use it." **Your own node** (Most private) or **Public
+  sources**, preselected, with **Use Tor for** under it, in the Node sheet's words and order. Each Tor option, most private first, Everything (`all`), Only what
   identifies you (`identifying`) and Nothing (`none`), says what happens, its pros and its cons.
   The node module's current `torUse` is preselected: a fresh install's `identifying`, tagged
   Recommended, or an existing install's routing, tagged Current, so Continue never weakens it.
   Continue sends `set_tor_use(mode)`. With your own node it sends `identifying`, so a later switch
-  to public sources has a sane mode, then turns the node in Logos on and opens Sources on it. A
+  to public sources has a sane mode, then turns the node in Logos on and opens Node on it. A
   refusal shows on the screen; once taken, the account start appears and the screen does not come
-  back. A node module without `torUseChosen` never shows it, nor does an open, opening or closing
+  back on that network. A node module without `torUseChosen` never shows it, nor does an open, opening or closing
   wallet.
 - **Account selector:** [logos-account-kit](https://github.com/logos-co/logos-account-kit)'s
   picker, vendored in `qml/accountkit`, over `signer_manager.roster()`. It lists each Bitcoin and
@@ -179,9 +181,11 @@ and each open allowed in the Signer app, and every send is approved there.
   A payment a reorg moved (`lastReorg.moved`) reads "re-anchored at height H", and its details name
   the new block. A row found beyond the gap limit (`beyondGap`) carries a quiet "Beyond the gap
   limit".
+- **Network:** a picker in the header, beside the sync chip, in green on mainnet and orange on the
+  test networks. It is enabled only while no account is open or opening.
 - **Settings:** the wallet (with where its chain starts, `authority.base`), its public descriptors
-  behind a privacy warning, Close wallet, and the sources pane, which also opens from the Open a
-  wallet screen.
+  behind a privacy warning, Close wallet, and the Node pane, which also opens as the **Node** sheet
+  from the Open a wallet screen.
   - The address gap limit (`wallet_status.gapLimit`, 20 by default): a restore stops after this
     many unused addresses in a row, and coins past it are invisible to wallets with the same
     limit. `set_gap_limit` takes 20 to 1000 as a job; raising it asks first, since the wallet
@@ -190,8 +194,9 @@ and each open allowed in the Signer app, and every send is approved there.
     are said in plain words.
   - **Where the wallet gets Bitcoin's chain**: one decision, top to bottom. The radio is the
     state, read from what is switched on (your node, else Kyoto, else the Electrum servers); there
-    is no Use your node button, In use badge or Use without Tor list. The info button says what
-    each choice reveals.
+    is no Use your node button, In use badge or Use without Tor list. A line names the network it
+    applies to ("For signet. Each network has its own."). The info button says what each choice
+    reveals.
   - **Your own node** (Most private), with one Benefits/Costs note. Choosing it turns the chosen
     node on and the other node off, and leaves Kyoto's and the servers' switches as they are: the
     node module then asks your node alone and keeps them for a switch back. Under it, **In Logos**
@@ -207,22 +212,25 @@ and each open allowed in the Signer app, and every send is approved there.
       switch, and the other node off in the same `set_sources` write, then probed. An address
       already added has the same line or switch (`set_source` `tor`); a Use switch shows only
       beside a second address. Use Tor for does not apply to your own node.
-  - **Public sources** ("Nodes or servers run by other people"). Choosing it turns your node off,
+  - **Public sources** ("Bitcoin nodes and servers run by other people. By default Bitcoin peers,
+    which learn none of your addresses, only which blocks the wallet fetches."). Choosing it turns your node off,
     which brings back the switches from before it; with nothing public on, it turns Kyoto on.
     Under it:
     - **Bitcoin peers** (the default: block filters, no server learns your addresses) or
       **Electrum servers** (faster; servers with History on learn your addresses). Bitcoin peers
       turns Kyoto on, Electrum servers turns it off; the servers keep their switches, for fees.
       The no-chain and one-operator notices sit under the choice.
-    - **Use Tor for**, the first run's three options (`set_tor_use`), each with its text behind
-      "What this means", worded for the public source chosen: with Electrum servers, Only what
-      identifies you says it works like Everything. "Applies to every network that uses public
-      sources." It changes only while no account is open: with one open, opening or closing the
-      options are off, with "Close your open accounts to change this."
+    - **Use Tor for**, the first run's three options (`set_tor_use`) for this network, each with what
+      happens, its pros and its cons, worded for the public source chosen: with Electrum servers,
+      Only what identifies you says it works like Everything. Under them, what holds in every mode:
+      your own network direct, onion addresses only through Tor, your own node outside Use Tor for.
+      It changes only while no account is open: with one open, opening or closing the options are
+      off, with "Close your open accounts to change this."
     - **Which Tor**, unless Use Tor for is Nothing: **The Tor that comes with Logos** (the node
       module's default, `set_proxy("tor")`) with its state badge, join progress, what stops it and
-      Manage Tor…, or **Your own Tor**, a `socks5h://` field with Use it. The same choice shows
-      under your node at an address when it goes through Tor.
+      Manage Tor…, or **Your own Tor**, a `socks5h://` field with Use it. It is one setting for
+      every network, and says so. The same choice shows under your node at an address when it goes
+      through Tor.
     - **Fees**: from the Electrum servers switched on, else signet's relay floor under Bitcoin
       peers. **Change** opens the Electrum servers' list, which stays open while they decide the
       chain; adding a server opens it too.

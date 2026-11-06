@@ -68,11 +68,11 @@ sections:
               args: ["signet"]
             - name: "The backend switched networks"
               action: expect_property
-              find_value: "networkChip"
-              property: "text"
+              find_value: "networkPicker"
+              property: "displayText"
               value: "signet"
               timeout: 20000
-            - name: "Open Sources"
+            - name: "Open Node"
               action: click_object
               find_value: "networkSettingsButton"
             - name: "The sheet opens"

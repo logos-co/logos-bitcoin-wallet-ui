@@ -859,7 +859,7 @@ def phase_open_create():
     ins.wait(ROOT, "ready", True, 120, "the wallet app's backend connects")
     ins.wait("statusLine", "text", "No wallet open", 120)
     ins.call(ROOT, "selectNetwork", "regtest")
-    ins.wait("networkChip", "text", "regtest", 30)
+    ins.wait("networkPicker", "displayText", "regtest", 30)
     node_routes_nothing(ins)
     # Provision this test wallet through the existing open API; account creation lives in Keystore.
     # Reopening below exercises the signer-manager account selector.
@@ -1246,7 +1246,7 @@ def open_for_restore(ins):
     ins.wait(ROOT, "ready", True, 120)
     ins.wait("statusLine", "text", "No wallet open", 120)
     ins.call(ROOT, "selectNetwork", "regtest")
-    ins.wait("networkChip", "text", "regtest", 30)
+    ins.wait("networkPicker", "displayText", "regtest", 30)
     node_routes_nothing(ins)
 
 
@@ -1457,7 +1457,7 @@ def phase_gap():
     ins.wait(ROOT, "ready", True, 120)
     ins.wait("statusLine", "text", "No wallet open", 120)
     ins.call(ROOT, "selectNetwork", "regtest")
-    ins.wait("networkChip", "text", "regtest", 30)
+    ins.wait("networkPicker", "displayText", "regtest", 30)
     reopen_listed(ins, secret("password"))
     passed("user A's wallet opened again from the list")
     wait_synced(ins, 180)

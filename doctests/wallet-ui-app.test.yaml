@@ -122,15 +122,39 @@ sections:
               find_value: "bitcoinWalletRoot"
               method: "selectNetwork"
               args: ["signet"]
-            - name: "The app is on signet"
+            - name: "The app is on signet, picked in the header"
               action: expect_property
-              find_value: "networkChip"
-              property: "text"
+              find_value: "networkPicker"
+              property: "displayText"
               value: "signet"
+              timeout: 15000
+            - name: "Signet asks on its own: the first-run screen again"
+              action: expect_property
+              find_value: "torUsePage"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "...for signet"
+              action: expect_property
+              find_value: "torUseNetworkLine"
+              property: "text"
+              value: "For signet. Each network has its own setting, asked the first time you use it."
+              timeout: 5000
+              screenshot: "wallet-tor-use-signet.png"
+            - name: "Continue keeps Only what identifies you there too"
+              action: call_method
+              find_value: "torUseContinue"
+              method: "clicked"
+              args: []
+            - name: "The account start for signet"
+              action: expect_property
+              find_value: "openPage"
+              property: "visible"
+              value: true
               timeout: 15000
               screenshot: "wallet-open-page.png"
 
-            - name: "Open Sources before any wallet is open"
+            - name: "Open Node before any wallet is open"
               action: click_object
               find_value: "networkSettingsButton"
             - name: "The sheet opens"
@@ -1552,7 +1576,7 @@ sections:
               property: "text"
               value: "block 290,000"
               timeout: 10000
-            - name: "Sources"
+            - name: "Node"
               action: call_method
               find_value: "networkSettingsButton"
               method: "clicked"
@@ -1693,8 +1717,8 @@ sections:
               screenshot: "wallet-open-refused-mid-switch.png"
             - name: "The switch applied: testnet4"
               action: expect_property
-              find_value: "networkChip"
-              property: "text"
+              find_value: "networkPicker"
+              property: "displayText"
               value: "testnet4"
               timeout: 20000
             - name: "Dismiss the notice"
@@ -1702,6 +1726,23 @@ sections:
               find_value: "errorNotice"
               property: "shown"
               value: false
+            - name: "Testnet4 asks what Tor is for before its first account"
+              action: expect_property
+              find_value: "torUsePage"
+              property: "visible"
+              value: true
+              timeout: 15000
+            - name: "Continue"
+              action: call_method
+              find_value: "torUseContinue"
+              method: "clicked"
+              args: []
+            - name: "The account start for testnet4"
+              action: expect_property
+              find_value: "openPage"
+              property: "visible"
+              value: true
+              timeout: 15000
             - name: "Open, on testnet4"
               action: click_object
               find_value: "openWalletButton"

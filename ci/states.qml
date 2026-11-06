@@ -499,7 +499,8 @@ Item {
             expect("form", shown("openForm"), true)
             expect("no tabs", shown("walletTabs"), false)
             expect("status line", prop("statusLine", "text"), "No wallet open")
-            expect("network chip", prop("networkChip", "text"), "regtest")
+            expect("the network, picked in the header", prop("networkPicker", "displayText") + " " + prop("networkPicker", "enabled"), "regtest true")
+            expect("...no second picker on the page", find(view.item, "networkBox", 0), null)
             expect("no password field", find(view.item, "openPasswordField", 0), null)
             expect("only Bitcoin accounts on the network", v.accountsOnNetwork.map(function(a) { return a.id }), ["g_test", "keycard-cdcdcdcd-84-1-0", "shell-cdcdcdcd-86-1-0", "g_gone"])
             v.selectAccount(v.accountsOnNetwork[3])
@@ -1025,7 +1026,9 @@ Item {
                    [true, true, true, true, true, true, true, true])
             expect("public sources: the Electrum servers in use", [prop("chainChoice_public", "checked"), prop("chainChoice_electrum", "checked")], [true, true])
             expect("...your own node's pane closed", shown("ownNodePane"), false)
-            expect("...one line on where Use Tor for applies", prop("torUseScope", "text"), "Applies to every network that uses public sources.")
+            expect("...the network it applies to", prop("chainNetworkLine", "text"), "For regtest. Each network has its own.")
+            expect("...and the rules that hold in every mode", prop("torUseEveryMode", "text"), v.torUseEveryMode)
+            expect("the sheet is Node", [prop("networkSheet", "title"), prop("networkSettingsButton", "text")], ["Node", "Node"])
             expect("with Electrum servers, Only what identifies you says it is Everything",
                    v.torUseCopyOf("identifying", "electrum").happens.indexOf("With Electrum servers this works like Everything"), 0)
             expect("...and the options read so", findAll(view.item, "torUse_identifying", 0, []).length > 0
@@ -1891,8 +1894,9 @@ Item {
             expect("the intro", prop("torUseIntro", "text").indexOf("Your own node is the most private"), 0)
             expect("the same top choice, Public sources preselected", [prop("startChoice_node", "text"), prop("startChoice_node", "checked"),
                    prop("startChoice_public", "text"), prop("startChoice_public", "checked")], ["Your own node", false, "Public sources", true])
-            expect("...Use Tor for under it, for every network", shown("startTorUse") && prop("torUseStartScope", "text"),
-                   "Applies to every network that uses public sources.")
+            expect("...for this network", prop("torUseNetworkLine", "text"), "For regtest. Each network has its own setting, asked the first time you use it.")
+            expect("...Use Tor for under public sources, in the Node sheet's words", shown("startTorUse") && prop("torUseStartEveryMode", "text"),
+                   v.torUseEveryMode)
             expect("three options", ["identifying", "all", "none"].map(function (m) { return prop("torUseStart_" + m, "text") }),
                    ["Only what identifies you", "Everything", "Nothing"])
             expect("each says what happens, pros and cons", ["identifying", "all", "none"].every(function (m) {
@@ -1940,6 +1944,14 @@ Item {
             expect("chosen: the screen is gone", shown("torUsePage"), false)
             v.torUseAnswered = false
             expect("...and never shows again", shown("torUsePage"), false)
+            // Another network asks on its own, the first time the person switches to it.
+            fake.networksJson = JSON.stringify({ networks: ["mainnet", "testnet4", "signet", "regtest"], active: "signet" })
+            fake.sourcesJson = JSON.stringify({ network: "signet", proxy: "tor", torUse: "identifying", torUseChosen: false, sources: [] })
+        },
+        function (v) {
+            expect("a new network: the screen again", [shown("torUsePage"), v.torUseAnswered], [true, false])
+            expect("...for that network", prop("torUseNetworkLine", "text"), "For signet. Each network has its own setting, asked the first time you use it.")
+            fake.networksJson = JSON.stringify({ networks: ["mainnet", "testnet4", "signet", "regtest"], active: "regtest" })
             // Your own node at first run: the recommended mode is still stored, then the node is set up under Sources.
             fake.sourcesJson = JSON.stringify({ network: "regtest", proxy: "tor", torUse: "all", torUseChosen: false, sources: [
                 { id: "kyoto", kind: "kyoto", use: true, route: "tor" },
@@ -1986,9 +1998,7 @@ Item {
             expect("...disabled while an account is open", ["identifying", "all", "none"].map(function (m) { return prop("torUse_" + m, "enabled") }),
                    [false, false, false])
             expect("...saying why", shown("torUseLocked") && prop("torUseLocked", "text"), "Close your open accounts to change this.")
-            expect("...the text behind What this means", find(view.item, "torUse_happens_all", 0), null)
-            find(view.item, "torUseExplain", 0).activated("")
-            expect("What this means shows each option's text", prop("torUse_happens_all", "text"),
+            expect("...each option's text, as on the first run", prop("torUse_happens_all", "text"),
                    "<b>What happens:</b> Every connection goes through Tor, to Bitcoin nodes reachable only over Tor.")
             expect("...Recommended there too", shown("torUse_recommended_identifying"), true)
             // Closed: the sources sheet before an open, where it can change.
