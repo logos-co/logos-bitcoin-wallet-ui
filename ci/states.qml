@@ -1351,6 +1351,8 @@ Item {
         function (v) {
             expandAdvanced()
             expandSources(["kyoto"])
+            expect("Kyoto's Tor switch says what off means", [shownAny("torSwitch_kyoto"), shownAny("kyotoTorNote"), prop("kyotoTorNote", "text")],
+                   [true, true, "With Tor off, Kyoto takes everything directly, as with Nothing: the blocks with your payments and your sends too."])
             expect("the peer book", prop("curatedLine", "text"), "14 known peers: 11 from the curated list, 3 learned · 6 worked in the last 30 days")
             expect("...the curated list's standing", prop("curatedListNote", "text"), "The curated list is provisional.")
             expect("...and how it grows", prop("peerBookLine", "text"), "The wallet learns working peers from the peers it already uses; "
