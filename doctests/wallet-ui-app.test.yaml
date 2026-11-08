@@ -81,56 +81,97 @@ sections:
               property: "text"
               value: "No wallet open"
               timeout: 60000
-            - name: "Before any account, the app asks once what Tor is for, in place of the account start"
+            - name: "Before any account, the account start asks for Node to be set up for this network"
               action: expect_property
-              find_value: "torUsePage"
+              find_value: "nodeSetupNotice"
               property: "visible"
               value: true
               timeout: 30000
-              screenshot: "wallet-tor-use.png"
-            - name: "A fresh install has Only what identifies you selected"
-              action: expect_property
-              find_value: "torUseStart_identifying"
-              property: "checked"
-              value: true
-              timeout: 5000
-            - name: "...tagged Recommended"
-              action: expect_property
-              find_value: "torUseStart_recommended_identifying"
-              property: "visible"
-              value: true
-              timeout: 5000
-            - name: "Continue keeps it"
+              screenshot: "wallet-node-setup.png"
+            - name: "Open Node from the notice"
               action: call_method
-              find_value: "torUseContinue"
+              find_value: "nodeSetupButton"
               method: "clicked"
               args: []
-            - name: "The account start takes its place"
+            - name: "Node opens, not saved yet"
               action: expect_property
-              find_value: "openPage"
+              find_value: "networkSheetDone"
+              property: "text"
+              value: "Save"
+              timeout: 10000
+            - name: "A fresh install has Only what identifies you checked"
+              action: expect_property
+              find_value: "torUse_identifying"
+              property: "checked"
+              value: true
+              timeout: 30000
+            - name: "...tagged Recommended"
+              action: expect_property
+              find_value: "torUse_recommended_identifying"
               property: "visible"
               value: true
-              timeout: 15000
-            - name: "...and the backend has it chosen, so the screen never shows again"
+              timeout: 5000
+              screenshot: "wallet-node-first-save.png"
+            - name: "Save keeps it"
+              action: call_method
+              find_value: "networkSheetDone"
+              method: "clicked"
+              args: []
+            - name: "The backend has it chosen, so the notice never shows again"
               action: expect_property
               find_value: "bitcoinWalletRoot"
               property: "torUseUnchosen"
               value: false
               timeout: 15000
+            - name: "...and the notice is gone"
+              action: expect_property
+              find_value: "nodeSetupNotice"
+              property: "visible"
+              value: false
+              timeout: 5000
             - name: "Choose signet"
               action: call_method
               find_value: "bitcoinWalletRoot"
               method: "selectNetwork"
               args: ["signet"]
-            - name: "The app is on signet"
+            - name: "The app is on signet, picked in the header"
               action: expect_property
-              find_value: "networkChip"
-              property: "text"
+              find_value: "networkPicker"
+              property: "displayText"
               value: "signet"
+              timeout: 15000
+            - name: "Signet asks on its own: the notice again, for signet"
+              action: expect_property
+              find_value: "nodeSetupNotice"
+              property: "title"
+              value: "Set up Node for signet"
+              timeout: 15000
+              screenshot: "wallet-node-setup-signet.png"
+            - name: "Open Node"
+              action: call_method
+              find_value: "nodeSetupButton"
+              method: "clicked"
+              args: []
+            - name: "Node opens on signet, not saved yet"
+              action: expect_property
+              find_value: "networkSheetDone"
+              property: "text"
+              value: "Save"
+              timeout: 10000
+            - name: "Save keeps Only what identifies you there too"
+              action: call_method
+              find_value: "networkSheetDone"
+              method: "clicked"
+              args: []
+            - name: "The account start for signet"
+              action: expect_property
+              find_value: "nodeSetupNotice"
+              property: "visible"
+              value: false
               timeout: 15000
               screenshot: "wallet-open-page.png"
 
-            - name: "Open Sources before any wallet is open"
+            - name: "Open Node before any wallet is open"
               action: click_object
               find_value: "networkSettingsButton"
             - name: "The sheet opens"
@@ -1552,7 +1593,7 @@ sections:
               property: "text"
               value: "block 290,000"
               timeout: 10000
-            - name: "Sources"
+            - name: "Node"
               action: call_method
               find_value: "networkSettingsButton"
               method: "clicked"
@@ -1693,8 +1734,8 @@ sections:
               screenshot: "wallet-open-refused-mid-switch.png"
             - name: "The switch applied: testnet4"
               action: expect_property
-              find_value: "networkChip"
-              property: "text"
+              find_value: "networkPicker"
+              property: "displayText"
               value: "testnet4"
               timeout: 20000
             - name: "Dismiss the notice"
@@ -1702,6 +1743,34 @@ sections:
               find_value: "errorNotice"
               property: "shown"
               value: false
+            - name: "Testnet4 asks for Node before its first account"
+              action: expect_property
+              find_value: "nodeSetupNotice"
+              property: "title"
+              value: "Set up Node for testnet4"
+              timeout: 15000
+            - name: "Open Node"
+              action: call_method
+              find_value: "nodeSetupButton"
+              method: "clicked"
+              args: []
+            - name: "Node opens on testnet4, not saved yet"
+              action: expect_property
+              find_value: "networkSheetDone"
+              property: "text"
+              value: "Save"
+              timeout: 10000
+            - name: "Save"
+              action: call_method
+              find_value: "networkSheetDone"
+              method: "clicked"
+              args: []
+            - name: "The account start for testnet4"
+              action: expect_property
+              find_value: "nodeSetupNotice"
+              property: "visible"
+              value: false
+              timeout: 15000
             - name: "Open, on testnet4"
               action: click_object
               find_value: "openWalletButton"

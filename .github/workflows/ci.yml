@@ -112,15 +112,16 @@ jobs:
           path: logos-bitcoin-wallet-ui
 
       # The design system's source decides whether `import Logos.Controls` resolves.
-      - name: Find the design-system and logos-nix revisions the builder pins
+      - name: Find the design system Basecamp ships, and the logos-nix the builder pins
         id: ds
         working-directory: logos-bitcoin-wallet-ui
         shell: bash
         run: |
           set -euo pipefail
-          rev=$(jq -r '.nodes as $n | ($n[.root].inputs["logos-module-builder"]) as $b
-                       | $n[$n[$b].inputs["logos-design-system"]].locked.rev' flake.lock)
-          [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no design-system pin in flake.lock ($rev)"; exit 1; }
+          # The builder pins no design system; Basecamp's draws the view, so the gates use that one.
+          rev=$(curl -fsSL https://raw.githubusercontent.com/logos-co/logos-basecamp/master/flake.lock \
+                | jq -r '.nodes as $n | $n[$n[.root].inputs["logos-design-system"]].locked.rev')
+          [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no design-system pin in Basecamp's flake.lock ($rev)"; exit 1; }
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
           # Qt comes from the logos-nix the builder pins, as in the build; never the runner's nixpkgs.
           nix=$(jq -r '.nodes as $n | ($n[.root].inputs["logos-module-builder"]) as $b

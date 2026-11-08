@@ -194,9 +194,8 @@ pub struct Sim {
     next_tx: u64,
     sources: BTreeMap<String, Vec<Source>>,
     proxy: String,
-    /// "Use Tor for", and whether the person has chosen it.
-    tor_use: String,
-    tor_use_chosen: bool,
+    /// "Use Tor for" by network, and whether the person has chosen it there.
+    tor_use: BTreeMap<String, (String, bool)>,
     wallets: Vec<Value>,
     /// Receive addresses revealed, by network and group, in index order.
     revealed: BTreeMap<String, Vec<Revealed>>,
@@ -497,8 +496,7 @@ impl Sim {
             next_tx: 0,
             sources: BTreeMap::new(),
             proxy: "tor".into(),
-            tor_use: "identifying".into(),
-            tor_use_chosen: false,
+            tor_use: BTreeMap::new(),
             wallets: vec![],
             revealed: BTreeMap::new(),
             asked: false,
@@ -869,7 +867,7 @@ impl Sim {
         let onion = host_of(&s.url).ends_with(".onion");
         // With Tor used for nothing every switch reads off, and an onion stays onion, unrouted;
         // your node at an address keeps its own switch.
-        let tor = s.tor && (s.kind == "rpc" || self.tor_use != "none");
+        let tor = s.tor && (s.kind == "rpc" || self.tor_of().0 != "none");
         let route = if lan { "direct" } else if onion { "onion" } else if tor { "tor" } else { "direct" };
         let mut v = json!({"id": s.id, "kind": s.kind, "url": s.url, "operator": s.operator, "label": s.label, "use": s.enabled,
                            "history": s.history, "tor": tor, "lan": lan, "hasCredentials": false, "route": route, "suspect": s.suspect});
@@ -896,7 +894,7 @@ impl Sim {
         let exposes: Vec<Value> = list.iter().filter(|v| in_use(v) && v["history"] == true && v["kind"] == "electrum").map(named).collect();
         let without: Vec<Value> = list.iter().filter(|v| in_use(v) && v["kind"] != "local" && v["route"] == "direct" && v["lan"] != true).map(named).collect();
         json!({"ok": true, "network": net, "configured": true, "walletOpen": self.locked(), "proxy": self.proxy,
-               "torUse": self.tor_use, "torUseChosen": self.tor_use_chosen,
+               "torUse": self.tor_of().0, "torUseChosen": self.tor_of().1,
                "sources": list, "exposes": exposes, "withoutTor": without})
     }
 
@@ -925,7 +923,7 @@ impl Sim {
             .collect();
         let mut out = json!({"ok": true, "network": net, "configured": true,
                              "pending": false, "sources": rows, "tor": self.tor_health(),
-                             "torUse": self.tor_use, "torUseChosen": self.tor_use_chosen});
+                             "torUse": self.tor_of().0, "torUseChosen": self.tor_of().1});
         if self.open() {
             let wallet: Vec<Value> = list
                 .iter()
@@ -941,7 +939,7 @@ impl Sim {
 
     /// The built-in Tor, joined, while it is the proxy; null in none, where tor_module is never asked.
     fn tor_health(&self) -> Value {
-        if self.proxy != "tor" || self.tor_use == "none" {
+        if self.proxy != "tor" || self.tor_of().0 == "none" {
             return Value::Null;
         }
         json!({"state": "ready", "progress": 100, "detail": "", "socks": "socks5h://127.0.0.1:9250", "answered": true})
@@ -1613,7 +1611,13 @@ impl Sim {
         json!({"ok": true, "proxy": self.proxy})
     }
 
-    /// "Use Tor for", which also marks it chosen. Refused while a wallet is open, as the node module does.
+    /// The shown network's "Use Tor for": identifying and not chosen until set.
+    fn tor_of(&self) -> (String, bool) {
+        self.tor_use.get(&self.net()).cloned().unwrap_or_else(|| ("identifying".into(), false))
+    }
+
+    /// "Use Tor for" on the active network, which also marks it chosen there. Refused while a
+    /// wallet is open, as the node module does.
     pub fn set_tor_use(&mut self, mode: &str) -> Value {
         if self.locked() {
             return json!({"ok": false, "error": LOCKED});
@@ -1622,9 +1626,9 @@ impl Sim {
         if !TOR_USES.contains(&m) {
             return json!({"ok": false, "error": "invalid parameters: torUse must be all, identifying or none"});
         }
-        self.tor_use = m.into();
-        self.tor_use_chosen = true;
-        json!({"ok": true, "torUse": self.tor_use, "torUseChosen": true})
+        let net = self.net();
+        self.tor_use.insert(net.clone(), (m.into(), true));
+        json!({"ok": true, "network": net, "torUse": m, "torUseChosen": true})
     }
 
     pub fn clear_suspect(&mut self, id: &str, now: Instant, out: &mut Vec<Event>) -> Value {
@@ -2495,18 +2499,23 @@ mod tests {
     }
 
     #[test]
-    fn tor_use_is_asked_once_and_locked_while_open() {
+    fn tor_use_is_asked_per_network_and_locked_while_open() {
         let mut sim = Sim::new(false, Instant::now());
         assert_eq!((sim.sources()["torUse"].clone(), sim.sources()["torUseChosen"].clone()), (json!("identifying"), json!(false)));
         assert_eq!(sim.source_health(0)["tor"]["state"], "ready");
         assert!(sim.set_tor_use("some")["error"].as_str().unwrap().contains("all, identifying or none"));
-        assert_eq!(sim.set_tor_use("none"), json!({"ok": true, "torUse": "none", "torUseChosen": true}));
+        let r = sim.set_tor_use("none");
+        assert_eq!((r["torUse"].clone(), r["torUseChosen"].clone(), r["network"].clone()), (json!("none"), json!(true), json!(sim.active())));
         let h = sim.source_health(0);
         assert_eq!((h["torUse"].clone(), h["torUseChosen"].clone(), h["tor"].clone()), (json!("none"), json!(true), Value::Null));
         let rows = sim.sources()["sources"].as_array().unwrap().clone();
         assert!(rows.iter().all(|r| r["tor"] == false && r["route"] == "direct"), "none: every switch off");
         sim.set_tor_use("all");
         assert_eq!(sim.source_health(0)["tor"]["answered"], true);
+        // Another network asks on its own.
+        let other = if sim.active() == "signet" { "testnet4" } else { "signet" };
+        sim.set_active_network(other);
+        assert_eq!((sim.sources()["torUse"].clone(), sim.sources()["torUseChosen"].clone()), (json!("identifying"), json!(false)));
         let (mut sim, _) = opened("signet");
         assert_eq!(sim.set_tor_use("identifying")["error"], LOCKED);
     }
