@@ -208,6 +208,12 @@ and each open allowed in the Signer app, and every send is approved there.
       switch, and the other node off in the same `set_sources` write, then probed. An address
       already added has the same line or switch (`set_source` `tor`); a Use switch shows only
       beside a second address. Use Tor for does not apply to your own node.
+    - **Sending payments**, once your node is on and the node module sends `sends`:
+      **Through public servers, over Tor** (the Electrum servers switched on, else the onion server
+      it ships; a line names their operators, and Which Tor shows unless the address's own does) or
+      **Through your node**, each with an "i". Recommended follows `localSendsRecommended`: your
+      node in Logos while the Bitcoin Node app sends privately, else the servers. A pick is stored
+      at once (`setLocalSends`, the backend's `set_local_sends`); a refusal shows under it.
   - **Public sources** ("Bitcoin nodes and servers run by other people. By default Bitcoin peers,
     which learn none of your addresses, only which blocks the wallet fetches."). Choosing it turns your node off,
     which brings back the switches from before it; with nothing public on, it turns Kyoto on.

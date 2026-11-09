@@ -335,6 +335,21 @@ Item {
         if (on) return on.kind
         return sourceList.some(function (s) { return s.kind === "local" }) ? "local" : "rpc"
     }
+    // With your node on, where payments go: the node module's `sends`, absent from an older one.
+    readonly property var sends: sourcesInfo.sends || health.sends || ({})
+    readonly property string localSends: typeof sends.localSends === "string" ? sends.localSends : ""
+    readonly property string sendsRecommended: sends.localSendsRecommended || "servers"
+    readonly property var sendOperators: (Array.isArray(sends.sendServers) ? sends.sendServers : [])
+        .map(function (s) { return s.operator || s.id }).filter(function (o, i, all) { return all.indexOf(o) === i })
+    readonly property string sendsServersNote: "Electrum servers pass your payment to the network, reached over Tor: they don't learn your "
+                                               + "IP address, and your node's peers don't see it leave your node first. They are the Electrum "
+                                               + "servers switched on under Public sources, or the onion server Logos ships when none is."
+    readonly property string sendsNodeNote: nodePlace === "local" && sendsRecommended === "node"
+        ? "No server is contacted. The Bitcoin Node app sends it privately, over Tor, so its peers can't tell it came from your node."
+        : nodePlace === "local"
+        ? "No server is contacted, but your node passes it to its peers from this computer's IP address, so they can tell it came "
+          + "from you. The Bitcoin Node app can send privately, over Tor."
+        : "No server is contacted, but your node passes it to its peers from its own IP address, unless it is set to send privately over Tor."
     // Keep expanded rows open across source-health refreshes.
     property var expandedSources: []
     // What a settings call refused, shown where it was made ("proxy" or "sources").
@@ -368,7 +383,13 @@ Item {
                                           + "payments before they confirm, so no one else learns your addresses or balance.<br><br>"
                                           + "<b>Costs:</b> about 30 GB of disk when pruned, over 770 GB when not, a first sync of "
                                           + "hours to days, and it must be running whenever you use the wallet. A pruned node asks its "
-                                          + "peers for old blocks that hold your payments, so those peers learn which blocks they are."
+                                          + "peers for old blocks that hold your payments, so those peers learn which blocks they are.<br><br>"
+                                          + (localSends !== ""
+                                             ? "<b>Sending:</b> payments go as Sending payments says: through public Electrum servers over "
+                                               + "Tor, or through your node, which passes them to its peers from its own IP address (over Tor "
+                                               + "when the Bitcoin Node app sends privately)."
+                                             : "<b>Sending:</b> payments go through your node, which passes them to its peers from its own "
+                                               + "IP address, unless the Bitcoin Node app sends them over Tor.")
     readonly property string publicSummary: "Bitcoin nodes and servers run by other people. By default Bitcoin peers, which learn "
                                             + "none of your addresses, only which blocks the wallet fetches."
     readonly property string torUseTorIntro: "Tor hides your IP address, which can reveal where you are, from public sources, but "
@@ -1836,6 +1857,24 @@ Item {
         }
     }
 
+    // One "Sending payments" route under Your own node.
+    component SendsOption: RowLayout {
+        id: sendsOption
+        property string via: ""
+        property string label: ""
+        property string note: ""
+        Layout.fillWidth: true
+        spacing: Theme.spacing.small
+        LogosRadioButton { objectName: "localSends_" + sendsOption.via; checkable: false; checked: root.localSends === sendsOption.via
+                           enabled: root.ready && !root.networkLocked; text: sendsOption.label
+                           onClicked: if (!checked) root.networkCall(backend.setLocalSends(sendsOption.via), "sends") }
+        LogosBadge { objectName: "localSendsRecommended_" + sendsOption.via; visible: root.sendsRecommended === sendsOption.via
+                     text: "Recommended"; color: Theme.palette.success }
+        ChoiceInfo { objectName: "localSendsInfo_" + sendsOption.via; title: sendsOption.label
+                     lines: [{ name: "localSendsNote_" + sendsOption.via, text: sendsOption.note }] }
+        Item { Layout.fillWidth: true }
+    }
+
     // One "Use Tor for" option: its label and tags; what happens, pros and cons behind its "i".
     component TorUseOption: RowLayout {
         id: option
@@ -2122,8 +2161,35 @@ Item {
                             }
                         }
                     }
-                    WhichTorChoice { prefix: "node_"
+                    WhichTorChoice { id: nodeWhichTor; prefix: "node_"
                                      visible: root.rpcUsesTor || (!root.networkLocked && (rpcForm.place === "onion" || (rpcForm.place === "internet" && rpcAddTor.on))) }
+                }
+                // Where payments go out, with your node on.
+                ColumnLayout {
+                    objectName: "localSendsPane"
+                    visible: root.localSends !== ""
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing.small
+                    spacing: Theme.spacing.tiny
+                    LogosText { text: "Sending payments"; font.weight: Theme.typography.weightBold }
+                    SendsOption { via: "servers"; label: "Through public servers, over Tor"; note: root.sendsServersNote }
+                    LogosText { objectName: "localSendsServersLine"; visible: root.localSends === "servers"
+                                Layout.fillWidth: true; Layout.leftMargin: 28; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                font.pixelSize: 12; color: Theme.palette.textTertiary
+                                text: root.sendOperators.length > 0 ? "Through " + root.sendOperators.join(" or ") + "."
+                                      : "No Electrum server is on for " + (root.sourcesNetwork || "this network") + ", so your node sends them itself." }
+                    // One Which Tor: the one under your node's address when that is shown.
+                    WhichTorChoice { prefix: "sends_"; Layout.leftMargin: 28
+                                     visible: root.localSends === "servers" && root.sendOperators.length > 0
+                                              && !(root.nodePlace === "rpc" && nodeWhichTor.visible) }
+                    SendsOption { via: "node"; label: "Through your node"; note: root.sendsNodeNote }
+                    LogosNotice {
+                        objectName: "localSendsNotice"
+                        Layout.fillWidth: true
+                        severity: LogosNotice.Error
+                        shown: root.networkNote !== "" && root.networkNoteAt === "sends"
+                        message: shown ? root.networkNote : ""
+                    }
                 }
             }
 

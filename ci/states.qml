@@ -118,6 +118,16 @@ Item {
             sourcesJson = JSON.stringify(o)
             return ""
         }
+        // What setLocalSends answers: "" takes the route, as the backend's reply patches the sources.
+        property string sendsReply: ""
+        function setLocalSends(v) {
+            note("setLocalSends", [v])
+            if (sendsReply !== "") return sendsReply
+            var o = JSON.parse(sourcesJson || "{}")
+            if (o.sends) { o.sends.localSends = v; o.sends.localSendsChosen = true; if (v === "node") o.sends.sendServers = [] }
+            sourcesJson = JSON.stringify(o)
+            return ""
+        }
         function setOwnPeers(p) { note("setOwnPeers", [p]); return "" }
         function clearSuspect(id) { note("clearSuspect", [id]); return "" }
         function refreshSources() {}
@@ -1076,6 +1086,39 @@ Item {
             expect("...no Tor in Logos", [shown("torUseSettings"), shown("whichTor_builtIn"), shown("node_whichTor_builtIn"), shown("torBadge"),
                                           shown("manageTorLink")], [false, false, false, false, false])
             expect("...the node app for its own connections", shown("openNodeAppButton") && shown("localNodePeersLine"), true)
+            expect("...no Sending payments from an older node module", shown("localSendsPane"), false)
+            expect("...whose note says your node sends", prop("ownNodeNote", "text").indexOf("<b>Sending:</b> payments go through your node") > 0, true)
+            var noSends = fake.sourcesJson
+            var withSends = JSON.parse(noSends)
+            withSends.sources[2].use = true
+            withSends.sends = { localSends: "servers", localSendsChosen: false, localSendsRecommended: "servers",
+                                sendServers: [{ id: "emzy", operator: "emzy.de", route: "tor" }, { id: "emzy-onion", operator: "emzy.de", route: "onion" }] }
+            fake.sourcesJson = JSON.stringify(withSends)
+            expect("Sending payments under your node: public servers, recommended",
+                   [shown("localSendsPane"), prop("localSends_servers", "checked"), shown("localSendsRecommended_servers"), shown("localSendsRecommended_node")],
+                   [true, true, true, false])
+            expect("...through each operator once, over the Tor picked here", [prop("localSendsServersLine", "text"), shown("sends_whichTor_builtIn")],
+                   ["Through emzy.de.", true])
+            expect("...the note names both routes", prop("ownNodeNote", "text").indexOf("as Sending payments says") > 0, true)
+            find(view.item, "localSends_node", 0).clicked()
+            expect("...your node, picked", fake.last("setLocalSends"), ["setLocalSends", "node"])
+            expect("...then no servers line and no Which Tor", [prop("localSends_node", "checked"), shown("localSendsServersLine"), shown("sends_whichTor_builtIn")],
+                   [true, false, false])
+            expect("...its note: peers see this computer", prop("localSendsNote_node", "text").indexOf("from this computer's IP address") > 0, true)
+            withSends.sends = { localSends: "node", localSendsChosen: true, localSendsRecommended: "node", sendServers: [] }
+            fake.sourcesJson = JSON.stringify(withSends)
+            expect("The node app sends privately: no servers to send through, your node recommended",
+                   [prop("localSendsServersLine", "text"), shown("localSendsRecommended_node"), shown("localSendsRecommended_servers"), shown("sends_whichTor_builtIn")],
+                   ["No Electrum server is on for signet, so your node sends them itself.", true, false, false])
+            expect("...its note: privately, over Tor", prop("localSendsNote_node", "text").indexOf("sends it privately, over Tor") > 0, true)
+            fake.sendsReply = "Close your open accounts to change this."
+            find(view.item, "localSends_servers", 0).clicked()
+            expect("...a refusal shows under the choice", [shown("localSendsNotice"), prop("localSendsNotice", "message")],
+                   [true, "Close your open accounts to change this."])
+            fake.sendsReply = ""
+            find(view.item, "localSends_servers", 0).clicked()
+            expect("...and picking again clears it", [shown("localSendsNotice"), fake.last("setLocalSends")], [false, ["setLocalSends", "servers"]])
+            fake.sourcesJson = noSends
             expect("...and nothing of public sources", [shown("publicPane"), shown("feesHeading"), shown("pendingChoice"), shown("advancedSourcesButton")],
                    [false, false, false, false])
             // The engine turns the node on: the public switches stay as they were, Kyoto on.

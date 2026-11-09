@@ -120,6 +120,9 @@ class BitcoinWalletUi
     // "Use Tor for" on the active network: all, identifying or none. The node module marks it chosen
     // there; sourcesJson and healthJson carry that network's torUse and torUseChosen.
     SLOT(QString setTorUse(QString mode))
+    // With your node on, where the active network's payments go: servers (public Electrum servers
+    // over Tor) or node. sourcesJson and healthJson carry it as `sends`.
+    SLOT(QString setLocalSends(QString via))
     // Kyoto's own peers, a JSON array of host[:port], at most 64; [] restores the peer book.
     SLOT(QString setOwnPeers(QString peersJson))
     // Not locked: the wallet marks sources suspect while it syncs.
