@@ -31,11 +31,11 @@ and each open allowed in the Signer app, and every send is approved there.
   on `accounts_changed`, manual refresh and periodic reconciliation. A failed roster read keeps the
   current identity visible and disables selection until a successful refresh. The **Accounts** icon
   (the EVM wallet's) raises `evm.accounts.manage` for creation, restoration and management. One wallet is open at a
-  time: while one is open, opening or closing, the picker is locked on it and **Open** is disabled
-  ("Close this wallet to open another."), and the backend refuses an open as well. Once it has
-  closed the picker unlocks with that account still selected. Selecting an entry only changes the
-  choice; nothing opens until **Open** is pressed. Dropdown entries have consistent hover highlights.
-- **Open an account:** select it in the picker, then press **Open**. The backend's
+  time: picking another account while one is open closes the open one first, then opens the new
+  one; while one is opening or closing the picker is locked. The picker is the account kit's
+  `CompactAccountPicker`, as in the Ethereum wallet: one line, with the wallets still locked below
+  its rows, grouped by the app that unlocks them.
+- **Open an account:** pick it in the picker; there is no separate Open. The backend's
   `open_wallet` answers a job, and while `wallet_status` carries an `openHandle` the app raises
   `wallets.unlock` with `{ openHandle }` and shows "Waiting for the Signer app", with Ask again and
   Cancel. The Signer app unlocks the wallet first if it is locked, then asks to allow the open.
@@ -50,7 +50,18 @@ and each open allowed in the Signer app, and every send is approved there.
     has closed" (`set_active_network`'s `pending`, also in `list_networks`). A refusal says why
     (`wallet_open`, `send_open` or `busy`). An open the backend answers `busy` meanwhile is asked
     again once the switch applies, so it never opens on the old network.
-- **Home:** the confirmed balance, then rows for payments waiting for the wallet's chain, pending
+- **Layout:** as in the Ethereum wallet. A title row ("Bitcoin Wallet", its help, a line under it)
+  with the Accounts icon, the picker and a network chip on the right; the tabs below; each tab's
+  content a 560-wide column, centred, its parts in framed blocks. The chip names the network and
+  its sync state ("signet · Synced", "signet · 3%"), its detail in the tooltip, and opens the
+  **Network** sheet: the network itself, then where the chain comes from, Tor and fees. Picking
+  another network while a wallet is open closes it first.
+- **The node in Logos:** with "Your own node · In Logos" chosen and the chain not coming from it,
+  Balance says why, from the node module's `local_node()` passed on in `source_health`'s
+  `localNode` (bitcoin_wallet_backend): "Your node isn't running", "failed to start", "is
+  starting", "is syncing" (block X of Y) or "runs another network", with **Open Bitcoin Node**
+  (`bitcoin.node.configure`). The wallet never starts it: the Bitcoin Node app does.
+- **Balance:** the confirmed balance, then rows for payments waiting for the wallet's chain, pending
   payments with the source that reported them, sent transactions not yet confirmed (with Speed
   up), mined coins not yet mature, and coins too small to spend at today's fee rate. A busy read
   is "not read": the last read stays, and an empty amount shows as a dash, never as zero.
@@ -88,12 +99,12 @@ and each open allowed in the Signer app, and every send is approved there.
     "Stalled" again.
   - The history line says where payments are found: "Payments found on this device, through block
     filters" under Kyoto, "Payments found through your node", or "Payments looked up at <server>".
-  - The core keeps each account's birthday: an account's first open on a network asks when it was
-    first used (a day, "It's new" for today, or "I don't know"), sent as open_wallet's `birthday`.
-    A wallet without one (`needsBirthday`) asks again: a day, or "I don't know" (`set_birthday`,
+  - The core keeps each account's birthday. A first open doesn't stop to ask: it opens with none,
+    so the core looks for payments from where the account's kind of address began, and Balance
+    offers "Set the account's birthday" to start later. A wallet without one (`needsBirthday`) asks again: a day, or "I don't know" (`set_birthday`,
     a job; `{ height: 0 }` scans from where the wallet's kind of address began). Settings changes it.
     A refusal, such as a day after its first payment, shows with the core's reason; while
-    `rescanFrom` holds, Home reads "Rescanning from block H", with its share (`syncPercent`) and a bar
+    `rescanFrom` holds, Balance reads "Rescanning from block H", with its share (`syncPercent`) and a bar
     only while the sync line has no bar of its own: one figure per rescan.
   - While Kyoto's matched blocks are fetched over Tor (`kyoto.tor`), a line under the authority says
     "Fetching N blocks with your payments over Tor", or "Waiting for Tor: N blocks with your
@@ -106,7 +117,7 @@ and each open allowed in the Signer app, and every send is approved there.
     the source: "Your node has had no new block for 120 minutes; it may be cut off from the network."
   - While the Tor that comes with Logos joins (`source_health.tor`), a peerless chain routed
     through Tor reads "Connecting to Tor… 40%" (chip "Tor 40%"), and health is read every 3 s. When
-    its SOCKS port is off, Tor is blocked, or tor_module does not answer, Home says which, with
+    its SOCKS port is off, Tor is blocked, or tor_module does not answer, Balance says which, with
     Manage Tor… (`tor.manage`).
   - An enabled source reporting `Proxy server unreachable` shows a Tor setup notice with the
     configured SOCKS address and a connection-check button. A peerless chain routed entirely
@@ -185,7 +196,7 @@ and each open allowed in the Signer app, and every send is approved there.
     many unused addresses in a row, and coins past it are invisible to wallets with the same
     limit. `set_gap_limit` takes 20 to 1000 as a job; raising it asks first, since the wallet
     rescans from its birthday and downloads more, and an enabled history server is asked about
-    more addresses. The rescan shows on Home as a birthday's does; refusals (`invalid`, `busy`)
+    more addresses. The rescan shows on Balance as a birthday's does; refusals (`invalid`, `busy`)
     are said in plain words.
   - **Where the wallet gets Bitcoin's chain**: one decision, top to bottom. The radio is the
     state, read from what is switched on (your node, else Kyoto, else the Electrum servers); there
