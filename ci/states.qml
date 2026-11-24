@@ -544,22 +544,30 @@ Item {
             find(view.item, "accountPicker", 0).activated(1)
         },
         function (v) {
-            // A first open no longer asks for the birthday (Settings sets it later): picking opens at once, with none.
-            expect("a first open asks nothing", prop("birthdaySheet", "visible"), false)
-            expect("...and opens the picked account, with no day", fake.last("selectAccount"), ["selectAccount", "keycard-cdcdcdcd-84-1-0", ""])
-            expect("...the sheet's first-open choices stay hidden", prop("birthdayNew", "visible"), false)
-            expect("...one open so far", fake.count("selectAccount"), 1)
+            // A first open asks one thing, "Is this account new?" (logos-bitcoin-wallet-core-module#39).
+            expect("a first open asks if it is new", prop("birthdaySheet", "visible") && prop("birthdaySheet", "title"), "Is this account new?")
+            expect("...before opening", fake.last("selectAccount"), null)
+            expect("...two answers, the day choice hidden", [shown("firstOpenNew"), shown("firstOpenOlder"), shown("birthdayDateField"), shown("confirmBirthdayButton")],
+                   [true, true, false, false])
+            find(view.item, "firstOpenNew", 0).clicked()
+            expect("a new account opens from today", fake.last("selectAccount"), ["selectAccount", "keycard-cdcdcdcd-84-1-0", v.todayUtc()])
             find(view.item, "accountPicker", 0).activated(0)
-            expect("picking another opens it at once", fake.count("selectAccount"), 2)
+            expect("another account's first pick asks before opening", fake.count("selectAccount"), 1)
             expect("chosen account stays selected", v.selectedAccount.id, "g_test")
         },
         function (v) {
-            expect("another account's first open asks nothing either", prop("birthdaySheet", "visible"), false)
-            expect("...and opens it with no day", fake.last("selectAccount"), ["selectAccount", "g_test", ""])
+            expect("another account's first open asks too", prop("birthdaySheet", "visible"), true)
+            find(view.item, "firstOpenOlder", 0).clicked()
+            expect("payments already: the day choice", [prop("birthdaySheet", "title"), shown("birthdayDateField"), shown("confirmBirthdayButton")],
+                   ["When was this account first used?", true, true])
+            expect("...with no day yet", prop("confirmBirthdayButton", "enabled") + " " + prop("confirmBirthdayButton", "text"), "false Open")
+            find(view.item, "birthdayDateField", 0).text = "2024-04-20"
+            find(view.item, "confirmBirthdayButton", 0).clicked()
+            expect("...and opens it from that day", fake.last("selectAccount"), ["selectAccount", "g_test", "2024-04-20"])
             fake.walletsJson = JSON.stringify([{ group: "g_test", family: "bitcoin", network: "regtest" }])
         },
         function (v) {
-            expect("the sheet stays closed", prop("birthdaySheet", "visible"), false)
+            expect("the sheet closed", prop("birthdaySheet", "visible"), false)
             v.pickAccount(v.accountsOnNetwork[0])
             expect("an account opened before opens at once, with no day", fake.last("selectAccount"), ["selectAccount", "g_test", ""])
             expect("...asking nothing", prop("birthdaySheet", "visible"), false)
@@ -567,8 +575,11 @@ Item {
             v.pickAccount(v.accountsOnNetwork[0])
         },
         function (v) {
-            expect("never opened here: still no question", prop("birthdaySheet", "visible"), false)
-            expect("...it opens with none", fake.last("selectAccount"), ["selectAccount", "g_test", ""])
+            expect("never opened here: asked again", prop("birthdaySheet", "visible"), true)
+            find(view.item, "firstOpenOlder", 0).clicked()
+            find(view.item, "birthdayUnknown", 0).checked = true
+            find(view.item, "confirmBirthdayButton", 0).clicked()
+            expect("not knowing opens with none", fake.last("selectAccount"), ["selectAccount", "g_test", ""])
             expect("...four opens in all", fake.count("selectAccount"), 4)
             find(view.item, "manageAccountsButton", 0).clicked()
             expect("management goes to Keystore", logos.requests[logos.requests.length-1].intent, "evm.accounts.manage")
@@ -1795,6 +1806,8 @@ Item {
             scene.opensBefore = fake.count("selectAccount")
             v.pickAccount(v.accountsOnNetwork[0])
             expect("picking the open one does nothing", [fake.count("selectAccount") - scene.opensBefore, fake.count("closeWallet")], [0, 1])
+            // g_other was opened on this network before, so once the open one closes it opens without asking.
+            fake.walletsJson = JSON.stringify([{ group: "g_main", family: "bitcoin", network: "mainnet" }, { group: "g_other", family: "bitcoin_taproot", network: "mainnet" }])
             find(view.item,"accountPicker",0).currentIndex = 1
             find(view.item,"accountPicker",0).activated(1)
             expect("picking another closes the open one first", [fake.count("closeWallet"), v.autoOpenId], [2, "g_other"])

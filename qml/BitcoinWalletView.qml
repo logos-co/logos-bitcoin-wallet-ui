@@ -145,12 +145,14 @@ Item {
         && status.unavailable !== true && backend.accountsError === "" && canOpenAccount(selectedAccount)
     // The wallet keeps each account's birthday itself: an account's first open on a network asks for it.
     function openedBefore(id) { return root.walletsOnNetwork.some(function (w) { return w.group === id }) }
-    // A first open doesn't stop to ask the birthday: with none, the core looks for payments from where
-    // the account's kind of address began, and the open wallet offers "Set the account's birthday"
-    // to start later. Opening is one step: pick the account.
+    // An account opened before opens at once. A first open asks one thing, "Is this account new?":
+    // new starts from today (quick, and nothing to miss); one with payments already picks a day or
+    // "I don't know". Kept after a scan from the activation height missed payments through the node
+    // in Logos (logos-bitcoin-wallet-core-module#39).
     function openSelectedAccount() {
         if (!canOpenSelectedAccount) return
-        backend.selectAccount(selectedAccount.id, "")
+        if (root.openedBefore(selectedAccount.id)) backend.selectAccount(selectedAccount.id, "")
+        else birthdaySheet.askFirst(selectedAccount.id)
     }
     // The account picked to open next: it opens as soon as it can (after the open one has closed,
     // or once the node setup is saved).
@@ -4197,33 +4199,50 @@ Item {
         // The account a first open asks about, or "" to set the open wallet's.
         property string opening: ""
         function askFirst(id) { birthdaySheet.opening = id; birthdaySheet.open() }
-        title: opening ? "When was this account first used?" : "The account's birthday"
+        // A first open starts with one question; "It has payments already…" opens the day choice.
+        property bool older: false
+        readonly property bool compact: opening !== "" && !older
+        title: compact ? "Is this account new?" : opening ? "When was this account first used?" : "The account's birthday"
         property bool unknown: false
         property bool isNew: false
         readonly property bool dateOk: /^\d{4}-\d{2}-\d{2}$/.test(birthdayDate.text.trim())
         readonly property bool pending: !opening && root.birthdayJob.state === "pending"
-        onOpened: { birthdaySheet.unknown = false; birthdaySheet.isNew = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false }
+        onOpened: { birthdaySheet.older = false; birthdaySheet.unknown = false; birthdaySheet.isNew = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false }
         onClosed: birthdaySheet.opening = ""
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 560)
         contentItem: ColumnLayout {
             spacing: Theme.spacing.small
             LogosText { objectName: "birthdayIntro"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                        text: birthdaySheet.opening
+                        text: birthdaySheet.compact
+                              ? "A new account only needs to look for payments from today, which is quick."
+                              : birthdaySheet.opening
                               ? "It looks for payments from about two days before that day, so its first sync skips the years "
                                 + "before. A day after its first payment would hide the ones before it."
                               : "The day this account was first used. It looks for payments from about two days before it. "
                                 + "A day after its first payment would hide the ones before, so the wallet refuses it." }
+            ColumnLayout {
+                objectName: "firstOpenChoice"
+                visible: birthdaySheet.compact
+                Layout.fillWidth: true
+                spacing: Theme.spacing.small
+                LogosButton { objectName: "firstOpenNew"; Layout.fillWidth: true; variant: LogosButton.Variant.Primary
+                              text: "It's new: start from today"; enabled: root.ready && root.canOpenSelectedAccount
+                              onClicked: { backend.selectAccount(birthdaySheet.opening, root.todayUtc()); birthdaySheet.close() } }
+                LogosButton { objectName: "firstOpenOlder"; Layout.fillWidth: true
+                              text: "It has payments already…"; onClicked: birthdaySheet.older = true }
+            }
             ButtonGroup { id: birthdayGroup }
             LogosRadioButton { id: birthdayOnDay; objectName: "birthdayOnDay"; ButtonGroup.group: birthdayGroup; checked: true
+                               visible: !birthdaySheet.compact
                                text: "It was first used on"
                                onCheckedChanged: if (checked) { birthdaySheet.unknown = false; birthdaySheet.isNew = false } }
-            LogosTextField { id: birthdayDate; objectName: "birthdayDateField"; Layout.preferredWidth: 200
+            LogosTextField { id: birthdayDate; objectName: "birthdayDateField"; Layout.preferredWidth: 200; visible: !birthdaySheet.compact
                              enabled: !birthdaySheet.unknown && !birthdaySheet.isNew; placeholderText: "YYYY-MM-DD" }
-            LogosRadioButton { objectName: "birthdayNew"; ButtonGroup.group: birthdayGroup; visible: birthdaySheet.opening !== ""
+            LogosRadioButton { objectName: "birthdayNew"; ButtonGroup.group: birthdayGroup; visible: birthdaySheet.opening !== "" && !birthdaySheet.compact
                                text: "It's new: nothing was sent to it before today"
                                onCheckedChanged: if (checked) { birthdaySheet.isNew = true; birthdaySheet.unknown = false } }
-            LogosRadioButton { objectName: "birthdayUnknown"; ButtonGroup.group: birthdayGroup
+            LogosRadioButton { objectName: "birthdayUnknown"; ButtonGroup.group: birthdayGroup; visible: !birthdaySheet.compact
                                text: "I don't know: look from where this kind of address began, which takes longer"
                                onCheckedChanged: if (checked) { birthdaySheet.unknown = true; birthdaySheet.isNew = false } }
             LogosText { objectName: "birthdayError"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
@@ -4234,6 +4253,7 @@ Item {
         rightActions: [
             LogosButton {
                 objectName: "confirmBirthdayButton"
+                visible: !birthdaySheet.compact
                 text: birthdaySheet.opening ? "Open" : birthdaySheet.pending ? "Setting…" : "Set"
                 variant: LogosButton.Variant.Primary
                 enabled: root.ready && (birthdaySheet.opening ? root.canOpenSelectedAccount : root.walletOpen && !birthdaySheet.pending)

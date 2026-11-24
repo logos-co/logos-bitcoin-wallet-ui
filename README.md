@@ -99,9 +99,12 @@ and each open allowed in the Signer app, and every send is approved there.
     "Stalled" again.
   - The history line says where payments are found: "Payments found on this device, through block
     filters" under Kyoto, "Payments found through your node", or "Payments looked up at <server>".
-  - The core keeps each account's birthday. A first open doesn't stop to ask: it opens with none,
-    so the core looks for payments from where the account's kind of address began, and Balance
-    offers "Set the account's birthday" to start later. A wallet without one (`needsBirthday`) asks again: a day, or "I don't know" (`set_birthday`,
+  - The core keeps each account's birthday. A first open asks one thing, "Is this account new?":
+    **It's new: start from today** opens from today (quick, and nothing before it to miss);
+    **It has payments already…** offers a day or "I don't know" (from where the account's kind of
+    address began). It stays a question rather than "I don't know" by default while a scan from the
+    activation height through the node in Logos can miss payments
+    (logos-bitcoin-wallet-core-module#39). A wallet without one (`needsBirthday`) asks again: a day, or "I don't know" (`set_birthday`,
     a job; `{ height: 0 }` scans from where the wallet's kind of address began). Settings changes it.
     A refusal, such as a day after its first payment, shows with the core's reason; while
     `rescanFrom` holds, Balance reads "Rescanning from block H", with its share (`syncPercent`) and a bar
