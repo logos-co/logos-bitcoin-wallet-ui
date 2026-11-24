@@ -3360,21 +3360,19 @@ Item {
                         objectName: "receiveCard"
                         Layout.fillWidth: true
                         contentItem: ColumnLayout {
+                            id: receiveCardColumn
                             spacing: Theme.spacing.small
                             QrMatrix { objectName: "receiveQr"; Layout.alignment: Qt.AlignHCenter; qr: root.ready ? root.parseQr(backend.receiveQrJson) : null }
                             RowLayout {
                                 Layout.alignment: Qt.AlignHCenter
-                                Layout.maximumWidth: parent.width
                                 spacing: Theme.spacing.tiny
-                                // As wide as the address itself, so the copy button sits right after it; wraps only
-                                // when the column is narrower than the address.
-                                TextMetrics { id: receiveAddressMetrics; font: receiveAddressText.font; text: receiveAddressText.text }
-                                LogosSelectableText {
-                                    id: receiveAddressText
+                                // As wide as the address itself, the copy button right after it, the pair centred.
+                                // Elided in the middle only when the column is narrower than the address.
+                                LogosText {
                                     objectName: "receiveAddress"
-                                    Layout.preferredWidth: Math.min(Math.ceil(receiveAddressMetrics.advanceWidth) + 2, parent.Layout.maximumWidth - 40)
-                                    wrapMode: TextEdit.WrapAnywhere
-                                    horizontalAlignment: Text.AlignHCenter
+                                    Layout.maximumWidth: receiveCardColumn.width - 48
+                                    textFormat: Text.PlainText
+                                    elide: Text.ElideMiddle
                                     font.family: Theme.typography.mono
                                     text: root.receive.address || "—"
                                 }
