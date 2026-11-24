@@ -1537,6 +1537,16 @@ Item {
     readonly property bool recipientValid: recipientChecked && recipientCheck.valid === true
     property string amountUnit: "btc"
     property bool sendMax: false
+    // The amount typed before Send max went on, put back when it goes off.
+    property string amountBeforeMax: ""
+    function amountInUnit(sat) { return amountUnit === "sat" ? satsText(sat) : btcOf(sat) + " BTC" }
+    function maxInField() { return spendableSat === "" ? "" : amountUnit === "sat" ? spendableSat : btcOf(spendableSat) }
+    function setSendMax(on) {
+        if (on === sendMax) return
+        if (on) { amountBeforeMax = sendAmount.text; sendMax = true; sendAmount.text = maxInField() }
+        else { sendMax = false; sendAmount.text = amountBeforeMax; amountBeforeMax = "" }
+    }
+    onSpendableSatChanged: if (sendMax) sendAmount.text = maxInField()
     property string feeChoice: "normal"
     readonly property string amountSat: satFromInput(sendAmount.text, amountUnit)
     readonly property real chosenRate: feeChoice === "custom" ? Number(feeCustom.text) : Number(feeRates[feeChoice] || 0)
@@ -1680,7 +1690,7 @@ Item {
         var s = root.sendState
         backend.dismissSend()
         reviewSheet.close()
-        if (s === "sent" && root.send.kind !== "fee_bump") { sendTo.text = ""; sendAmount.text = ""; root.sendMax = false }
+        if (s === "sent" && root.send.kind !== "fee_bump") { sendTo.text = ""; root.sendMax = false; root.amountBeforeMax = ""; sendAmount.text = "" }
     }
     property string forgetTxid: ""
     // The backend's note says what forgetting does; it shows in the sheet once it has.
@@ -3170,14 +3180,6 @@ Item {
                     x: (room - width) / 2
                     spacing: Theme.spacing.small
 
-                    LogosText {
-                        objectName: "sendAvailable"
-                        Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                        color: Theme.palette.textSecondary
-                        text: root.hasBeyondGap ? "Send spends confirmed coins, those found beyond the gap limit included: "
-                                                  + root.btcOf(root.spendableSat) + " BTC."
-                              : "Send spends confirmed coins only" + (root.balancesRead ? ": " + root.btcOf(root.balances.confirmed) + " BTC." : ".")
-                    }
                     LogosNotice {
                         objectName: "sendNodeNotice"
                         Layout.fillWidth: true
@@ -3264,14 +3266,16 @@ Item {
                                 sendAmount.text = sat === "" ? "" : (root.amountUnit === "sat" ? sat : root.btcOf(sat))
                             }
                         }
-                        LogosSwitch {
-                            objectName: "sendMaxSwitch"
-                            text: "Send max"
-                            checkable: false
-                            checked: root.sendMax
-                            enabled: !root.sendLive
-                            onClicked: root.sendMax = !root.sendMax
-                        }
+                    }
+                    // Everything spendable, what it comes to, on a line of its own. On, the amount goes into
+                    // the field (the fee still comes out of it); off, the amount typed before comes back.
+                    LogosSwitch {
+                        objectName: "sendMaxSwitch"
+                        text: "Send max" + (root.spendableSat !== "" ? ": " + root.amountInUnit(root.spendableSat) : "")
+                        checkable: false
+                        checked: root.sendMax
+                        enabled: !root.sendLive
+                        onClicked: root.setSendMax(!root.sendMax)
                     }
                     LogosText {
                         objectName: "amountNote"

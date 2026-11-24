@@ -486,6 +486,7 @@ Item {
     }
 
     // What renders, against the fake backend; each step runs after the previous one settled.
+    property string amountBeforeMax: ""
     property var steps: [
         function (v) {
             fake.networksJson = JSON.stringify({ networks: ["mainnet", "testnet4", "signet", "regtest"], active: "regtest" })
@@ -838,9 +839,13 @@ Item {
             // Send max of 400 sats: at 6 sat/vB the fee takes it all, at 1 sat/vB about 291 are left.
             scene.keptBalances = fake.balancesJson
             fake.balancesJson = JSON.stringify({ busy: false, confirmed: "400", waiting: "0", pending: "0", sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" } })
-            v.sendMax = true
+            scene.amountBeforeMax = prop("sendAmountField", "text")
+            find(view.item, "sendMaxSwitch", 0).clicked()
         },
         function (v) {
+            // Send max names what it comes to and puts it in the field.
+            expect("send max: its amount on the switch", prop("sendMaxSwitch", "text"), "Send max: " + v.btcOf("400") + " BTC")
+            expect("...and in the field", prop("sendAmountField", "text"), v.btcOf("400"))
             expect("send max the fee eats", prop("dustNote", "text"), "The fee would take all of it. The smallest amount this address can receive is 294 sats.")
             expect("...no review", prop("reviewButton", "enabled"), false)
             v.feeChoice = "custom"
@@ -856,7 +861,8 @@ Item {
             expect("send max a vbyte's worth above: left to the core", shown("dustNote"), false)
             expect("...review", prop("reviewButton", "enabled"), true)
             fake.balancesJson = scene.keptBalances
-            v.sendMax = false
+            find(view.item, "sendMaxSwitch", 0).clicked()
+            expect("send max off: the amount typed before comes back", prop("sendAmountField", "text"), scene.amountBeforeMax)
             v.feeChoice = "normal"
             find(view.item, "feeCustomField", 0).text = ""
             find(view.item, "sendAmountField", 0).text = "0.0006"
@@ -1504,8 +1510,8 @@ Item {
             expect("the balance leaves them out", prop("confirmedCard", "value"), v.btcOf("100250000") + " BTC")
             expect("...but what Send spends counts them", prop("confirmedCard", "caption"), "Confirmed on the wallet's own chain. Send "
                    + "spends this and the coins found beyond the gap limit: " + v.btcOf("100320000") + " BTC in all.")
-            expect("Send says so too", prop("sendAvailable", "text"), "Send spends confirmed coins, those found beyond the gap limit included: "
-                   + v.btcOf("100320000") + " BTC.")
+            // Send's Send max names the same total: the confirmed coins and those found beyond the gap limit.
+            expect("Send max says so too", prop("sendMaxSwitch", "text"), "Send max: " + v.btcOf("100320000") + " BTC")
             v.selectTab(3)
         },
         function (v) {
@@ -1525,8 +1531,7 @@ Item {
             expect("the confirmed part is spendable", prop("beyondGapRow", "note"), "2 coins, yours: " + v.btcOf("70000")
                    + " BTC of it is confirmed and spendable, and Send counts that.")
             expect("...the line shows them all", prop("beyondGapRowAmount", "text"), v.btcOf("90000") + " BTC")
-            expect("...and Send counts the confirmed part", prop("sendAvailable", "text"), "Send spends confirmed coins, those found beyond "
-                   + "the gap limit included: " + v.btcOf("100320000") + " BTC.")
+            expect("...and Send max counts the confirmed part", prop("sendMaxSwitch", "text"), "Send max: " + v.btcOf("100320000") + " BTC")
             v.selectTab(4)
         },
         function (v) {
