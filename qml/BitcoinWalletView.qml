@@ -1556,6 +1556,19 @@ Item {
         else { sendMax = false; sendAmount.text = amountBeforeMax; amountBeforeMax = "" }
     }
     onSpendableSatChanged: if (sendMax) sendAmount.text = maxInField()
+    // Another account open: Send starts afresh, so another account's amount or Send max never carries over.
+    readonly property string sendAccount: walletOpen ? (status.group || "") : ""
+    onSendAccountChanged: if (!sendLive) { sendMax = false; amountBeforeMax = ""; sendAmount.text = ""; sendTo.text = "" }
+    // More than the confirmed coins: said under the amount, and Review waits, rather than the
+    // build failing after Review. What is waiting for a block is named, since it will be spendable.
+    readonly property string incomingSat: balancesRead && isNum(balances.pending) ? String(balances.pending) : "0"
+    readonly property bool overSpendable: spendableSat !== ""
+        && (sendMax ? Number(spendableSat) <= 0 : amountSat !== "" && Number(amountSat) > Number(spendableSat))
+    function overSpendableLine() {
+        var waiting = Number(incomingSat) > 0 ? btcOf(incomingSat) + " BTC is waiting for a block and can be sent once it confirms." : ""
+        if (Number(spendableSat) <= 0) return "Nothing confirmed to send yet." + (waiting ? " " + waiting : "")
+        return "More than the " + btcOf(spendableSat) + " BTC confirmed." + (waiting ? " " + waiting : "")
+    }
     property string feeChoice: "normal"
     readonly property string amountSat: satFromInput(sendAmount.text, amountUnit)
     readonly property real chosenRate: feeChoice === "custom" ? Number(feeCustom.text) : Number(feeRates[feeChoice] || 0)
@@ -1564,7 +1577,7 @@ Item {
     // chain a send would be approved in the Signer and then fail to broadcast, so Send waits for it.
     readonly property bool sendsThroughNode: (localSends || sendsRecommended) === "node"
     readonly property bool sendWaitsForNode: localNodeIdle && sendsThroughNode
-    readonly property bool canReview: ready && walletOpen && !sendLive && sendOutcome(send) !== "unknown" && !sendWaitsForNode
+    readonly property bool canReview: ready && walletOpen && !sendLive && sendOutcome(send) !== "unknown" && !sendWaitsForNode && !overSpendable
                                       && recipientValid && (sendMax || amountSat !== "") && rateOk && !belowDust
     // The least the recipient can receive, from its check; "" from a core that doesn't say.
     readonly property string dustSat: recipientValid && isNum(recipientCheck.dustSat) ? String(recipientCheck.dustSat) : ""
@@ -3286,6 +3299,13 @@ Item {
                         checked: root.sendMax
                         enabled: !root.sendLive
                         onClicked: root.setSendMax(!root.sendMax)
+                    }
+                    LogosText {
+                        objectName: "overSpendableNote"
+                        visible: root.overSpendable
+                        Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                        color: Theme.palette.error
+                        text: root.overSpendable ? root.overSpendableLine() : ""
                     }
                     LogosText {
                         objectName: "amountNote"

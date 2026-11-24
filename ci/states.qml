@@ -870,6 +870,10 @@ Item {
             find(view.item, "sendMaxSwitch", 0).clicked()
             find(view.item, "sendAmountField", 0).text = "0.0001"
             expect("editing the max turns Send max off", [v.sendMax, prop("sendAmountField", "text")], [false, "0.0001"])
+            // More than the confirmed coins: said under the amount, and Review waits.
+            find(view.item, "sendAmountField", 0).text = "5"
+            expect("over the confirmed coins: said", [shown("overSpendableNote"), prop("reviewButton", "enabled")], [true, false])
+            expect("...with how much is confirmed", prop("overSpendableNote", "text").indexOf("More than the ") === 0, true)
             v.feeChoice = "normal"
             find(view.item, "feeCustomField", 0).text = ""
             find(view.item, "sendAmountField", 0).text = "0.0006"
