@@ -1383,6 +1383,9 @@ Item {
     // Something the person must know or do: the node isn't running, failed, is on its way, or runs
     // another network. A running node the wallet is still connecting to is the normal sync line.
     readonly property bool localNodeIdle: localNodeExpected && !localNodeChecking && localNodePhase !== "running"
+    // The node runs and the core hasn't taken it as the chain yet (it asks it on a timer after an
+    // open): connecting, said calmly, not the core's "no server answered" from before.
+    readonly property bool localNodeConnecting: localNodeExpected && localNodePhase === "running"
     // The node in Logos as the node module sees it (bitcoind_module's status), from a backend that
     // passes it on; null from an older one, and the wallet then can't tell stopped from syncing.
     readonly property var localNode: health && health.localNode && typeof health.localNode === "object" ? health.localNode : null
@@ -2701,10 +2704,10 @@ Item {
                 visible: root.ready
                 signal clicked()
                 onClicked: networkSheet.open()
-                text: (root.displayedNetwork || "—") + (root.localNodeChecking ? " · Checking node…" : root.localNodeIdle ? " · " + root.localNodeChip() : root.walletOpen ? " · " + syncChipText.text : "")
+                text: (root.displayedNetwork || "—") + (root.localNodeChecking ? " · Checking node…" : root.localNodeConnecting ? " · Connecting…" : root.localNodeIdle ? " · " + root.localNodeChip() : root.walletOpen ? " · " + syncChipText.text : "")
                 // While the node in Logos is what's missing, its own state sets the colour: red when
                 // something must be fixed (stopped, failed), yellow while it is on its way.
-                color: root.localNodeChecking ? Theme.palette.textSecondary
+                color: root.localNodeChecking || root.localNodeConnecting ? Theme.palette.textSecondary
                        : root.localNodeIdle
                        ? (root.localNodePhase === "starting" || root.localNodePhase === "syncing" || root.localNodePhase === "wrong_network"
                           ? Theme.palette.warning : Theme.palette.error)
@@ -3105,7 +3108,9 @@ Item {
                         spacing: Theme.spacing.tiny
                         LogosText { objectName: "syncLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                                     visible: root.syncState(root.status) !== "synced"
-                                    color: root.syncColor(root.status); text: root.syncLabel(root.status) }
+                                    color: root.localNodeConnecting ? Theme.palette.textSecondary : root.syncColor(root.status)
+                                    text: root.localNodeConnecting ? "Connecting to your node…" + (root.isNum((root.localNodeStatus || {}).blocks) ? " It is at block " + root.group(root.localNodeStatus.blocks) + "." : "")
+                                                                   : root.syncLabel(root.status) }
                         LogosProgressBar {
                             objectName: "headersProgress"
                             Layout.fillWidth: true
@@ -3131,7 +3136,7 @@ Item {
                         LogosText { objectName: "historyLine"; visible: !!root.status.historyServer && root.syncState(root.status) !== "synced"; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
                                     text: root.historyLine(root.status.historyServer) }
-                        LogosText { visible: !!root.status.lastError; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        LogosText { visible: !!root.status.lastError && !root.localNodeConnecting; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning
                                     text: "Last sync error: " + (root.status.lastError || "") }
                         LogosText { objectName: "rpcPendingScanLine"; visible: (root.status.authority || {}).kind === "rpc_node" && Number(root.nodeStatus.pendingScanRemaining || 0) > 0
