@@ -820,7 +820,11 @@ Item {
         // payments were checked, a block or two behind the tip being the newest block's catch-up.
         var scan = root.kyotoScan(st)
         var tip = st.walletTip
+        // Under a node, the wallet's chain follows the node's headers at once while its scan of the
+        // node's filters can still be far behind (a scan from the activation height takes a while):
+        // only the core's `synced` says the scan reached the tip (logos-bitcoin-wallet-core-module#39).
         var caughtUp = scan !== null ? scan.at !== null && scan.at + 2 >= scan.tip
+                     : root.isNodeKind(a.kind) && "synced" in st ? st.synced === true
                      : root.isNum(tip) ? Number(tip) >= Number(a.height) : st.synced === true
         // Regtest's blocks come when someone mines one: its tip age says nothing.
         if (st.network === "regtest") return caughtUp ? "local" : "syncing"
@@ -908,6 +912,10 @@ Item {
         case "syncing": {
             var scan = root.kyotoScan(st)
             if (scan !== null) return root.scanLine(scan)
+            // A node's filter scan says no height of its own yet: say what it does and from where.
+            if (root.isNodeKind(a.kind) && !root.isNum(st.syncPercent))
+                return "Checking blocks for your payments, from block " + root.group(root.isNum(st.rescanFrom) ? st.rescanFrom : (st.birthday || 0))
+                       + " to " + h + ". Payments show once it reaches them."
             return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
                    + (root.isNum(st.walletTip) ? " · block " + root.group(st.walletTip) + " of " + h
                                                : " · the chain is at block " + h)
@@ -996,6 +1004,7 @@ Item {
         case "syncing": {
             var scan = root.kyotoScan(st)
             if (scan !== null) return scan.share !== null ? "Filters " + scan.share + "%" : "Checking filters…"
+            if (root.isNodeKind(a.kind) && !root.isNum(st.syncPercent)) return "Scanning…"
             return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
         }
         case "local": return "Local chain"

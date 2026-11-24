@@ -462,6 +462,15 @@ Item {
 
         expect("authority kyoto", v.authorityName({ authority: { kind: "kyoto", peers: 2 } }), "2 Bitcoin peers")
         expect("authority node", v.authorityName({ authority: { kind: "local_node" } }), "your node")
+        // Under the node the wallet's chain is at the tip at once; only the core's `synced` says the scan
+        // reached it (logos-bitcoin-wallet-core-module#39): a scan from 0 is "syncing", not "Synced".
+        var nodeScan = { state: "ready", network: "signet", walletTip: 332310, synced: false, birthday: 0,
+                         authority: { kind: "local_node", height: 332310, peers: 1, asked: true, tipAgeSecs: 60 } }
+        expect("node scan still running: not synced", v.syncState(nodeScan), "syncing")
+        expect("...said as a scan from its start", v.syncStateLabel(nodeScan).indexOf("Checking blocks for your payments, from block 0 to 332,310") === 0, true)
+        expect("...the chip", v.syncChip(nodeScan), "Scanning…")
+        nodeScan.synced = true
+        expect("node scan done: synced", v.syncState(nodeScan), "synced")
         expect("gap", v.gapBlocks({ from: 100, below: 300 }), "blocks 100–299")
         expect("gap one", v.gapBlocks({ from: 100, below: 101 }), "block 100")
         expect("change to fee", v.warningText({ kind: "change_to_fee", amountSat: "450", costToSpendSat: "680" }),
