@@ -594,7 +594,7 @@ Item {
             fake.busy = false
             fake.statusJson = scene.syncedMainnet
             fake.balancesJson = JSON.stringify({ busy: false, confirmed: "125000000", confirmedBtc: "1.25000000", waiting: "50000", pending: "30000",
-                                                 sent: "0", immature: "0", tooSmall: { count: 2, sat: "540", btc: "0.00000540" } })
+                                                 sent: "39859", immature: "0", tooSmall: { count: 2, sat: "540", btc: "0.00000540" } })
             fake.feeRatesJson = JSON.stringify({ fast: 12, normal: 6, slow: 2, minimum: 1, sources: ["electrum.example"] })
             fake.historyJson = JSON.stringify({ page: 0, pageSize: 50, total: 3, rows: [
                 { txid: "aa".repeat(32), intent: "receive", amountSat: "30000", state: "pending", reportedBy: "electrum.example", confirmations: 0 },
@@ -608,8 +608,10 @@ Item {
             expect("waiting row", shown("waitingRow"), true)
             expect("pending row", shown("pendingRow"), true)
             expect("too small row", prop("tooSmallRowAmount", "text"), "2 coins, 0.0000054 BTC")
-            expect("sent row", shown("sentRow"), true)
-            expect("home speed up", shown("homeSpeedUp_" + "bb".repeat(32)), true)
+            expect("sent row: the change coming back", [shown("sentRow"), prop("sentRowAmount", "text")], [true, v.btcOf("39859") + " BTC"])
+            // Balance says what the send means for the balance; Speed up lives on its Activity card.
+            expect("sent row points to Activity", shown("sentRowActivity"), true)
+            expect("...no Speed up on Balance", find(view.item, "homeSpeedUp_" + "bb".repeat(32), 0), null)
             expect("the tip watch, in the servers' words", v.alertMessage({ kind: "authority_behind", source: "electrum.example" }),
                    "Example Electrum has seen blocks the Electrum servers haven't sent for 30 minutes; the Electrum servers may be cut off from the network.")
             expect("your node, asked alone, in its own report's words",

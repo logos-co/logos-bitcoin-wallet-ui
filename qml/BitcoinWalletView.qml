@@ -3024,25 +3024,21 @@ Item {
                                            + (r.reportedBy && !root.isNodeKind(r.reportedBy) ? ", reported by " + root.sourceLabel(r.reportedBy) : "")
                                 }).join("")
                     }
+                    // What a send not confirmed yet means for the balance: the change it brings back. The
+                    // transaction itself, and Speed up, are in Activity.
                     BalanceRow {
                         objectName: "sentRow"
-                        visible: root.unconfirmedSends.length > 0 || (root.balancesRead && Number(root.balances.sent || 0) > 0)
-                        title: "Sent, not confirmed yet"
-                        amount: root.balancesRead && Number(root.balances.sent || 0) > 0 ? root.btcOf(root.balances.sent) + " BTC returning" : ""
-                        note: "Your own transactions, broadcast. Their coins stay reserved until they confirm; any change "
-                              + "comes back then. Speed up replaces one with a higher fee."
-                        extra: Repeater {
-                            model: root.unconfirmedSends
-                            RowLayout {
-                                spacing: Theme.spacing.small
-                                LogosText { objectName: "unconfirmedSend_" + modelData.txid; textFormat: Text.PlainText; font.pixelSize: 12
-                                            text: root.intentLine(modelData) }
-                                LogosText { textFormat: Text.PlainText; font.pixelSize: 11; color: Theme.palette.textTertiary
-                                            text: root.shortId(modelData.txid) }
-                                LogosButton { objectName: "homeSpeedUp_" + modelData.txid; text: "Speed up"
-                                              enabled: root.ready && !root.sendLive
-                                              onClicked: speedUpSheet.ask(modelData) }
-                            }
+                        // Only when change comes back: a send without change changes nothing still to come.
+                        visible: root.balancesRead && Number(root.balances.sent || 0) > 0
+                        title: "Change on its way back"
+                        amount: root.balancesRead && Number(root.balances.sent || 0) > 0 ? root.btcOf(root.balances.sent) + " BTC" : ""
+                        note: (root.unconfirmedSends.length > 1 ? "From " + root.unconfirmedSends.length + " sends" : "From a send")
+                              + " not confirmed yet. It counts once confirmed."
+                        extra: LogosButton {
+                            objectName: "sentRowActivity"
+                            compact: true
+                            text: "Show in Activity"
+                            onClicked: root.selectTab(3)
                         }
                     }
                     BalanceRow {
