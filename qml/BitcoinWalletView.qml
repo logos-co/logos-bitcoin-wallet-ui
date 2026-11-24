@@ -1371,9 +1371,18 @@ Item {
     // The node in Logos: missing on this network, its state from the open wallet, else from its health.
     // "In Logos" is this network's chain source, but the chain isn't coming from it: the node is
     // stopped or still syncing. The Bitcoin Node app owns starting it, so the wallet sends people there.
-    readonly property bool localNodeIdle: walletOpen && chainMode === "node" && nodePlace === "local"
-                                          && !isNodeKind((status.authority || {}).kind)
-                                          && syncState(status) !== "synced" && syncState(status) !== "local"
+    // The chain should come from the node in Logos and doesn't (yet).
+    readonly property bool localNodeExpected: walletOpen && chainMode === "node" && nodePlace === "local"
+                                              && !isNodeKind((status.authority || {}).kind)
+                                              && syncState(status) !== "synced" && syncState(status) !== "local"
+    // The node's state isn't known yet (the first health read after an open or a switch). A backend
+    // that never passes localNode on (before bitcoin_wallet_backend#15) says so with a health read
+    // that has none: then the generic warning stands, as before.
+    readonly property bool localNodeChecking: localNodeExpected && localNodePhase === ""
+                                              && !(health && health.sources && !("localNode" in health))
+    // Something the person must know or do: the node isn't running, failed, is on its way, or runs
+    // another network. A running node the wallet is still connecting to is the normal sync line.
+    readonly property bool localNodeIdle: localNodeExpected && !localNodeChecking && localNodePhase !== "running"
     // The node in Logos as the node module sees it (bitcoind_module's status), from a backend that
     // passes it on; null from an older one, and the wallet then can't tell stopped from syncing.
     readonly property var localNode: health && health.localNode && typeof health.localNode === "object" ? health.localNode : null
@@ -2679,10 +2688,11 @@ Item {
                 visible: root.ready
                 signal clicked()
                 onClicked: networkSheet.open()
-                text: (root.displayedNetwork || "—") + (root.localNodeIdle ? " · " + root.localNodeChip() : root.walletOpen ? " · " + syncChipText.text : "")
+                text: (root.displayedNetwork || "—") + (root.localNodeChecking ? " · Checking node…" : root.localNodeIdle ? " · " + root.localNodeChip() : root.walletOpen ? " · " + syncChipText.text : "")
                 // While the node in Logos is what's missing, its own state sets the colour: red when
                 // something must be fixed (stopped, failed), yellow while it is on its way.
-                color: root.localNodeIdle
+                color: root.localNodeChecking ? Theme.palette.textSecondary
+                       : root.localNodeIdle
                        ? (root.localNodePhase === "starting" || root.localNodePhase === "syncing" || root.localNodePhase === "wrong_network"
                           ? Theme.palette.warning : Theme.palette.error)
                        : root.walletOpen && root.syncState(root.status) !== "synced" && root.syncState(root.status) !== "local"
@@ -3075,7 +3085,7 @@ Item {
                       objectName: "syncCard"
                       Layout.fillWidth: true
                       // Synced needs no block here: the network chip says it, with the block in its tooltip.
-                      visible: !root.localNodeIdle && (root.syncState(root.status) !== "synced" || root.rescanning || !!root.status.lastError
+                      visible: !root.localNodeIdle && !root.localNodeChecking && (root.syncState(root.status) !== "synced" || root.rescanning || !!root.status.lastError
                                || (!!root.prunedGap && !!root.prunedGap.via) || root.kyotoTorLine(root.status) !== ""
                                || ((root.status.authority || {}).kind === "rpc_node" && Number(root.nodeStatus.pendingScanRemaining || 0) > 0))
                       contentItem: ColumnLayout {
