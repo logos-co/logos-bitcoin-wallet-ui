@@ -55,7 +55,13 @@ Frame {
     // Add accounts becomes a full-width button under the connection; rename/forget become the edit
     // and trash icons beside the name; anything else (e.g. Verify) stays in the top row.
     readonly property var allActions: Roster.actions(card.actions)
-    readonly property var addAction: allActions.filter(function (a) { return a.id === "add" })[0] || null
+    // Opt-in, as the icons are: with `primaryAdd` the `add` action is the card's full-width primary
+    // button; without it, it stays a text button with the others. Its object name is
+    // `<prefix>Action_add` either way, so specs that click it keep working.
+    property bool primaryAdd: false
+    // Renaming doesn't need the keys: the Signer keeps the pencil on a locked wallet.
+    property bool editWhileLocked: false
+    readonly property var addAction: primaryAdd ? allActions.filter(function (a) { return a.id === "add" })[0] || null : null
     // Rename and forget become icons by the title only when the app passes the icons.
     readonly property var editAction: editIcon.toString() ? allActions.filter(function (a) { return a.id === "rename" })[0] || null : null
     readonly property var trashAction: trashIcon.toString() ? allActions.filter(function (a) { return a.id === "forget" || a.id === "removewallet" })[0] || null : null
@@ -113,7 +119,7 @@ Frame {
                     }
                     LogosIconButton {
                         objectName: card.namePrefix + "Edit"
-                        visible: !!card.editAction && !card.locked
+                        visible: !!card.editAction && (!card.locked || card.editWhileLocked)
                         enabled: !card.editAction || card.editAction.enabled !== false
                         flat: true; size: 28; iconSize: 16
                         iconSource: card.editIcon
@@ -146,7 +152,7 @@ Frame {
                     // the short form the Signer/Keys and hardware wallets show, once accounts load.
                     HoverHandler { id: walletIdHover }
                     ToolTip {
-                        text: "The master fingerprint of the wallet's keys, the same ID the Signer and Keys apps show."
+                        text: "The master fingerprint of the wallet's keys, the same ID every Logos wallet app shows."
                             + (card.walletIdFull.length > 0 ? "\nkeyUid: " + card.walletIdFull : "")
                         visible: walletIdHover.hovered
                         delay: 400
@@ -241,7 +247,9 @@ Frame {
                 // 44 px min, which otherwise inflated only the button rows). A wrapping strip (a
                 // multi-line warning) keeps its natural height.
                 readonly property bool wrapping: !!(modelData && modelData.warn)
-                implicitHeight: wrapping ? (stripRow.implicitHeight + 2 * Theme.spacing.small) : 40
+                // At least 40, and taller when its text wraps (a long reader name at a narrow width).
+                implicitHeight: wrapping ? (stripRow.implicitHeight + 2 * Theme.spacing.small)
+                                         : Math.max(40, stripRow.implicitHeight + 2 * Theme.spacing.small)
                 radius: 6
                 color: Theme.palette.backgroundSecondary
                 RowLayout {
@@ -301,7 +309,7 @@ Frame {
         }
 
         LogosButton {
-            objectName: card.namePrefix + "AddAccounts"
+            objectName: card.namePrefix + "Action_add"
             visible: !!card.addAction && !card.locked
             enabled: !card.addAction || card.addAction.enabled !== false
             Layout.fillWidth: true
