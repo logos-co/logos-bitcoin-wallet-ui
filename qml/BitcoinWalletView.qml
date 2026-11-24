@@ -3256,6 +3256,8 @@ Item {
                         LogosComboBox {
                             id: unitBox
                             objectName: "amountUnitBox"
+                            // As tall as the amount field beside it.
+                            Layout.preferredHeight: sendAmount.height
                             model: ["BTC", "sats"]
                             currentIndex: root.amountUnit === "sat" ? 1 : 0
                             enabled: !root.sendLive && !root.sendMax
