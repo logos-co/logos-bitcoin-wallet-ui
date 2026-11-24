@@ -1431,6 +1431,9 @@ Item {
         }
         return "Node not ready"
     }
+    // The balance as of the last block the wallet checked, while its chain isn't current.
+    readonly property bool balanceStale: walletOpen && isNum((status.authority || {}).height)
+                                         && syncState(status) !== "synced" && syncState(status) !== "local"
     function localNodeLine() {
         var s = root.sourceList.filter(function (x) { return x.kind === "local" })[0]
         if (!s) return "The node in Logos is not available on this network."
@@ -1538,7 +1541,11 @@ Item {
     readonly property string amountSat: satFromInput(sendAmount.text, amountUnit)
     readonly property real chosenRate: feeChoice === "custom" ? Number(feeCustom.text) : Number(feeRates[feeChoice] || 0)
     readonly property bool rateOk: isFinite(chosenRate) && chosenRate > 0 && chosenRate <= 100000
-    readonly property bool canReview: ready && walletOpen && !sendLive && sendOutcome(send) !== "unknown"
+    // Payments go out through the node in Logos ("Through your node"): while it isn't serving the
+    // chain a send would be approved in the Signer and then fail to broadcast, so Send waits for it.
+    readonly property bool sendsThroughNode: (localSends || sendsRecommended) === "node"
+    readonly property bool sendWaitsForNode: localNodeIdle && sendsThroughNode
+    readonly property bool canReview: ready && walletOpen && !sendLive && sendOutcome(send) !== "unknown" && !sendWaitsForNode
                                       && recipientValid && (sendMax || amountSat !== "") && rateOk && !belowDust
     // The least the recipient can receive, from its check; "" from a core that doesn't say.
     readonly property string dustSat: recipientValid && isNum(recipientCheck.dustSat) ? String(recipientCheck.dustSat) : ""
@@ -2943,6 +2950,9 @@ Item {
                         label: "Confirmed balance"
                         value: root.balancesRead ? root.btcOf(root.balances.confirmed) + " BTC" : "— BTC"
                         caption: !root.balancesRead ? "Read once the wallet has synced"
+                                 : root.balanceStale ? "As of block " + root.group(root.status.authority.height)
+                                                       + (root.ageText(root.status.authority.tipAgeSecs) ? ", " + root.ageText(root.status.authority.tipAgeSecs) + " ago" : "")
+                                                       + ". It catches up once the chain does."
                                  : root.hasBeyondGap ? "Confirmed on the wallet's own chain. Send spends this and the coins found beyond "
                                                        + "the gap limit: " + root.btcOf(root.spendableSat) + " BTC in all."
                                  : "Confirmed on the wallet's own chain. Send spends only this."
@@ -3167,6 +3177,19 @@ Item {
                         text: root.hasBeyondGap ? "Send spends confirmed coins, those found beyond the gap limit included: "
                                                   + root.btcOf(root.spendableSat) + " BTC."
                               : "Send spends confirmed coins only" + (root.balancesRead ? ": " + root.btcOf(root.balances.confirmed) + " BTC." : ".")
+                    }
+                    LogosNotice {
+                        objectName: "sendNodeNotice"
+                        Layout.fillWidth: true
+                        severity: root.sendWaitsForNode ? LogosNotice.Warning : LogosNotice.Info
+                        shown: root.localNodeIdle
+                        title: root.sendWaitsForNode ? "Sending waits for your node" : root.localNodeTitle()
+                        message: root.sendWaitsForNode
+                                 ? "Payments go out through your node, and it isn't serving the chain yet ("
+                                   + root.localNodeChip().toLowerCase() + "). Send once it is synced, or choose public servers over Tor in the Network sheet."
+                                 : "The chain isn't current, so the balance may be behind. Payments still go out through public servers over Tor."
+                        actions: [ LogosButton { objectName: "openNodeFromSend"; text: "Open Bitcoin Node"; enabled: root.ready
+                                                 onClicked: root.manageNode() } ]
                     }
                     LogosText {
                         objectName: "sendDeviceNote"
