@@ -2107,7 +2107,7 @@ Item {
                 objectName: "networkChoice"
                 Layout.fillWidth: true
                 spacing: Theme.spacing.medium
-                LogosText { text: "Network"; font.pixelSize: 16; font.weight: Theme.typography.weightBold }
+                LogosText { text: "Network"; color: Theme.palette.textSecondary }
                 Repeater {
                     model: root.networks.networks || []
                     delegate: LogosRadioButton {
@@ -3275,6 +3275,7 @@ Item {
                     }
                     LogosText {
                         objectName: "amountNote"
+                        visible: text !== ""
                         Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                         color: Theme.palette.textTertiary
                         text: root.sendMax ? "Everything spendable goes, less the fee: coins too small to spend stay behind."
@@ -3365,9 +3366,13 @@ Item {
                                 Layout.alignment: Qt.AlignHCenter
                                 Layout.maximumWidth: parent.width
                                 spacing: Theme.spacing.tiny
+                                // As wide as the address itself, so the copy button sits right after it; wraps only
+                                // when the column is narrower than the address.
+                                TextMetrics { id: receiveAddressMetrics; font: receiveAddressText.font; text: receiveAddressText.text }
                                 LogosSelectableText {
+                                    id: receiveAddressText
                                     objectName: "receiveAddress"
-                                    Layout.maximumWidth: parent.Layout.maximumWidth - 40
+                                    Layout.preferredWidth: Math.min(Math.ceil(receiveAddressMetrics.advanceWidth) + 2, parent.Layout.maximumWidth - 40)
                                     wrapMode: TextEdit.WrapAnywhere
                                     horizontalAlignment: Text.AlignHCenter
                                     font.family: Theme.typography.mono
@@ -3594,9 +3599,17 @@ Item {
                                 LogosText { visible: !!modelData.reportedBy; textFormat: Text.PlainText; font.pixelSize: 11
                                             text: modelData.reportedBy || "" }
                                 LogosText { text: "Transaction ID"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-                                LogosCopyableText { objectName: "historyTxid_" + modelData.txid; Layout.fillWidth: true
-                                                    text: modelData.txid; copyText: modelData.txid
-                                                    onCopied: root.notify("Transaction ID copied", "") }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacing.tiny
+                                    LogosText { objectName: "historyTxid_" + modelData.txid; textFormat: Text.PlainText; font.pixelSize: 11
+                                                font.family: Theme.typography.mono; Layout.fillWidth: true; Layout.maximumWidth: implicitWidth
+                                                elide: Text.ElideMiddle; text: modelData.txid }
+                                    LogosCopyButton { objectName: "historyTxidCopy_" + modelData.txid; value: modelData.txid
+                                                      ToolTip.text: "Copy transaction ID"; ToolTip.visible: hovered; ToolTip.delay: 400
+                                                      onCopied: root.notify("Transaction ID copied", "") }
+                                    Item { Layout.fillWidth: true }
+                                }
                             }
                             }
                         }
