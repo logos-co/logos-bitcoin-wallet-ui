@@ -3247,7 +3247,9 @@ Item {
                             id: sendAmount
                             objectName: "sendAmountField"
                             Layout.fillWidth: true
-                            enabled: !root.sendLive && !root.sendMax
+                            enabled: !root.sendLive
+                            // Editable under Send max too: an amount other than the max turns Send max off.
+                            onTextChanged: if (root.sendMax && text !== root.maxInField()) { root.sendMax = false; root.amountBeforeMax = "" }
                             placeholderText: root.amountUnit === "sat" ? "0" : "0.0"
                             validator: RegularExpressionValidator {
                                 regularExpression: root.amountUnit === "sat" ? /^[0-9]{0,16}$/ : /^[0-9]{0,8}\.?[0-9]{0,8}$/
@@ -3260,7 +3262,7 @@ Item {
                             Layout.preferredHeight: sendAmount.height
                             model: ["BTC", "sats"]
                             currentIndex: root.amountUnit === "sat" ? 1 : 0
-                            enabled: !root.sendLive && !root.sendMax
+                            enabled: !root.sendLive
                             onActivated: {
                                 var sat = root.amountSat
                                 root.amountUnit = currentIndex === 1 ? "sat" : "btc"

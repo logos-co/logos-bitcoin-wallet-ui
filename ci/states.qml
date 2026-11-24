@@ -846,6 +846,7 @@ Item {
             // Send max names what it comes to and puts it in the field.
             expect("send max: its amount on the switch", prop("sendMaxSwitch", "text"), "Send max: " + v.btcOf("400") + " BTC")
             expect("...and in the field", prop("sendAmountField", "text"), v.btcOf("400"))
+            expect("...which stays editable", prop("sendAmountField", "enabled"), true)
             expect("send max the fee eats", prop("dustNote", "text"), "The fee would take all of it. The smallest amount this address can receive is 294 sats.")
             expect("...no review", prop("reviewButton", "enabled"), false)
             v.feeChoice = "custom"
@@ -863,6 +864,10 @@ Item {
             fake.balancesJson = scene.keptBalances
             find(view.item, "sendMaxSwitch", 0).clicked()
             expect("send max off: the amount typed before comes back", prop("sendAmountField", "text"), scene.amountBeforeMax)
+            // Editing the amount under Send max turns it off and keeps what was typed.
+            find(view.item, "sendMaxSwitch", 0).clicked()
+            find(view.item, "sendAmountField", 0).text = "0.0001"
+            expect("editing the max turns Send max off", [v.sendMax, prop("sendAmountField", "text")], [false, "0.0001"])
             v.feeChoice = "normal"
             find(view.item, "feeCustomField", 0).text = ""
             find(view.item, "sendAmountField", 0).text = "0.0006"
