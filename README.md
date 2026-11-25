@@ -190,11 +190,17 @@ and each open allowed in the Signer app, and every send is approved there.
   A payment a reorg moved (`lastReorg.moved`) reads "re-anchored at height H", and its details name
   the new block. A row found beyond the gap limit (`beyondGap`) carries a quiet "Beyond the gap
   limit".
-- **Network:** a picker in the header, beside the sync chip, in green on mainnet and orange on the
-  test networks. It is enabled only while no account is open or opening.
+- **Network:** a chip in the header names the network and its sync state, in green on mainnet and
+  orange on the test networks. It opens the Network sheet, which picks the network (another one
+  while a wallet is open closes that wallet first) and holds the chain's sources and Tor.
+- **Errors:** a refusal shows where its action was taken, as the backend worded it less a leading
+  machine code ("WrongSecret: "). The review, Speed up, the birthday and the Network sheet each keep
+  their own call's refusal, cleared when they open, on their action and when they close; the page's
+  lines (`sendError` on Send, `lastError` above the tabs, a refused switch) hide while a sheet is up
+  and never repeat what a sheet said or what was on screen before a sheet opened or the tab changed.
 - **Settings:** the wallet (with where its chain starts, `authority.base`), its public descriptors
-  behind a privacy warning, Close wallet, and the Node pane, which also opens as the **Node** sheet
-  from the Open a wallet screen.
+  behind a privacy warning, and the Network pane, the one the header's chip opens as the Network
+  sheet, with Close wallet in its notice while a wallet is open.
   - The address gap limit (`wallet_status.gapLimit`, 20 by default): a restore stops after this
     many unused addresses in a row, and coins past it are invisible to wallets with the same
     limit. `set_gap_limit` takes 20 to 1000 as a job; raising it asks first, since the wallet
@@ -342,7 +348,8 @@ Two doctests open the app in Basecamp's standalone mode, offscreen:
   to every send outcome, a birthday refused and set, change added to the fee, a reorg, Kyoto as the
   authority and a chain it names that is refused, a TLS server's certificate pinned, a Kyoto peer of
   your own, a network switch queued behind a close with an open refused until it applies, the
-  account picker locked on an open wallet with another account's open refused, a payment
+  account picker live on an open wallet (picking another closes it, then opens that one) with an
+  open past the picker refused, a payment
   reported below the chain's start until an earlier birthday checks it (with a wider pass), one peer
   deciding the chain on testnet4, and a coin past the 20-address gap limit that a small send spends
   and a gap limit of 30 takes into the balance. Each open shows last session's chain as connecting for
