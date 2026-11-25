@@ -6,6 +6,7 @@ import Logos.Icons
 import Logos.Theme
 import "accountkit" as Accounts
 import "accountkit/roster.js" as Roster
+import "errors.js" as Errors
 
 // The Bitcoin wallet: "Open a wallet", allowed in the Signer app, then Home, Send, Receive, Activity
 // and Settings. No password field. Strings this view did not author render as PlainText.
@@ -29,6 +30,61 @@ Item {
 
     function j(t, fb) { try { return JSON.parse(t && t.length ? t : fb) } catch (e) { return JSON.parse(fb) } }
 
+    // ---- one error, one place ----
+    // sendError and lastError stay set until the next action or success, and switchJson keeps the
+    // last refusal. A sheet takes its own call's failure as that call answers and shows it itself;
+    // the page's lines show only what the page did: never while a sheet is up, never an error
+    // already on screen when a sheet opened or the tab changed, and never one a sheet showed.
+    readonly property bool sheetUp: reviewSheet.visible || speedUpSheet.visible || birthdaySheet.visible || networkSheet.visible
+                                    || forgetSheet.visible || gapLimitSheet.visible || descriptorsSheet.visible
+    property string sendErrorSeen: ""
+    property string lastErrorSeen: ""
+    property string switchSeen: ""
+    // The sheet whose call is in flight: "review", "speedUp" or "network"; "" for none.
+    property string sheetActing: ""
+    function errorsSeen() {
+        root.sendErrorSeen = root.ready ? backend.sendError : ""
+        root.lastErrorSeen = root.ready ? backend.lastError : ""
+        root.switchSeen = root.ready ? backend.switchJson : ""
+    }
+    onSheetUpChanged: if (root.sheetUp) root.errorsSeen()
+    // An action on the page itself: its answer shows on the page, even worded as the last one.
+    function pageAction() { root.sendErrorSeen = ""; root.lastErrorSeen = ""; root.switchSeen = "" }
+    readonly property string pageSendError: !ready || sheetUp || backend.sendError === sendErrorSeen ? "" : Errors.human(backend.sendError)
+    // lastError gathers one line per failure: the page shows the lines it has not shown or seen,
+    // and not the accounts error, which has its own line.
+    readonly property string pageLastError: !ready || sheetUp ? "" : root.newLines(backend.lastError, lastErrorSeen)
+    function newLines(now, seen) {
+        var old = String(seen || "").split("\n"), acc = root.ready ? backend.accountsError : ""
+        return String(now || "").split("\n").filter(function (l) { return l !== "" && old.indexOf(l) < 0 && l !== acc })
+                                  .map(function (l) { return Errors.human(l) }).join("\n")
+    }
+    Connections {
+        target: root.ready ? root.backend : null
+        ignoreUnknownSignals: true
+        function onSendErrorChanged() {
+            var e = root.backend.sendError
+            if (e === "") { root.sendErrorSeen = ""; return }
+            if (root.sheetActing === "speedUp" && speedUpSheet.visible) {
+                speedUpSheet.awaiting = false
+                speedUpSheet.error = Errors.human(e)
+            } else if (root.sheetActing === "review" && reviewSheet.visible) {
+                reviewSheet.error = Errors.human(e)
+            } else {
+                return
+            }
+            root.sheetActing = ""
+            root.sendErrorSeen = e
+        }
+        function onLastErrorChanged() {
+            var e = root.backend.lastError
+            if (e === "") { root.lastErrorSeen = ""; return }
+            if (root.sheetActing !== "network" || !networkSheet.visible) return
+            networkSheet.error = root.newLines(e, "")
+            root.lastErrorSeen = e
+        }
+    }
+
     // ---- the wallet ----
     readonly property bool statusRead: ready && backend.statusJson !== ""
     readonly property var status: statusRead ? j(backend.statusJson, "{}") : ({})
@@ -45,6 +101,13 @@ Item {
     // A switch queued behind a close, the last switch's outcome, and an open waiting for either.
     readonly property string pendingNetwork: networks.pending || ""
     readonly property var switchState: ready && backend.switchJson !== "" ? j(backend.switchJson, "{}") : ({})
+    onSwitchStateChanged: {
+        if (root.sheetActing !== "network" || !networkSheet.visible || root.switchState.state !== "refused") return
+        var why = root.switchNote()
+        if (why === "") return
+        networkSheet.error = why
+        root.switchSeen = backend.switchJson
+    }
     readonly property var openQueued: ready && backend.openQueuedJson !== "" ? j(backend.openQueuedJson, "{}") : ({})
     // The network can be picked again as soon as no wallet is open or opening; a closing one queues it.
     readonly property bool canPickNetwork: ready && !walletOpen && !opening
@@ -159,6 +222,7 @@ Item {
     property string autoOpenId: ""
     function pickAccount(a) {
         if (!a || !root.canOpenAccount(a)) return
+        root.pageAction()
         if (root.walletOpen && root.status.group === a.id) return
         root.autoOpenId = a.id
         if (root.walletOpen) { backend.closeWallet(); return }
@@ -532,7 +596,14 @@ Item {
     }
     property bool birthdayAsked: false
     onBirthdayJobChanged: {
-        if (!root.birthdayAsked || root.birthdayJob.state !== "done") return
+        if (!root.birthdayAsked) return
+        // The sheet's own refusal, as it was given: gone on open, on Set and on close.
+        if (root.birthdayJob.state === "failed") {
+            root.birthdayAsked = false
+            birthdaySheet.error = "Not set: " + (Errors.bare(root.birthdayJob.error) || "the wallet refused it")
+            return
+        }
+        if (root.birthdayJob.state !== "done") return
         root.birthdayAsked = false
         birthdaySheet.close()
         root.notify("Birthday set", "It looks for payments again from block " + root.group(root.birthdayJob.rescanFrom) + ".")
@@ -603,6 +674,8 @@ Item {
         root.forgetNote = ""
         if (root.sendId !== "") {
             sendGoneTimer.stop()
+            // A speed-up the sheet asked for is a send now: the review takes over.
+            if (speedUpSheet.awaiting) speedUpSheet.close()
             root.reviewDraft = false
             if (root.walletOpen && !reviewSheet.visible) reviewSheet.open()
         } else if (!root.reviewDraft) {
@@ -740,7 +813,12 @@ Item {
         if (sendTo.text.trim() !== "") recipientCheckTimer.restart()
         if (root.walletOpen) root.selectTab(0)
     }
-    onPageChanged: if (root.page !== 4) root.shownDescriptors = null
+    // Another tab: an error already on screen is not carried to it. A refused switch stays: it holds on every tab.
+    onPageChanged: {
+        if (root.page !== 4) root.shownDescriptors = null
+        root.sendErrorSeen = root.ready ? backend.sendError : ""
+        root.lastErrorSeen = root.ready ? backend.lastError : ""
+    }
     function notify(title, message) { toast.show(title, message) }
 
     // ================= pure helpers: the state tests drive these =================
@@ -1664,8 +1742,11 @@ Item {
         root.reviewDraft = true
         reviewSheet.open()
     }
+    // A call the review makes: a refusal shows in the review, as it was given.
+    function reviewActs() { reviewSheet.error = ""; root.sheetActing = "review" }
     function approveInSigner() {
         if (!root.draft) return
+        root.reviewActs()
         root.lastRequest = { send: root.draft.request }
         backend.requestSend(JSON.stringify(root.draft.request))
     }
@@ -1673,6 +1754,7 @@ Item {
     function askAgain() {
         var r = root.lastRequest
         if (!r) return
+        root.reviewActs()
         if (r.bump) backend.requestFeeBump(r.bump.txid, r.bump.rate)
         else backend.requestSend(JSON.stringify(r.send))
     }
@@ -1719,6 +1801,7 @@ Item {
         var req = JSON.parse(JSON.stringify(r.send))
         req.smallChangeToFee = true
         root.lastRequest = { send: req }
+        root.reviewActs()
         if (root.sendLive) { root.rebuildAfterCancel = req; backend.cancelSend() }
         else backend.requestSend(JSON.stringify(req))
     }
@@ -2134,6 +2217,12 @@ Item {
         ColumnLayout {
             id: pane
             spacing: Theme.spacing.small
+            // In the Network sheet, or on Settings: an action's refusal shows where it was taken.
+            readonly property bool inSheet: parent === networkSheetLoader
+            function acting() {
+                if (pane.inSheet) { networkSheet.error = ""; root.sheetActing = "network" }
+                else root.pageAction()
+            }
 
             // The fields clear at once, so a reply arriving later never wipes the next server typed in.
             // An added server opens the Electrum list under Fees, where its row is.
@@ -2163,7 +2252,7 @@ Item {
                         checkable: false
                         checked: root.displayedNetwork === modelData
                         enabled: root.ready && !root.opening && !root.busy
-                        onClicked: root.switchNetwork(modelData)
+                        onClicked: { pane.acting(); root.switchNetwork(modelData) }
                     }
                 }
                 Item { Layout.fillWidth: true }
@@ -2174,7 +2263,14 @@ Item {
                 shown: root.networkLocked
                 message: "These settings apply when a wallet opens. Close the wallet to change them; picking it again opens it."
                 actions: [ LogosButton { objectName: "closeWalletButton"; visible: root.walletOpen; text: "Close wallet"
-                                         enabled: root.ready && !root.busy; onClicked: backend.closeWallet() } ]
+                                         enabled: root.ready && !root.busy; onClicked: { pane.acting(); backend.closeWallet() } } ]
+            }
+            LogosNotice {
+                objectName: "networkSheetError"
+                Layout.fillWidth: true
+                severity: LogosNotice.Error
+                shown: pane.inSheet && message !== ""
+                message: pane.inSheet ? networkSheet.error : ""
             }
 
             // One decision, top to bottom: your own node, or public sources and everything under them.
@@ -2323,6 +2419,11 @@ Item {
                                 LogosTextField { id: rpcUser; objectName: "rpcUser"; Layout.fillWidth: true; placeholderText: "RPC username (optional)" }
                         LogosTextField { id: rpcPass; objectName: "rpcPass"; Layout.fillWidth: true; placeholderText: "RPC password (optional)"; echoMode: TextInput.Password }
                             }
+                            // Why Add and use is off, once something else is typed: it needs the address.
+                            LogosText { objectName: "addRpcHint"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        font.pixelSize: 12; color: Theme.palette.textSecondary
+                                        text: rpcAddress.text.trim() === "" && (rpcName.text.trim() !== "" || rpcUser.text !== "" || rpcPass.text !== "")
+                                              ? "Type your node's address too." : "" }
                             LogosButton {
                                 objectName: "addRpcButton"
                                 text: "Add and use"
@@ -2583,6 +2684,10 @@ Item {
                             LogosButton { objectName: "addSourceButton"; text: "Add"
                                           enabled: root.ready && addSourceAddress.text.trim() !== ""; onClicked: pane.addSource() }
                         }
+                        // Why Add is off, once a name is typed: it needs the address.
+                        LogosText { objectName: "addSourceHint"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: addSourceName.text.trim() !== "" && addSourceAddress.text.trim() === "" ? "Type the server's address too." : "" }
                     }
                     ColumnLayout {
                         objectName: "exposurePane"
@@ -2752,14 +2857,15 @@ Item {
                     text: root.reasonLine(root.selectedAccount) }
         LogosText { objectName: "accountsErrorLine"; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.warning
-                    visible: root.ready && backend.accountsError !== ""
-                    text: root.ready ? backend.accountsError : "" }
+                    visible: text !== ""
+                    text: root.ready ? Errors.human(backend.accountsError) : "" }
 
         // Under the status on every page: a refused switch can race a wallet another app opens.
         LogosText { objectName: "switchNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText
                     color: root.pendingNetwork !== "" ? Theme.palette.textSecondary : Theme.palette.warning
-                    text: root.switchNote() }
+                    text: !root.ready || root.sheetUp || (root.pendingNetwork === "" && backend.switchJson === root.switchSeen)
+                          ? "" : root.switchNote() }
         LogosText { objectName: "openQueuedNote"; visible: !!root.openQueued.error; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.openQueued.network ? "Opening on " + root.openQueued.network + " once the switch applies…"
@@ -2771,7 +2877,7 @@ Item {
             severity: LogosNotice.Error
             closable: true
             shown: false
-            message: root.ready ? backend.lastError : ""
+            message: root.pageLastError
             onMessageChanged: shown = message.length > 0
             Component.onCompleted: shown = message.length > 0
         }
@@ -3377,8 +3483,8 @@ Item {
                         objectName: "sendErrorNotice"
                         Layout.fillWidth: true
                         severity: LogosNotice.Error
-                        shown: message.length > 0 && !reviewSheet.visible
-                        message: root.ready ? backend.sendError : ""
+                        shown: message.length > 0
+                        message: root.pageSendError
                     }
                     LogosText { visible: root.sendOutcome(root.send) === "unknown"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.warning
                                 text: "A payment's outcome is unknown. Settle it first: rebroadcast it, speed it up, or forget it." }
@@ -3928,6 +4034,7 @@ Item {
     // Bech32's human-readable part on the network shown.
     readonly property string hrp: displayedNetwork === "mainnet" ? "bc" : (displayedNetwork === "regtest" ? "bcrt" : "tb")
     function openWallet(params) {
+        root.pageAction()
         root.keysNote = ""
         backend.openWallet(JSON.stringify(params))
     }
@@ -3954,6 +4061,10 @@ Item {
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 680)
         closePolicy: Popup.NoAutoClose
+        // Its own refusal, taken as its call answered (onSendErrorChanged); never the live sendError.
+        property string error: ""
+        onOpened: { error = ""; root.sendNote = ""; if (root.sheetActing === "review") root.sheetActing = "" }
+        onClosed: { error = ""; root.sendNote = ""; if (root.sheetActing === "review") root.sheetActing = "" }
         contentItem: ScrollView {
             id: reviewScroll
             clip: true
@@ -4129,7 +4240,7 @@ Item {
                     Layout.fillWidth: true
                     severity: LogosNotice.Error
                     shown: message.length > 0
-                    message: root.ready ? backend.sendError : ""
+                    message: reviewSheet.error
                 }
             }
         }
@@ -4138,7 +4249,7 @@ Item {
                           onClicked: { root.reviewDraft = false; reviewSheet.close() } },
             LogosButton { objectName: "cancelSendButton"; text: "Cancel send"
                           visible: !root.reviewDraft && (root.sendState === "preparing" || root.sendState === "awaiting_approval") && !root.send.cancelling
-                          onClicked: backend.cancelSend() },
+                          onClicked: { root.reviewActs(); backend.cancelSend() } },
             LogosButton { objectName: "hideReviewButton"; text: "Hide"; visible: !root.reviewDraft && (root.sendLive || root.sendOutcome(root.send) === "unknown")
                           onClicked: reviewSheet.close() }
         ]
@@ -4161,7 +4272,7 @@ Item {
                           onClicked: speedUpSheet.ask({ txid: root.send.txid, feeSat: root.summary ? root.summary.feeSat : "" }) },
             LogosButton { objectName: "rebroadcastButton"; text: "Rebroadcast"; variant: LogosButton.Variant.Primary
                           visible: !root.reviewDraft && root.offers(root.send, "rebroadcast")
-                          onClicked: { backend.rebroadcast(); root.notify("Broadcast again", "It shows as sent once a source has seen it.") } },
+                          onClicked: { root.reviewActs(); backend.rebroadcast(); root.notify("Broadcast again", "It shows as sent once a source has seen it.") } },
             LogosButton { objectName: "doneSendButton"; text: "Done"; visible: !root.reviewDraft && root.sendSettled
                           onClicked: root.finishSend() }
         ]
@@ -4173,11 +4284,19 @@ Item {
         objectName: "speedUpSheet"
         title: "Speed up"
         property var row: null
+        // Waiting for the request's answer: a new send closes the sheet, a refusal shows here.
+        property bool awaiting: false
+        property string error: ""
+        // The rate it suggested: a hint only once the person has changed it.
+        property string suggested: ""
         function ask(r) {
             speedUpSheet.row = r
-            speedUpRate.text = String(root.speedUpRate(r))
+            speedUpSheet.suggested = String(root.speedUpRate(r))
+            speedUpRate.text = speedUpSheet.suggested
             speedUpSheet.open()
         }
+        onOpened: { awaiting = false; error = "" }
+        onClosed: { awaiting = false; error = ""; if (root.sheetActing === "speedUp") root.sheetActing = "" }
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 560)
         contentItem: ColumnLayout {
@@ -4193,12 +4312,25 @@ Item {
                 LogosText { visible: root.feesKnown; color: Theme.palette.textTertiary; textFormat: Text.PlainText
                             text: "fast is " + root.feeRates.fast + " sat/vB now" }
             }
+            // Why Approve is off: a rate typed that is no rate, or a send still open.
+            LogosText { objectName: "speedUpHint"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        color: Theme.palette.textSecondary
+                        text: speedUpRate.text !== speedUpSheet.suggested && !(Number(speedUpRate.text) > 0) ? "Give a fee rate above 0 sat/vB."
+                              : root.sendLive && !speedUpSheet.awaiting ? "Another send is still open: settle it first." : "" }
+            LogosText { objectName: "speedUpError"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        textFormat: Text.PlainText; color: Theme.palette.error; text: speedUpSheet.error }
         }
         leftActions: [ LogosButton { text: "Cancel"; onClicked: speedUpSheet.close() } ]
         rightActions: [
-            LogosButton { objectName: "confirmSpeedUpButton"; text: "Approve in Signer"; variant: LogosButton.Variant.Primary
-                          enabled: root.ready && !root.sendLive && !!speedUpSheet.row && Number(speedUpRate.text) > 0
-                          onClicked: { root.speedUp(speedUpSheet.row.txid, Number(speedUpRate.text)); speedUpSheet.close() } }
+            LogosButton { objectName: "confirmSpeedUpButton"; text: speedUpSheet.awaiting ? "Asking…" : "Approve in Signer"
+                          variant: LogosButton.Variant.Primary
+                          enabled: root.ready && !root.sendLive && !speedUpSheet.awaiting && !!speedUpSheet.row && Number(speedUpRate.text) > 0
+                          onClicked: {
+                              speedUpSheet.error = ""
+                              speedUpSheet.awaiting = true
+                              root.sheetActing = "speedUp"
+                              root.speedUp(speedUpSheet.row.txid, Number(speedUpRate.text))
+                          } }
         ]
     }
 
@@ -4216,8 +4348,10 @@ Item {
         property bool isNew: false
         readonly property bool dateOk: /^\d{4}-\d{2}-\d{2}$/.test(birthdayDate.text.trim())
         readonly property bool pending: !opening && root.birthdayJob.state === "pending"
-        onOpened: { birthdaySheet.older = false; birthdaySheet.unknown = false; birthdaySheet.isNew = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false }
-        onClosed: birthdaySheet.opening = ""
+        // Its own refusal, taken as its job answered (onBirthdayJobChanged).
+        property string error: ""
+        onOpened: { birthdaySheet.older = false; birthdaySheet.unknown = false; birthdaySheet.isNew = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false; birthdaySheet.error = "" }
+        onClosed: { birthdaySheet.opening = ""; birthdaySheet.error = "" }
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 560)
         contentItem: ColumnLayout {
@@ -4254,9 +4388,13 @@ Item {
             LogosRadioButton { objectName: "birthdayUnknown"; ButtonGroup.group: birthdayGroup; visible: !birthdaySheet.compact
                                text: "I don't know: look from where this kind of address began, which takes longer"
                                onCheckedChanged: if (checked) { birthdaySheet.unknown = true; birthdaySheet.isNew = false } }
+            // Why Open or Set is off, once a day is typed.
+            LogosText { objectName: "birthdayHint"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        color: Theme.palette.textSecondary
+                        text: !birthdaySheet.compact && !birthdaySheet.unknown && !birthdaySheet.isNew && birthdayDate.text.trim() !== ""
+                              && !birthdaySheet.dateOk ? "Type the day as YYYY-MM-DD, such as 2024-04-20." : "" }
             LogosText { objectName: "birthdayError"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                        textFormat: Text.PlainText; color: Theme.palette.error
-                        text: root.birthdayAsked && root.birthdayJob.state === "failed" ? "Not set: " + (root.birthdayJob.error || "") : "" }
+                        textFormat: Text.PlainText; color: Theme.palette.error; text: birthdaySheet.error }
         }
         leftActions: [ LogosButton { text: "Cancel"; onClicked: birthdaySheet.close() } ]
         rightActions: [
@@ -4276,6 +4414,7 @@ Item {
                         birthdaySheet.close()
                         return
                     }
+                    birthdaySheet.error = ""
                     root.birthdayAsked = true
                     backend.setBirthday(JSON.stringify(birthdaySheet.unknown ? { height: 0 } : { date: birthdayDate.text.trim() }))
                 }
@@ -4407,7 +4546,17 @@ Item {
         // which Customise opens. Once saved, the sheet is the full settings, as before.
         property bool customising: false
         readonly property bool quick: root.nodeSetupNeeded && !customising
-        onOpened: { customising = false; if (root.ready) backend.refreshSources() }
+        // A refusal of what was asked here (a network switch, Close wallet), taken as it answered.
+        property string error: ""
+        function clearNotes() {
+            networkSheet.error = ""
+            root.networkNote = ""
+            root.nodeSetupNote = ""
+            root.ownPeersNote = ""
+            if (root.sheetActing === "network") root.sheetActing = ""
+        }
+        onOpened: { customising = false; clearNotes(); if (root.ready) backend.refreshSources() }
+        onClosed: clearNotes()
         contentItem: ScrollView {
             id: networkSheetScroll
             clip: true
