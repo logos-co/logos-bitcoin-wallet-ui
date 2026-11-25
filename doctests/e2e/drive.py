@@ -840,8 +840,13 @@ def phase_secrets():
 # The node module routes Kyoto on regtest by default, with no peers; once it routes anything, the core
 # takes its table over regtest.json. With Kyoto off there, regtest.json's sources serve.
 def node_routes_nothing(ins):
-    ins.press("networkSettingsButton")
+    # The header's network chip opens the Network sheet.
+    ins.press("networkChip")
     ins.wait("networkSheet", "opened", True, 20)
+    # A network's first visit shows one decision first; Customise opens the full settings.
+    if ins.get("networkSheet", "quick") is True:
+        ins.press("quickSetupCustomise")
+        ins.wait("networkSheetDone", "visible", True, 20, "the full Network settings")
     ins.wait(ROOT, "sourcesConfigured", True, 60, "the node module's regtest sources are read")
     # Kyoto's row is under the advanced settings, collapsed when the sheet first opens.
     ins.rpc("setProperty", objectId=ins.obj("advancedSourcesButton")[0], property="expanded", value=True)
@@ -858,9 +863,9 @@ def phase_open_create():
     ins = Inspector()
     show_app(ins, APP)
     ins.wait(ROOT, "ready", True, 120, "the wallet app's backend connects")
-    ins.wait("statusLine", "text", "No wallet open", 120)
+    ins.wait(ROOT, "walletState", "no_wallet", 120, "no wallet open")
     ins.call(ROOT, "selectNetwork", "regtest")
-    ins.wait("networkPicker", "displayText", "regtest", 30)
+    ins.wait(ROOT, "displayedNetwork", "regtest", 30, "the app is on regtest, as its network chip says")
     node_routes_nothing(ins)
     # Provision this test wallet through the existing open API; account creation lives in Keystore.
     # Reopening below exercises the signer-manager account selector.
@@ -1193,9 +1198,10 @@ def phase_close():
     snap = snapshot(ins)
     log("before closing: " + json.dumps(snap))
     save(snapshot=snap)
+    # Close wallet sits in the Network notice on Settings.
     wallet_tab(ins, 4)
-    ins.press("settingsCloseWalletButton")
-    ins.wait("statusLine", "text", "No wallet open", 60, "the wallet closes")
+    ins.press("closeWalletButton")
+    ins.wait(ROOT, "walletState", "no_wallet", 60, "the wallet closes")
     log("PHASE close OK")
 
 
@@ -1245,9 +1251,9 @@ def matches_snapshot(ins, what):
 
 def open_for_restore(ins):
     ins.wait(ROOT, "ready", True, 120)
-    ins.wait("statusLine", "text", "No wallet open", 120)
+    ins.wait(ROOT, "walletState", "no_wallet", 120, "no wallet open")
     ins.call(ROOT, "selectNetwork", "regtest")
-    ins.wait("networkPicker", "displayText", "regtest", 30)
+    ins.wait(ROOT, "displayedNetwork", "regtest", 30, "the app is on regtest, as its network chip says")
     node_routes_nothing(ins)
 
 
@@ -1409,9 +1415,15 @@ def reopen_listed(ins, password):
     ins.wait("accountPicker", "enabled", True, 90, "the signer account list is ready")
     ins.rpc("setProperty", objectId=ins.obj("accountPicker")[0], property="currentIndex", value=0)
     ins.call("accountPicker", "activated", 0)
-    # The shell asks which app answers, unless the keys app's request is already up.
+    # Picking opens it. The shell asks which app answers, unless the keys app's request is already up.
     end = time.time() + 120
     while ins.get("accessSheet", "opened") is not True:
+        # Its first open on this network asks if it is new: not known, it scans from the start.
+        if ins.get("birthdaySheet", "opened") is True and ins.get("birthdaySheet", "compact") is True:
+            ins.press("firstOpenOlder")
+            ins.check("birthdayUnknown")
+            ins.press("confirmBirthdayButton")
+            continue
         if ins.get("intentProvider_" + KEYS, "visible") is True:
             chooser(ins, KEYS)
             break
@@ -1456,9 +1468,9 @@ def phase_gap():
     ins = Inspector()
     show_app(ins, APP)
     ins.wait(ROOT, "ready", True, 120)
-    ins.wait("statusLine", "text", "No wallet open", 120)
+    ins.wait(ROOT, "walletState", "no_wallet", 120, "no wallet open")
     ins.call(ROOT, "selectNetwork", "regtest")
-    ins.wait("networkPicker", "displayText", "regtest", 30)
+    ins.wait(ROOT, "displayedNetwork", "regtest", 30, "the app is on regtest, as its network chip says")
     reopen_listed(ins, secret("password"))
     passed("user A's wallet opened again from the list")
     wait_synced(ins, 180)
@@ -1501,9 +1513,9 @@ def phase_gap():
     ins.wait("historyBeyondGap_" + txid, "visible", False, 60, "Activity's label goes")
     passed("Activity: no label on %s… any more" % txid[:12])
     wallet_tab(ins, 4)
-    ins.press("settingsCloseWalletButton")
-    ins.wait("statusLine", "text", "No wallet open", 60, "the wallet closes")
-    ins.wait("openWalletButton", "enabled", True, 60, "the close settles")
+    ins.press("closeWalletButton")
+    ins.wait(ROOT, "walletState", "no_wallet", 60, "the wallet closes")
+    ins.wait(ROOT, "canOpenSelectedAccount", True, 60, "the close settles")
     reopen_listed(ins, secret("password"))
     wait_synced(ins, 180)
     wallet_tab(ins, 4)
