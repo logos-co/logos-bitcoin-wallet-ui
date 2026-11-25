@@ -19,8 +19,9 @@ intro: |
   new one, and where those already paid wait behind a toggle; at the gap limit a note takes New
   address's place. The fee presets need an estimate. An
   amount below what the address can receive says so under the amount and keeps Review off.
-  While a wallet is open the account picker stays on it and Open is off until it is closed; an
-  open asked for past the picker is refused too.
+  Picking an account opens it. While a wallet is open the account picker shows it: picking it again
+  does nothing, picking another closes it first and then opens that one, and an open asked for past
+  the picker is refused.
 
   The backend is a stand-in, doctests/fixture-backend: the real bitcoin_wallet_backend's contract
   (its trait, copied from logos-bitcoin-wallet-backend 95b8f0c, plus set_tor_use,
@@ -37,7 +38,7 @@ intro: |
   opened on a network reads the chain's headers for 4 s after its server first answers; the first
   reopen under Kyoto on a network starts from last session's tip, 6 blocks and 18 hours behind, and
   catches up for 8 s after its peers answer. An account's
-  first open on a network asks when it was first used; opened with "I don't know" it has no
+  first open on a network asks whether it is new, and if not, when it was first used; opened with "I don't know" it has no
   birthday (one after its first payment, 2026-05-31, is refused), a reorg re-anchors the
   transfer to yourself 5 s after the first open is ready, and with Kyoto in use it is the authority
   and names a chain the wallet refuses. A TLS server of your own is probed and pinned, a peer of
@@ -77,10 +78,16 @@ sections:
           tests:
             - name: "With nothing open the app offers to open a wallet"
               action: expect_property
-              find_value: "statusLine"
-              property: "text"
-              value: "No wallet open"
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "no_wallet"
               timeout: 60000
+            - name: "...on the account start"
+              action: expect_property
+              find_value: "openForm"
+              property: "visible"
+              value: true
+              timeout: 10000
             - name: "Before any account, the account start asks for Node to be set up for this network"
               action: expect_property
               find_value: "nodeSetupNotice"
@@ -93,11 +100,28 @@ sections:
               find_value: "nodeSetupButton"
               method: "clicked"
               args: []
+            - name: "A network's first visit asks one thing first: the recommended setup, or Customise"
+              action: expect_property
+              find_value: "networkSheet"
+              property: "quick"
+              value: true
+              timeout: 10000
+            - name: "Customise, for the full settings"
+              action: call_method
+              find_value: "quickSetupCustomise"
+              method: "clicked"
+              args: []
             - name: "Node opens, not saved yet"
               action: expect_property
               find_value: "networkSheetDone"
               property: "text"
               value: "Save"
+              timeout: 10000
+            - name: "...its Save shown"
+              action: expect_property
+              find_value: "networkSheetDone"
+              property: "visible"
+              value: true
               timeout: 10000
             - name: "A fresh install has Only what identifies you checked"
               action: expect_property
@@ -134,12 +158,18 @@ sections:
               find_value: "bitcoinWalletRoot"
               method: "selectNetwork"
               args: ["signet"]
-            - name: "The app is on signet, picked in the header"
+            - name: "The app is on signet"
               action: expect_property
-              find_value: "networkPicker"
-              property: "displayText"
+              find_value: "bitcoinWalletRoot"
+              property: "displayedNetwork"
               value: "signet"
               timeout: 15000
+            - name: "...named on the header's network chip"
+              action: expect_property
+              find_value: "networkChip"
+              property: "text"
+              value: "signet"
+              timeout: 10000
             - name: "Signet asks on its own: the notice again, for signet"
               action: expect_property
               find_value: "nodeSetupNotice"
@@ -152,17 +182,23 @@ sections:
               find_value: "nodeSetupButton"
               method: "clicked"
               args: []
-            - name: "Node opens on signet, not saved yet"
+            - name: "Node opens on signet, not saved yet: the one-decision screen"
               action: expect_property
-              find_value: "networkSheetDone"
-              property: "text"
-              value: "Save"
+              find_value: "networkSheet"
+              property: "quick"
+              value: true
               timeout: 10000
-            - name: "Save keeps Only what identifies you there too"
+            - name: "Use recommended keeps Only what identifies you there too"
               action: call_method
-              find_value: "networkSheetDone"
+              find_value: "quickSetupRecommended"
               method: "clicked"
               args: []
+            - name: "...saved, it closes"
+              action: expect_property
+              find_value: "networkSheet"
+              property: "visible"
+              value: false
+              timeout: 15000
             - name: "The account start for signet"
               action: expect_property
               find_value: "nodeSetupNotice"
@@ -171,9 +207,11 @@ sections:
               timeout: 15000
               screenshot: "wallet-open-page.png"
 
-            - name: "Open Node before any wallet is open"
-              action: click_object
-              find_value: "networkSettingsButton"
+            - name: "Open the Network sheet from the header's chip, before any wallet is open"
+              action: call_method
+              find_value: "networkChip"
+              method: "clicked"
+              args: []
             - name: "The sheet opens"
               action: expect_property
               find_value: "networkSheet"
@@ -474,22 +512,28 @@ sections:
               property: "selectedAccountId"
               value: "g_fixture_keystore"
               timeout: 5000
-            - name: "Open a wallet is enabled"
-              action: expect_property
-              find_value: "openWalletButton"
-              property: "enabled"
-              value: true
-              timeout: 10000
-            - name: "Open a wallet"
-              action: click_object
-              find_value: "openWalletButton"
-            - name: "The wallet keeps each account's birthday, so a first open asks when it was first used"
+            - name: "Picking opens it: the wallet keeps each account's birthday, so a first open asks one thing first"
               action: expect_property
               find_value: "birthdaySheet"
               property: "opening"
               value: "g_fixture_keystore"
               timeout: 5000
+            - name: "...is this account new?"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "title"
+              value: "Is this account new?"
+              timeout: 5000
               screenshot: "wallet-first-open-birthday.png"
+            - name: "It has payments already"
+              action: click_object
+              find_value: "firstOpenOlder"
+            - name: "...so it asks when it was first used"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "title"
+              value: "When was this account first used?"
+              timeout: 5000
             - name: "Not known: it opens with none, scanning from where its kind of address began"
               action: click_object
               find_value: "birthdayUnknown"
@@ -530,20 +574,36 @@ sections:
               property: "walletState"
               value: "no_wallet"
               timeout: 5000
-            - name: "Open a wallet is enabled again once the withdrawal settled"
+            - name: "The account can open again once the withdrawal settled"
               action: expect_property
-              find_value: "openWalletButton"
-              property: "enabled"
+              find_value: "bitcoinWalletRoot"
+              property: "canOpenSelectedAccount"
               value: true
               timeout: 10000
-            - name: "Open again; this time the person approves in the keys app"
-              action: click_object
-              find_value: "openWalletButton"
+            - name: "Pick it again; this time the person approves in the keys app"
+              action: set_property
+              find_value: "accountPicker"
+              property: "currentIndex"
+              value: 0
+            - name: "...as a person choosing it would"
+              action: call_method
+              find_value: "accountPicker"
+              method: "activated"
+              args: [0]
             - name: "The withdrawn open never reached the wallet, so it asks again"
               action: expect_property
               find_value: "birthdaySheet"
               property: "opening"
               value: "g_fixture_keystore"
+              timeout: 5000
+            - name: "It has payments already"
+              action: click_object
+              find_value: "firstOpenOlder"
+            - name: "...so it asks when it was first used"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "title"
+              value: "When was this account first used?"
               timeout: 5000
             - name: "Not known: it opens with none, scanning from where its kind of address began"
               action: click_object
@@ -577,11 +637,17 @@ sections:
               property: "text"
               value: "Headers 49%"
               timeout: 3000
+            - name: "...the fixture wallet"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "openedName"
+              value: "Fixture wallet"
+              timeout: 10000
             - name: "...on signet"
               action: expect_property
-              find_value: "statusLine"
-              property: "text"
-              value: "Open: Fixture wallet · signet"
+              find_value: "bitcoinWalletRoot"
+              property: "displayedNetwork"
+              value: "signet"
               timeout: 10000
             - name: "It syncs to the chain's tip, and the one line names where the chain comes from"
               action: expect_property
@@ -1453,14 +1519,20 @@ sections:
               timeout: 20000
             - name: "It stays selected, to open again"
               action: expect_property
-              find_value: "openWalletButton"
-              property: "enabled"
+              find_value: "bitcoinWalletRoot"
+              property: "selectedAccountId"
+              value: "g_fixture_keystore"
+              timeout: 15000
+            - name: "...and can"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "canOpenSelectedAccount"
               value: true
               timeout: 15000
               screenshot: "wallet-closed.png"
-            - name: "Sources, with the wallet closed"
+            - name: "Sources, with the wallet closed: the header's network chip"
               action: call_method
-              find_value: "networkSettingsButton"
+              find_value: "networkChip"
               method: "clicked"
               args: []
             - name: "The sheet opens again"
@@ -1485,9 +1557,16 @@ sections:
               find_value: "bitcoinWalletRoot"
               method: "closeSheets"
               args: []
-            - name: "Open the wallet again"
-              action: click_object
-              find_value: "openWalletButton"
+            - name: "Open the wallet again: pick it"
+              action: set_property
+              find_value: "accountPicker"
+              property: "currentIndex"
+              value: 0
+            - name: "...opened before on signet, it opens at once"
+              action: call_method
+              find_value: "accountPicker"
+              method: "activated"
+              args: [0]
             - name: "Kyoto starts from last session's tip, 18 hours old, and says it is catching up, not stalled"
               action: expect_property
               find_value: "syncLine"
@@ -1593,9 +1672,9 @@ sections:
               property: "text"
               value: "block 290,000"
               timeout: 10000
-            - name: "Node"
+            - name: "Node: the header's network chip"
               action: call_method
-              find_value: "networkSettingsButton"
+              find_value: "networkChip"
               method: "clicked"
               args: []
             - name: "The sheet opens"
@@ -1693,6 +1772,11 @@ sections:
               property: "visible"
               value: false
               timeout: 10000
+            - name: "Settings, to close: Close wallet sits in its Network notice"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "selectTab"
+              args: [4]
             - name: "Close the wallet"
               action: click_object
               find_value: "closeWalletButton"
@@ -1716,15 +1800,26 @@ sections:
               screenshot: "wallet-switch-pending.png"
             - name: "The wallet has closed"
               action: expect_property
-              find_value: "openWalletButton"
-              property: "enabled"
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "no_wallet"
+              timeout: 20000
+            - name: "...and its account can open again"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "canOpenSelectedAccount"
               value: true
               timeout: 20000
-            - name: "Open a wallet before the switch has applied"
+            - name: "Open a wallet before the switch has applied: pick it"
+              action: set_property
+              find_value: "accountPicker"
+              property: "currentIndex"
+              value: 0
+            - name: "...opened before here, it asks to open at once"
               action: call_method
-              find_value: "openWalletButton"
-              method: "clicked"
-              args: []
+              find_value: "accountPicker"
+              method: "activated"
+              args: [0]
             - name: "The app asks to wait for the switch"
               action: expect_property
               find_value: "errorNotice"
@@ -1734,8 +1829,8 @@ sections:
               screenshot: "wallet-open-refused-mid-switch.png"
             - name: "The switch applied: testnet4"
               action: expect_property
-              find_value: "networkPicker"
-              property: "displayText"
+              find_value: "bitcoinWalletRoot"
+              property: "displayedNetwork"
               value: "testnet4"
               timeout: 20000
             - name: "Dismiss the notice"
@@ -1754,15 +1849,15 @@ sections:
               find_value: "nodeSetupButton"
               method: "clicked"
               args: []
-            - name: "Node opens on testnet4, not saved yet"
+            - name: "Node opens on testnet4, not saved yet: the one-decision screen"
               action: expect_property
-              find_value: "networkSheetDone"
-              property: "text"
-              value: "Save"
+              find_value: "networkSheet"
+              property: "quick"
+              value: true
               timeout: 10000
-            - name: "Save"
+            - name: "Save: Use recommended"
               action: call_method
-              find_value: "networkSheetDone"
+              find_value: "quickSetupRecommended"
               method: "clicked"
               args: []
             - name: "The account start for testnet4"
@@ -1771,14 +1866,36 @@ sections:
               property: "visible"
               value: false
               timeout: 15000
-            - name: "Open, on testnet4"
-              action: click_object
-              find_value: "openWalletButton"
+            - name: "The account start lists testnet4's accounts"
+              action: expect_property
+              find_value: "accountPicker"
+              property: "enabled"
+              value: true
+              timeout: 15000
+            - name: "Open, on testnet4: pick the keystore wallet"
+              action: set_property
+              find_value: "accountPicker"
+              property: "currentIndex"
+              value: 0
+            - name: "...as a person choosing it would"
+              action: call_method
+              find_value: "accountPicker"
+              method: "activated"
+              args: [0]
             - name: "Its first open on testnet4 asks too"
               action: expect_property
               find_value: "birthdaySheet"
               property: "opening"
               value: "g_fixture_keystore"
+              timeout: 5000
+            - name: "It has payments already"
+              action: click_object
+              find_value: "firstOpenOlder"
+            - name: "...so it asks when it was first used"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "title"
+              value: "When was this account first used?"
               timeout: 5000
             - name: "It was first used on 2026-01-02"
               action: set_property
@@ -1952,28 +2069,16 @@ sections:
               find_value: "deviceReasonLine"
               property: "text"
               value: "Insert Black Card in a reader or connect a Keycard Shell to sign"
-            - name: "Open is enabled"
-              action: expect_property
-              find_value: "openWalletButton"
-              property: "enabled"
-              value: true
-              timeout: 5000
-              screenshot: "wallet-keycard-not-connected.png"
-            - name: "Open it"
-              action: click_object
-              find_value: "openWalletButton"
-            - name: "The Keycard account's first open asks when it was first used"
+            - name: "Picking it opens it, card or not: its first open asks if it is new"
               action: expect_property
               find_value: "birthdaySheet"
               property: "opening"
               value: "shell-cdcdcdcd-84-1-0"
               timeout: 5000
-            - name: "It's new"
+              screenshot: "wallet-keycard-not-connected.png"
+            - name: "It's new: it opens from today"
               action: click_object
-              find_value: "birthdayNew"
-            - name: "...and open it"
-              action: click_object
-              find_value: "confirmBirthdayButton"
+              find_value: "firstOpenNew"
             - name: "It opens without the card"
               action: expect_property
               find_value: "bitcoinWalletRoot"
@@ -1982,48 +2087,49 @@ sections:
               timeout: 30000
             - name: "...as the Keycard account"
               action: expect_property
-              find_value: "statusLine"
-              property: "text"
-              value: "Open: Card account · testnet4"
+              find_value: "bitcoinWalletRoot"
+              property: "openedName"
+              value: "Card account"
               timeout: 10000
-            # One wallet at a time: the picker stays on the open account until it is closed.
-            - name: "While it is open the account picker is locked"
+            - name: "...on testnet4"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "displayedNetwork"
+              value: "testnet4"
+            # One wallet at a time: the picker shows the open account and stays live; picking
+            # another closes this one first, then opens that one.
+            - name: "While it is open the account picker stays live"
               action: expect_property
               find_value: "accountPicker"
               property: "enabled"
-              value: false
+              value: true
               timeout: 5000
             - name: "...on the open account"
               action: expect_property
               find_value: "accountPicker"
               property: "displayText"
               value: "Card account · Native SegWit · account 0 — Wallet “Black Card” · cdcdcdcd — Keycard · reader"
-            - name: "Open is off"
+            - name: "The open account can't open again"
               action: expect_property
-              find_value: "openWalletButton"
-              property: "enabled"
+              find_value: "bitcoinWalletRoot"
+              property: "canOpenSelectedAccount"
               value: false
-            - name: "...and the app says why"
-              action: expect_property
-              find_value: "accountLockedNote"
-              property: "visible"
-              value: true
-            - name: "...in a line"
-              action: expect_property
-              find_value: "accountLockedNote"
-              property: "text"
-              value: "Close this wallet to open another."
-              screenshot: "wallet-account-locked.png"
-            - name: "Pick the keystore wallet anyway"
+            - name: "Pick the open account again"
               action: set_property
               find_value: "accountPicker"
               property: "currentIndex"
-              value: 0
+              value: 1
             - name: "...as a person choosing it would"
               action: call_method
               find_value: "accountPicker"
               method: "activated"
-              args: [0]
+              args: [1]
+            - name: "Nothing happens: it stays open"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "ready"
+              timeout: 5000
             - name: "The open account stays selected"
               action: expect_property
               find_value: "bitcoinWalletRoot"
@@ -2035,6 +2141,7 @@ sections:
               find_value: "accountPicker"
               property: "currentIndex"
               value: 1
+              screenshot: "wallet-account-locked.png"
             - name: "Ask for the keystore wallet's open past the picker"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -2048,9 +2155,9 @@ sections:
               timeout: 5000
             - name: "...and the Keycard account stays open"
               action: expect_property
-              find_value: "statusLine"
-              property: "text"
-              value: "Open: Card account · testnet4"
+              find_value: "bitcoinWalletRoot"
+              property: "openedName"
+              value: "Card account"
             - name: "Send"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -2063,6 +2170,34 @@ sections:
               value: "Keycard not connected. Insert Black Card in a reader or connect a Keycard Shell to sign. You can view this wallet; sending needs it."
               timeout: 5000
               screenshot: "wallet-keycard-send.png"
+            - name: "Pick the keystore wallet while the Keycard account is open"
+              action: set_property
+              find_value: "accountPicker"
+              property: "currentIndex"
+              value: 0
+            - name: "...as a person choosing it would: the open one closes first"
+              action: call_method
+              find_value: "accountPicker"
+              method: "activated"
+              args: [0]
+            - name: "...then the keystore wallet, opened on testnet4 before, opens by itself"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "accountId"
+              value: "g_fixture_keystore"
+              timeout: 30000
+            - name: "...open"
+              action: expect_property
+              find_value: "bitcoinWalletRoot"
+              property: "walletOpen"
+              value: true
+              timeout: 30000
+            - name: "...and the picker follows it"
+              action: expect_property
+              find_value: "accountPicker"
+              property: "currentIndex"
+              value: 0
+              timeout: 10000
             - name: "Settings, to close"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -2077,7 +2212,7 @@ sections:
               property: "walletState"
               value: "no_wallet"
               timeout: 20000
-            - name: "The picker unlocks"
+            - name: "The picker is live"
               action: expect_property
               find_value: "accountPicker"
               property: "enabled"
@@ -2087,16 +2222,16 @@ sections:
               action: expect_property
               find_value: "bitcoinWalletRoot"
               property: "selectedAccountId"
-              value: "shell-cdcdcdcd-84-1-0"
-            - name: "...and Open on again"
+              value: "g_fixture_keystore"
+            - name: "...and it can open again"
               action: expect_property
-              find_value: "openWalletButton"
-              property: "enabled"
+              find_value: "bitcoinWalletRoot"
+              property: "canOpenSelectedAccount"
               value: true
               timeout: 5000
-            - name: "...with no note"
+            - name: "...with nothing said in the way"
               action: expect_property
-              find_value: "accountLockedNote"
+              find_value: "errorNotice"
               property: "visible"
               value: false
               screenshot: "wallet-account-unlocked.png"
