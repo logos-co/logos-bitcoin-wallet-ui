@@ -70,12 +70,26 @@ Item {
         function selectAccount(id, birthday) { note("selectAccount", [id, birthday]) }
         function setActiveNetwork(n) { note("setActiveNetwork", [n]) }
         function openWallet(p) { note("openWallet", [p]) }
-        function closeWallet() { note("closeWallet", []) }
+        // What closeWallet says, in lastError, when set: the refusal the backend would give.
+        property string closeRefusal: ""
+        function closeWallet() {
+            if (closeRefusal !== "") { note("closeWalletRefused", []); lastError = ""; lastError = closeRefusal; return }
+            note("closeWallet", [])
+        }
         function setBirthday(p) { note("setBirthday", [p]) }
         function setGapLimit(p) { note("setGapLimit", [p]) }
         function probeSource(id) { note("probeSource", [id]) }
-        function requestSend(r) { note("requestSend", [r]) }
-        function requestFeeBump(t, rate) { note("requestFeeBump", [t, rate]) }
+        // What requestSend and requestFeeBump refuse with, in sendError, when set.
+        property string sendRefusal: ""
+        function refuseSend(name, args) {
+            if (sendRefusal === "") return false
+            note(name + "Refused", args)
+            sendError = ""
+            sendError = sendRefusal
+            return true
+        }
+        function requestSend(r) { if (!refuseSend("requestSend", [r])) note("requestSend", [r]) }
+        function requestFeeBump(t, rate) { if (!refuseSend("requestFeeBump", [t, rate])) note("requestFeeBump", [t, rate]) }
         function cancelSend() { note("cancelSend", []) }
         function dismissSend() { note("dismissSend", []); sendRequestId = ""; sendStatusJson = "{}" }
         function rebroadcast() { note("rebroadcast", []) }
@@ -178,6 +192,8 @@ Item {
         for (var k = 0; k < kids.length; k++) findAll(kids[k], name, (depth || 0) + 1, out)
         return out
     }
+    // The visible copy of `name`, or null.
+    function shownOne(name) { return findAll(view.item, name, 0, []).filter(function (o) { return o.visible })[0] || null }
     function shownAny(name) { return findAll(view.item, name, 0, []).some(function (o) { return o.visible === true }) }
 
     function expandAdvanced() {
@@ -903,6 +919,24 @@ Item {
             v.review()
         },
         function (v) {
+            // One error, one place: a refused Approve shows in the review, as it was given, not on Send behind it.
+            fake.sendRefusal = "Busy: a send is already open: approve or reject it in the signer app, or cancel it."
+            find(view.item, "approveInSignerButton", 0).clicked()
+            expect("a refused approve says so in the review", [prop("reviewError", "shown"), prop("reviewError", "message")],
+                   [true, "A send is already open: approve or reject it in the signer app, or cancel it."])
+            expect("...and only there, not on the Send tab", [prop("sendErrorNotice", "shown"), prop("sendErrorNotice", "message")], [false, ""])
+            fake.sendRefusal = ""
+            find(view.item, "backButton", 0).clicked()
+        },
+        function (v) {
+            expect("closed, the review's refusal is gone", [shown("reviewSheet"), prop("reviewError", "shown")], [false, false])
+            expect("...and the Send tab does not show it after", [prop("sendErrorNotice", "shown"), prop("sendErrorNotice", "message")], [false, ""])
+            expect("...though the backend still holds it", fake.sendError !== "", true)
+            v.review()
+        },
+        function (v) {
+            expect("reopened, no stale refusal", [shown("reviewSheet"), prop("reviewError", "shown")], [true, false])
+            fake.sendError = ""
             expect("draft pane", shown("reviewDraftPane"), true)
             expect("draft amount", prop("draftAmount", "text"), "0.0006 BTC (60,000 sats)")
             expect("draft fee", prop("draftFee", "text"), "6 sat/vB, about 846 sats for a payment from one coin")
@@ -998,8 +1032,39 @@ Item {
         function (v) {
             expect("speed up sheet", prop("speedUpSheet", "visible"), true)
             expect("speed up rate", prop("speedUpRateField", "text"), "12")
+            fake.sendRefusal = "FeeTooLow: the new rate must be above 11 sat/vB"
+            find(view.item, "confirmSpeedUpButton", 0).clicked()
+            expect("a refused speed-up stays in its sheet and says why", [shown("speedUpSheet"), prop("speedUpError", "text")],
+                   [true, "The new rate must be above 11 sat/vB"])
+            expect("...and only there: not on the Send tab", [prop("sendErrorNotice", "shown"), prop("sendErrorNotice", "message")], [false, ""])
+            expect("...nor in the page's notice", prop("errorNotice", "message"), "")
+            expect("...and it can be asked again", prop("confirmSpeedUpButton", "enabled"), true)
+            fake.sendRefusal = ""
+            find(view.item, "speedUpSheet", 0).close()
+        },
+        function (v) {
+            expect("closed, its refusal is gone", prop("speedUpError", "text"), "")
+            expect("...and the page never shows it", [prop("sendErrorNotice", "message"), prop("errorNotice", "message")], ["", ""])
+            find(view.item, "speedUp_" + "bb".repeat(32), 0).clicked()
+        },
+        function (v) {
+            expect("reopened, no stale refusal", [shown("speedUpSheet"), prop("speedUpError", "text")], [true, ""])
+            find(view.item, "speedUpRateField", 0).text = "0"
+            expect("a rate that is no rate: Approve off, and why", [prop("confirmSpeedUpButton", "enabled"), prop("speedUpHint", "text")],
+                   [false, "Give a fee rate above 0 sat/vB."])
+            find(view.item, "speedUpRateField", 0).text = "12"
             find(view.item, "confirmSpeedUpButton", 0).clicked()
             expect("bump asked", fake.last("requestFeeBump"), ["requestFeeBump", "bb".repeat(32), 12])
+            expect("...the sheet waits for its answer", [shown("speedUpSheet"), prop("confirmSpeedUpButton", "text"), prop("confirmSpeedUpButton", "enabled")],
+                   [true, "Asking…", false])
+            fake.sendError = ""
+            fake.sendRequestId = "s_bump"
+        },
+        function (v) {
+            expect("a speed-up that is a send now closes its sheet", shown("speedUpSheet"), false)
+            fake.sendRequestId = ""
+            fake.sendStatusJson = "{}"
+            v.closeSheets()
             v.selectTab(4)
         },
         function (v) {
@@ -1199,7 +1264,12 @@ Item {
         function (v) {
             expect("birthday sheet", prop("birthdaySheet", "visible"), true)
             expect("no day yet", prop("confirmBirthdayButton", "enabled"), false)
+            expect("...and nothing typed, no hint", prop("birthdayHint", "visible"), false)
+            find(view.item, "birthdayDateField", 0).text = "2026-1-2"
+            expect("not a day: Set off, and why", [prop("confirmBirthdayButton", "enabled"), prop("birthdayHint", "text")],
+                   [false, "Type the day as YYYY-MM-DD, such as 2024-04-20."])
             find(view.item, "birthdayDateField", 0).text = "2026-01-02"
+            expect("...gone once it is a day", prop("birthdayHint", "visible"), false)
             expect("a day", prop("confirmBirthdayButton", "enabled"), true)
             find(view.item, "confirmBirthdayButton", 0).clicked()
             expect("birthday asked", fake.last("setBirthday"), ["setBirthday", JSON.stringify({ date: "2026-01-02" })])
@@ -1208,6 +1278,15 @@ Item {
         function (v) {
             expect("refusal said", prop("birthdayError", "text"), "Not set: the day is after the wallet's first transaction")
             expect("sheet stays", prop("birthdaySheet", "visible"), true)
+            expect("...said there only", prop("errorNotice", "message"), "")
+            find(view.item, "birthdaySheet", 0).close()
+        },
+        function (v) {
+            expect("closed, its refusal is gone", prop("birthdayError", "text"), "")
+            find(view.item, "setBirthdayButton", 0).clicked()
+        },
+        function (v) {
+            expect("reopened, no stale refusal", [prop("birthdaySheet", "visible"), prop("birthdayError", "visible")], [true, false])
             find(view.item, "birthdayUnknown", 0).checked = true
             find(view.item, "confirmBirthdayButton", 0).clicked()
             expect("from the start", fake.last("setBirthday"), ["setBirthday", JSON.stringify({ height: 0 })])
@@ -1427,6 +1506,41 @@ Item {
             fake.statusJson = JSON.stringify(st)
         },
         function (v) {
+            v.selectTab(4)
+            find(view.item, "networkChip", 0).clicked()
+        },
+        function (v) {
+            // One error, one place: Close wallet refused in the Network sheet says so there, not on the page.
+            fake.closeRefusal = "close: already closing"
+            var inSheet = findAll(find(view.item, "networkSheet", 0).contentItem, "closeWalletButton", 0, [])
+            expect("the sheet has its own Close wallet", inSheet.length, 1)
+            inSheet[0].clicked()
+            expect("the backend refused it", [fake.count("closeWalletRefused"), fake.lastError], [1, "close: already closing"])
+            expect("the sheet says so, as a sentence", shownOne("networkSheetError") ? shownOne("networkSheetError").message : "<hidden>",
+                   "Close: already closing")
+            expect("...and only the sheet's copy of the pane", findAll(view.item, "networkSheetError", 0, []).filter(function (o) { return o.shown }).length, 1)
+            expect("...not the page's notice behind it", [prop("errorNotice", "shown"), prop("errorNotice", "message")], [false, ""])
+            fake.closeRefusal = ""
+            find(view.item, "networkSheet", 0).close()
+        },
+        function (v) {
+            expect("closed, the page never shows what the sheet said", [prop("errorNotice", "shown"), prop("errorNotice", "message")], [false, ""])
+            find(view.item, "networkChip", 0).clicked()
+        },
+        function (v) {
+            expect("reopened, no stale refusal", findAll(view.item, "networkSheetError", 0, []).filter(function (o) { return o.shown }).length, 0)
+            v.closeSheets()
+            fake.lastError = ""
+        },
+        function (v) {
+            // The page's own error shows on the page, as a sentence, and stays behind on another tab.
+            fake.lastError = "history: the server timed out"
+            expect("a page error shows on the page", [prop("errorNotice", "shown"), prop("errorNotice", "message")], [true, "History: the server timed out"])
+            v.selectTab(0)
+        },
+        function (v) {
+            expect("another tab: not carried over", [prop("errorNotice", "shown"), prop("errorNotice", "message")], [false, ""])
+            fake.lastError = ""
             v.selectTab(4)
         },
         function (v) {
