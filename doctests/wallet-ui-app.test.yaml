@@ -2054,11 +2054,11 @@ sections:
               find_value: "accountPickerSelectedWallet"
               property: "text"
               value: "Wallet “Black Card” · cdcdcdcd"
-            - name: "...and held by a Keycard that isn't connected"
+            - name: "...and held by a Keycard that isn't connected (the kit's short tag; the state is its colour)"
               action: expect_property
               find_value: "accountPickerSelectedChip_0"
               property: "text"
-              value: "○ Keycard · reader"
+              value: "Keycard"
             - name: "What works without the card"
               action: expect_property
               find_value: "deviceAbsentNote"
