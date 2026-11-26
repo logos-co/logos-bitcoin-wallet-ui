@@ -1934,6 +1934,22 @@ Item {
             find(view.item,"accountPicker",0).currentIndex = 1
             find(view.item,"accountPicker",0).activated(1)
             expect("picking another closes the open one first", [fake.count("closeWallet"), v.autoOpenId], [2, "g_other"])
+            // A close the backend refuses (a send going out) lets go of what waited on it, or the next
+            // close from anywhere would open g_other, or switch networks, unprompted.
+            v.networkAfterClose = "signet"
+            fake.lastJobJson = JSON.stringify({ jobId: "refused-1", kind: "close", state: "failed", error: "send_open", refused: true })
+            expect("a refused close drops the pending open and switch", [v.autoOpenId, v.networkAfterClose], ["", ""])
+            v.autoOpenId = "g_other"
+            // The node in Logos: a stop writing its cache is still stopping, and "another network" needs
+            // the node to name one that isn't this.
+            scene.keptHealth = fake.healthJson
+            fake.healthJson = JSON.stringify({ sources: [], localNode: { available: false, status: { state: "flushing", network: "mainnet" } } })
+            expect("flushing reads as stopped", v.localNodePhase, "stopped")
+            fake.healthJson = JSON.stringify({ sources: [], localNode: { available: false, status: { state: "running", network: "mainnet" } } })
+            expect("...the same network, not available yet, is on its way", v.localNodePhase, "starting")
+            fake.healthJson = JSON.stringify({ sources: [], localNode: { available: false, status: { state: "running", network: "signet" } } })
+            expect("...another named network is another network", v.localNodePhase, "wrong_network")
+            fake.healthJson = scene.keptHealth
             expect("...without opening yet", fake.count("selectAccount") - scene.opensBefore, 0)
             expect("...the open one stays selected", v.selectedAccount.id, "g_main")
             expect("...and the picker shows the open one", prop("accountPicker","currentIndex"), 0)
@@ -2076,18 +2092,25 @@ Item {
             // The banner shows only when no account is offered (else the locked wallets sit in the picker's list).
             scene.keptAccounts = fake.accountsJson
             fake.accountsJson = "[]"
-            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:true},{seed:"s_2",name:"Card",locked:false}])
+            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:true},{seed:"s_2",name:"Card",locked:false},
+                                                     {seed:"s_3",name:"Black Card",locked:true,kinds:["keycard"]}])
         },
         function (v) {
-            expect("the locked banner", shown("accountsLockedBanner"), true)
-            expect("...names the wallet", prop("accountsLockedBanner", "title"), "Wallet “Main phrase” is locked")
-            find(view.item, "accountsUnlockButton", 0).clicked()
+            // One block per device app that unlocks them: a Keycard wallet is sent to the Keycard app.
+            expect("the Signer's locked block", shown("accountsLocked_Signer"), true)
+            expect("...counts its wallets", prop("accountsLocked_Signer", "title"), "1 Signer wallet is locked")
+            expect("the Keycard's locked block", shown("accountsLocked_Keycard"), true)
+            expect("...names the Keycard app", prop("accountsLocked_Keycard", "message"), "Unlock them in the Keycard app to use their accounts.")
+            find(view.item, "accountsUnlock_Keycard", 0).clicked()
             var asked = logos.requests[logos.requests.length - 1]
-            expect("Unlock asks the Signer app for it", asked.intent + " " + JSON.stringify(asked.params.seeds), "wallets.unlock [\"s_1\"]")
-            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:false}])
+            expect("Unlock asks for that device's wallets", asked.intent + " " + JSON.stringify(asked.params.seeds), "wallets.unlock [\"s_3\"]")
+            find(view.item, "accountsUnlock_Signer", 0).clicked()
+            asked = logos.requests[logos.requests.length - 1]
+            expect("...and the Signer's for its own", asked.intent + " " + JSON.stringify(asked.params.seeds), "wallets.unlock [\"s_1\"]")
+            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:false},{seed:"s_3",name:"Black Card",locked:false,kinds:["keycard"]}])
         },
         function (v) {
-            expect("gone once it unlocks", shown("accountsLockedBanner"), false)
+            expect("gone once they unlock", shownAny("accountsLocked_Signer") || shownAny("accountsLocked_Keycard"), false)
             fake.accountsJson = scene.keptAccounts
             // "Use Tor for", saved per network in Node. A fresh node store: identifying, not chosen yet.
             fake.signerWalletsJson = "[]"

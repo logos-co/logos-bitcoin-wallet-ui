@@ -23,6 +23,9 @@ constexpr int kSendPollMs = 700;
 constexpr int kStaleReadMs = 15000;
 constexpr int kSourcesPollMs = 15000;
 constexpr int kHealthPollMs = 30000;
+// While the wallet waits on the node in Logos (stopped, starting, syncing), so starting it in the
+// Bitcoin Node app shows here within seconds, not after the next 30 s read.
+constexpr int kNodeWaitPollMs = 5000;
 // The wallet's own view of its sources fills in after it opens: read it every tick until then.
 constexpr int kFreshHealthMs = 30000;
 constexpr int kFeePollMs = 30000;
@@ -181,7 +184,17 @@ void BitcoinWalletUiBackend::poll() {
     // While the built-in Tor joins, its progress is read every tick.
     const QJsonValue tor = parse(healthJson()).value("tor");
     const bool torJoining = tor.isObject() && tor.toObject().value("state").toString() != "ready";
-    if (due(m_healthAge, fresh || torJoining ? kReadPollMs : kHealthPollMs)) loadHealth();
+    const QJsonValue node = parse(healthJson()).value("localNode");
+    bool nodeWaiting = false;
+    if (node.isObject()) {
+        const QJsonObject n = node.toObject();
+        const QJsonObject st = n.value("status").toObject();
+        const QString state = st.value("state").toString();
+        const bool behind = st.value("initialSync").toBool()
+                            || st.value("blocks").toDouble(-1) < st.value("headers").toDouble(-1);
+        nodeWaiting = !n.value("available").toBool() || state != QLatin1String("running") || behind;
+    }
+    if (due(m_healthAge, fresh || torJoining ? kReadPollMs : nodeWaiting ? kNodeWaitPollMs : kHealthPollMs)) loadHealth();
     // A switch queued behind a close, or an open waiting for it, is read every tick until it applies.
     if (!parse(networksJson()).value("pending").toString().isEmpty() || !m_openQueued.isEmpty()) loadRegistry();
     // A rebroadcast, or the history after a restart, can still turn an unknown outcome into sent.
@@ -930,7 +943,15 @@ void BitcoinWalletUiBackend::setActiveNetwork(QString network) {
 
 // open and close answer a job id and settle later.
 void BitcoinWalletUiBackend::track(const QString &reply, const QString &kind) {
-    if (!ok(reply, kind)) return;
+    if (!ok(reply, kind)) {
+        // Refused before it became a job: said like a failed one, so whatever waits on it (an
+        // account to open next, a network to switch to after a close) lets go.
+        const QJsonObject o = parse(reply);
+        setLastJobJson(compact(QJsonObject{{"jobId", QStringLiteral("refused-%1").arg(++m_refusals)},
+                                           {"kind", kind}, {"state", QStringLiteral("failed")},
+                                           {"error", errorOf(o)}, {"refused", true}}));
+        return;
+    }
     const QString id = parse(reply).value("jobId").toString();
     if (id.isEmpty()) { say(kind + QStringLiteral(": no job id returned")); return; }
     m_jobs.append({id, kind});

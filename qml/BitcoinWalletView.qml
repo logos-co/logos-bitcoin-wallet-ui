@@ -764,7 +764,10 @@ Item {
         if (!lastJob.jobId || lastJob.jobId === root.handledJobId) return
         root.handledJobId = lastJob.jobId
         if (lastJob.kind === "open" && lastJob.state === "done") root.notify("Wallet open", "Its balance fills in as it syncs.")
-        if (lastJob.kind === "cancel") root.notify("Not opened", "The request to the Signer app was withdrawn.")
+        if (lastJob.kind === "cancel" && !lastJob.refused) root.notify("Not opened", "The request to the Signer app was withdrawn.")
+        // A close that didn't happen (refused while a send goes out, or failed): what was waiting on
+        // it lets go, or the next close from anywhere would open that account or switch networks.
+        if (lastJob.kind === "close" && lastJob.state !== "done") { root.autoOpenId = ""; root.networkAfterClose = "" }
     }
 
     // 0 Home, 1 Send, 2 Receive, 3 Activity, 4 Settings. selectTab is the driver entry point.
@@ -1484,9 +1487,15 @@ Item {
         if (!localNode) return ""
         var st = localNodeStatus
         if (st && st.state === "failed") return "failed"
-        if (!st || !st.state || st.state === "stopped" || st.state === "stopping") return "stopped"
+        // "flushing": a stop writing its cache, which can take a while mid-sync. Still stopping.
+        if (!st || !st.state || st.state === "stopped" || st.state === "stopping" || st.state === "flushing") return "stopped"
         if (st.state === "starting") return "starting"
-        if (localNode.available !== true) return "wrong_network"
+        if (localNode.available !== true) {
+            // Another network only when the node says which and it isn't this one; otherwise it
+            // is on its way.
+            var here = root.status.network || root.activeNetwork
+            return st.network && here && st.network !== here ? "wrong_network" : "starting"
+        }
         return st.initialSync === true || (isNum(st.headers) && isNum(st.blocks) && Number(st.blocks) < Number(st.headers)) ? "syncing" : "running"
     }
     function localNodeTitle() {
@@ -2838,14 +2847,30 @@ Item {
             }
         }
 
-        // Fully locked only: the prominent unlock banner. Once an account is unlocked, the locked
-        // wallets live in the account picker's dropdown instead (as in the Ethereum wallet).
-        Accounts.LockedBanner {
-            namePrefix: "accounts"
-            Layout.fillWidth: true
-            visible: root.ready && shown && root.accountEntries.length === 0
-            wallets: root.signerWallets
-            onUnlock: function (seeds) { root.unlockWallets(seeds) }
+        // Fully locked only: one unlock block per device app, as in the Ethereum wallet, so a Keycard
+        // wallet sends the person to the Keycard app (the kit's LockedBanner names only "the Signer
+        // app"). Once an account is unlocked, the locked wallets live in the picker's dropdown.
+        Repeater {
+            objectName: "accountsLockedByDevice"
+            model: root.ready && root.accountEntries.length === 0
+                   ? Roster.lockedByDevice(Roster.lockedWallets(root.signerWallets)) : []
+            delegate: LogosNotice {
+                required property var modelData
+                readonly property string deviceKey: modelData.device.replace(/\s+/g, "")
+                objectName: "accountsLocked_" + deviceKey
+                Layout.fillWidth: true
+                title: modelData.count === 1 ? "1 " + modelData.device + " wallet is locked"
+                                             : modelData.count + " " + modelData.device + " wallets are locked"
+                message: modelData.hint
+                actions: [
+                    LogosButton {
+                        objectName: "accountsUnlock_" + deviceKey
+                        variant: LogosButton.Variant.Primary
+                        text: "Unlock"
+                        onClicked: root.unlockWallets(modelData.seeds)
+                    }
+                ]
+            }
         }
 
         LogosText { objectName: "deviceAbsentNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap

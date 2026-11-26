@@ -40,9 +40,11 @@ and each open allowed in the Signer app, and every send is approved there.
   `wallets.unlock` with `{ openHandle }` and shows "Waiting for the Signer app", with Ask again and
   Cancel. The Signer app unlocks the wallet first if it is locked, then asks to allow the open.
   Cancel closes the wallet, which withdraws the open.
-- **Locked wallets:** a wallet still locked in the Signer app offers no accounts. The app reads the
-  signer manager's `wallets()` and shows the account kit's `LockedBanner` above the picker; its
-  Unlock raises `wallets.unlock` with `{ seeds }`. The manager's `wallets_changed` and `wallets_locked`
+- **Locked wallets:** a wallet still locked offers no accounts. The app reads the signer manager's
+  `wallets()`. When every wallet is locked, it shows one block per device app that unlocks them
+  (`Roster.lockedByDevice`: "1 Keycard wallet is locked … Unlock them in the Keycard app"), each
+  with an Unlock that raises `wallets.unlock` with that device's `{ seeds }`. Once an account is
+  unlocked, the locked wallets sit in the picker's dropdown instead, grouped by device. The manager's `wallets_changed` and `wallets_locked`
   read the accounts and the wallets again.
 - **An unplugged device** says "sending needs the device" only when no other holder of the account
   (the keystore, a connected device, a QR wallet) can sign.
@@ -59,11 +61,14 @@ and each open allowed in the Signer app, and every send is approved there.
 - **The node in Logos:** with "Your own node · In Logos" chosen and the chain not coming from it,
   Balance says why, from the node module's `local_node()` passed on in `source_health`'s
   `localNode` (bitcoin_wallet_backend): "Your node isn't running", "failed to start", "is
-  starting", "is syncing" (block X of Y) or "runs another network", with **Open Bitcoin Node**
-  (`bitcoin.node.configure`). The wallet never starts it: the Bitcoin Node app does.
+  starting", "is syncing" (block X of Y) or "runs another network" (only when the node names a
+  network that isn't this one; a stop writing its cache, `flushing`, reads as stopped), with
+  **Open Bitcoin Node** (`bitcoin.node.configure`). The wallet never starts it: the Bitcoin Node
+  app does. While it waits on the node, the health is read every 5 s, so a start shows quickly.
 - **Balance:** the confirmed balance, then rows for payments waiting for the wallet's chain, pending
-  payments with the source that reported them, sent transactions not yet confirmed (with Speed
-  up), mined coins not yet mature, and coins too small to spend at today's fee rate. A busy read
+  payments with the source that reported them, "Change on its way back" while a send's change is
+  unconfirmed (the send itself, and Speed up, are in Activity), mined coins not yet mature, and
+  coins too small to spend at today's fee rate. A busy read
   is "not read": the last read stays, and an empty amount shows as a dash, never as zero.
   - The sync line is one line: the state, the block, and where the chain comes from, such as
     "Synchronized · block N · from 8 Bitcoin peers", "… · from your node" or "… · from 3 Electrum
