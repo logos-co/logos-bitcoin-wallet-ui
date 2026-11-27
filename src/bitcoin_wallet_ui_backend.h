@@ -137,6 +137,7 @@ private:
     QList<Job> m_jobs;
     // The person withdrew an open still waiting in the keys app: its failure is no error.
     bool m_openCancelled = false;
+    int m_refusals = 0;  // numbers the lastJob a refused call reports
     // An open answered busy (a switch or a close settling), and how often it was asked.
     QString m_openQueued;
     int m_openTries = 0;

@@ -70,12 +70,26 @@ Item {
         function selectAccount(id, birthday) { note("selectAccount", [id, birthday]) }
         function setActiveNetwork(n) { note("setActiveNetwork", [n]) }
         function openWallet(p) { note("openWallet", [p]) }
-        function closeWallet() { note("closeWallet", []) }
+        // What closeWallet says, in lastError, when set: the refusal the backend would give.
+        property string closeRefusal: ""
+        function closeWallet() {
+            if (closeRefusal !== "") { note("closeWalletRefused", []); lastError = ""; lastError = closeRefusal; return }
+            note("closeWallet", [])
+        }
         function setBirthday(p) { note("setBirthday", [p]) }
         function setGapLimit(p) { note("setGapLimit", [p]) }
         function probeSource(id) { note("probeSource", [id]) }
-        function requestSend(r) { note("requestSend", [r]) }
-        function requestFeeBump(t, rate) { note("requestFeeBump", [t, rate]) }
+        // What requestSend and requestFeeBump refuse with, in sendError, when set.
+        property string sendRefusal: ""
+        function refuseSend(name, args) {
+            if (sendRefusal === "") return false
+            note(name + "Refused", args)
+            sendError = ""
+            sendError = sendRefusal
+            return true
+        }
+        function requestSend(r) { if (!refuseSend("requestSend", [r])) note("requestSend", [r]) }
+        function requestFeeBump(t, rate) { if (!refuseSend("requestFeeBump", [t, rate])) note("requestFeeBump", [t, rate]) }
         function cancelSend() { note("cancelSend", []) }
         function dismissSend() { note("dismissSend", []); sendRequestId = ""; sendStatusJson = "{}" }
         function rebroadcast() { note("rebroadcast", []) }
@@ -178,6 +192,8 @@ Item {
         for (var k = 0; k < kids.length; k++) findAll(kids[k], name, (depth || 0) + 1, out)
         return out
     }
+    // The visible copy of `name`, or null.
+    function shownOne(name) { return findAll(view.item, name, 0, []).filter(function (o) { return o.visible })[0] || null }
     function shownAny(name) { return findAll(view.item, name, 0, []).some(function (o) { return o.visible === true }) }
 
     function expandAdvanced() {
@@ -302,7 +318,8 @@ Item {
             [mainnet({ unavailable: true, error: "the wallet core did not answer" }), "The wallet backend is not answering"]
         ]
         for (var i = 0; i < sync.length; i++) expect("sync " + i, v.syncLabel(sync[i][0]), sync[i][1])
-        expect("chip synced", v.syncChip(mainnet({})), "Synced · 935,500")
+        // The chip's "synced" is just "Synced" now: the height is in its tooltip.
+        expect("chip synced", v.syncChip(mainnet({})), "Synced")
         expect("chip catching up", v.syncChip(mainnet({ authority: { kind: "kyoto", height: 974439, tipAgeSecs: 64800, peers: 3, catchingUp: true } })), "Catching up")
         expect("chip no peers", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0 } })), "No answer")
         expect("chip not asked yet", v.syncChip(mainnet({ authority: { height: 935500, tipAgeSecs: 240, peers: 0, asked: false } })), "Connecting…")
@@ -461,6 +478,15 @@ Item {
 
         expect("authority kyoto", v.authorityName({ authority: { kind: "kyoto", peers: 2 } }), "2 Bitcoin peers")
         expect("authority node", v.authorityName({ authority: { kind: "local_node" } }), "your node")
+        // Under the node the wallet's chain is at the tip at once; only the core's `synced` says the scan
+        // reached it (logos-bitcoin-wallet-core-module#39): a scan from 0 is "syncing", not "Synced".
+        var nodeScan = { state: "ready", network: "signet", walletTip: 332310, synced: false, birthday: 0,
+                         authority: { kind: "local_node", height: 332310, peers: 1, asked: true, tipAgeSecs: 60 } }
+        expect("node scan still running: not synced", v.syncState(nodeScan), "syncing")
+        expect("...said as a scan from its start", v.syncStateLabel(nodeScan).indexOf("Checking blocks for your payments, from block 0 to 332,310") === 0, true)
+        expect("...the chip", v.syncChip(nodeScan), "Scanning…")
+        nodeScan.synced = true
+        expect("node scan done: synced", v.syncState(nodeScan), "synced")
         expect("gap", v.gapBlocks({ from: 100, below: 300 }), "blocks 100–299")
         expect("gap one", v.gapBlocks({ from: 100, below: 101 }), "block 100")
         expect("change to fee", v.warningText({ kind: "change_to_fee", amountSat: "450", costToSpendSat: "680" }),
@@ -485,6 +511,7 @@ Item {
     }
 
     // What renders, against the fake backend; each step runs after the previous one settled.
+    property string amountBeforeMax: ""
     property var steps: [
         function (v) {
             fake.networksJson = JSON.stringify({ networks: ["mainnet", "testnet4", "signet", "regtest"], active: "regtest" })
@@ -508,8 +535,10 @@ Item {
             expect("open page", shown("openPage"), true)
             expect("form", shown("openForm"), true)
             expect("no tabs", shown("walletTabs"), false)
-            expect("status line", prop("statusLine", "text"), "No wallet open")
-            expect("the network, picked in the header", prop("networkPicker", "displayText") + " " + prop("networkPicker", "enabled"), "regtest true")
+            // The status line is gone by design; with no wallet open the page asks for a pick instead.
+            expect("no wallet open: pick an account", prop("pickAccountHint", "visible") + " " + prop("pickAccountHint", "text"), "true Pick an account at the top to open it.")
+            // The header's network ComboBox is gone: the chip names the network, the Network sheet picks it.
+            expect("the network, on the header's chip", prop("networkChip", "text") + " " + prop("networkChip", "visible"), "regtest true")
             expect("...no second picker on the page", find(view.item, "networkBox", 0), null)
             expect("no password field", find(view.item, "openPasswordField", 0), null)
             expect("only Bitcoin accounts on the network", v.accountsOnNetwork.map(function(a) { return a.id }), ["g_test", "keycard-cdcdcdcd-84-1-0", "shell-cdcdcdcd-86-1-0", "g_gone"])
@@ -534,27 +563,29 @@ Item {
             expect("any other signer is Signer", v.accountProvider({ signer: "mock_device_signer" }), "Signer")
             expect("no row names a module", v.accountsOnNetwork.filter(function (a) {
                 return (v.accountProvider(a) + v.availabilityLine(a) + v.reasonLine(a)).indexOf("_module") >= 0 }).length, 0)
-            expect("Open is enabled", prop("openWalletButton", "enabled"), true)
-            find(view.item, "openWalletButton", 0).clicked()
+            // No Open button: picking in the picker opens.
+            expect("the picker is enabled", prop("accountPicker", "enabled"), true)
+            expect("...and the selected account can open", v.canOpenSelectedAccount, true)
+            find(view.item, "accountPicker", 0).activated(1)
         },
         function (v) {
-            // The wallet keeps each account's birthday: its first open on a network asks for it first.
-            expect("a first open asks when it was first used", prop("birthdaySheet", "visible") && prop("birthdaySheet", "title"),
-                   "When was this account first used?")
+            // A first open asks one thing, "Is this account new?" (logos-bitcoin-wallet-core-module#39).
+            expect("a first open asks if it is new", prop("birthdaySheet", "visible") && prop("birthdaySheet", "title"), "Is this account new?")
             expect("...before opening", fake.last("selectAccount"), null)
-            expect("...offering a new account", prop("birthdayNew", "visible"), true)
-            expect("...with no day yet", prop("confirmBirthdayButton", "enabled") + " " + prop("confirmBirthdayButton", "text"), "false Open")
-            find(view.item, "birthdayNew", 0).checked = true
-            find(view.item, "confirmBirthdayButton", 0).clicked()
+            expect("...two answers, the day choice hidden", [shown("firstOpenNew"), shown("firstOpenOlder"), shown("birthdayDateField"), shown("confirmBirthdayButton")],
+                   [true, true, false, false])
+            find(view.item, "firstOpenNew", 0).clicked()
             expect("a new account opens from today", fake.last("selectAccount"), ["selectAccount", "keycard-cdcdcdcd-84-1-0", v.todayUtc()])
-            find(view.item, "accountPicker", 0).currentIndex = 0
             find(view.item, "accountPicker", 0).activated(0)
-            expect("selection alone does not open", fake.count("selectAccount"), 1)
+            expect("another account's first pick asks before opening", fake.count("selectAccount"), 1)
             expect("chosen account stays selected", v.selectedAccount.id, "g_test")
-            find(view.item, "openWalletButton", 0).clicked()
         },
         function (v) {
             expect("another account's first open asks too", prop("birthdaySheet", "visible"), true)
+            find(view.item, "firstOpenOlder", 0).clicked()
+            expect("payments already: the day choice", [prop("birthdaySheet", "title"), shown("birthdayDateField"), shown("confirmBirthdayButton")],
+                   ["When was this account first used?", true, true])
+            expect("...with no day yet", prop("confirmBirthdayButton", "enabled") + " " + prop("confirmBirthdayButton", "text"), "false Open")
             find(view.item, "birthdayDateField", 0).text = "2024-04-20"
             find(view.item, "confirmBirthdayButton", 0).clicked()
             expect("...and opens it from that day", fake.last("selectAccount"), ["selectAccount", "g_test", "2024-04-20"])
@@ -562,13 +593,15 @@ Item {
         },
         function (v) {
             expect("the sheet closed", prop("birthdaySheet", "visible"), false)
-            find(view.item, "openWalletButton", 0).clicked()
+            v.pickAccount(v.accountsOnNetwork[0])
             expect("an account opened before opens at once, with no day", fake.last("selectAccount"), ["selectAccount", "g_test", ""])
             expect("...asking nothing", prop("birthdaySheet", "visible"), false)
             fake.walletsJson = "[]"
-            find(view.item, "openWalletButton", 0).clicked()
+            v.pickAccount(v.accountsOnNetwork[0])
         },
         function (v) {
+            expect("never opened here: asked again", prop("birthdaySheet", "visible"), true)
+            find(view.item, "firstOpenOlder", 0).clicked()
             find(view.item, "birthdayUnknown", 0).checked = true
             find(view.item, "confirmBirthdayButton", 0).clicked()
             expect("not knowing opens with none", fake.last("selectAccount"), ["selectAccount", "g_test", ""])
@@ -597,7 +630,7 @@ Item {
             fake.busy = false
             fake.statusJson = scene.syncedMainnet
             fake.balancesJson = JSON.stringify({ busy: false, confirmed: "125000000", confirmedBtc: "1.25000000", waiting: "50000", pending: "30000",
-                                                 sent: "0", immature: "0", tooSmall: { count: 2, sat: "540", btc: "0.00000540" } })
+                                                 sent: "39859", immature: "0", tooSmall: { count: 2, sat: "540", btc: "0.00000540" } })
             fake.feeRatesJson = JSON.stringify({ fast: 12, normal: 6, slow: 2, minimum: 1, sources: ["electrum.example"] })
             fake.historyJson = JSON.stringify({ page: 0, pageSize: 50, total: 3, rows: [
                 { txid: "aa".repeat(32), intent: "receive", amountSat: "30000", state: "pending", reportedBy: "electrum.example", confirmations: 0 },
@@ -611,8 +644,10 @@ Item {
             expect("waiting row", shown("waitingRow"), true)
             expect("pending row", shown("pendingRow"), true)
             expect("too small row", prop("tooSmallRowAmount", "text"), "2 coins, 0.0000054 BTC")
-            expect("sent row", shown("sentRow"), true)
-            expect("home speed up", shown("homeSpeedUp_" + "bb".repeat(32)), true)
+            expect("sent row: the change coming back", [shown("sentRow"), prop("sentRowAmount", "text")], [true, v.btcOf("39859") + " BTC"])
+            // Balance says what the send means for the balance; Speed up lives on its Activity card.
+            expect("sent row points to Activity", shown("sentRowActivity"), true)
+            expect("...no Speed up on Balance", find(view.item, "homeSpeedUp_" + "bb".repeat(32), 0), null)
             expect("the tip watch, in the servers' words", v.alertMessage({ kind: "authority_behind", source: "electrum.example" }),
                    "Example Electrum has seen blocks the Electrum servers haven't sent for 30 minutes; the Electrum servers may be cut off from the network.")
             expect("your node, asked alone, in its own report's words",
@@ -842,9 +877,14 @@ Item {
             // Send max of 400 sats: at 6 sat/vB the fee takes it all, at 1 sat/vB about 291 are left.
             scene.keptBalances = fake.balancesJson
             fake.balancesJson = JSON.stringify({ busy: false, confirmed: "400", waiting: "0", pending: "0", sent: "0", immature: "0", tooSmall: { count: 0, sat: "0" } })
-            v.sendMax = true
+            scene.amountBeforeMax = prop("sendAmountField", "text")
+            find(view.item, "sendMaxSwitch", 0).clicked()
         },
         function (v) {
+            // Send max names what it comes to and puts it in the field.
+            expect("send max: its amount on the switch", prop("sendMaxSwitch", "text"), "Send max: " + v.btcOf("400") + " BTC")
+            expect("...and in the field", prop("sendAmountField", "text"), v.btcOf("400"))
+            expect("...which stays editable", prop("sendAmountField", "enabled"), true)
             expect("send max the fee eats", prop("dustNote", "text"), "The fee would take all of it. The smallest amount this address can receive is 294 sats.")
             expect("...no review", prop("reviewButton", "enabled"), false)
             v.feeChoice = "custom"
@@ -860,7 +900,16 @@ Item {
             expect("send max a vbyte's worth above: left to the core", shown("dustNote"), false)
             expect("...review", prop("reviewButton", "enabled"), true)
             fake.balancesJson = scene.keptBalances
-            v.sendMax = false
+            find(view.item, "sendMaxSwitch", 0).clicked()
+            expect("send max off: the amount typed before comes back", prop("sendAmountField", "text"), scene.amountBeforeMax)
+            // Editing the amount under Send max turns it off and keeps what was typed.
+            find(view.item, "sendMaxSwitch", 0).clicked()
+            find(view.item, "sendAmountField", 0).text = "0.0001"
+            expect("editing the max turns Send max off", [v.sendMax, prop("sendAmountField", "text")], [false, "0.0001"])
+            // More than the confirmed coins: said under the amount, and Review waits.
+            find(view.item, "sendAmountField", 0).text = "5"
+            expect("over the confirmed coins: said", [shown("overSpendableNote"), prop("reviewButton", "enabled")], [true, false])
+            expect("...with how much is confirmed", prop("overSpendableNote", "text").indexOf("More than the ") === 0, true)
             v.feeChoice = "normal"
             find(view.item, "feeCustomField", 0).text = ""
             find(view.item, "sendAmountField", 0).text = "0.0006"
@@ -870,6 +919,24 @@ Item {
             v.review()
         },
         function (v) {
+            // One error, one place: a refused Approve shows in the review, as it was given, not on Send behind it.
+            fake.sendRefusal = "Busy: a send is already open: approve or reject it in the signer app, or cancel it."
+            find(view.item, "approveInSignerButton", 0).clicked()
+            expect("a refused approve says so in the review", [prop("reviewError", "shown"), prop("reviewError", "message")],
+                   [true, "A send is already open: approve or reject it in the signer app, or cancel it."])
+            expect("...and only there, not on the Send tab", [prop("sendErrorNotice", "shown"), prop("sendErrorNotice", "message")], [false, ""])
+            fake.sendRefusal = ""
+            find(view.item, "backButton", 0).clicked()
+        },
+        function (v) {
+            expect("closed, the review's refusal is gone", [shown("reviewSheet"), prop("reviewError", "shown")], [false, false])
+            expect("...and the Send tab does not show it after", [prop("sendErrorNotice", "shown"), prop("sendErrorNotice", "message")], [false, ""])
+            expect("...though the backend still holds it", fake.sendError !== "", true)
+            v.review()
+        },
+        function (v) {
+            expect("reopened, no stale refusal", [shown("reviewSheet"), prop("reviewError", "shown")], [true, false])
+            fake.sendError = ""
             expect("draft pane", shown("reviewDraftPane"), true)
             expect("draft amount", prop("draftAmount", "text"), "0.0006 BTC (60,000 sats)")
             expect("draft fee", prop("draftFee", "text"), "6 sat/vB, about 846 sats for a payment from one coin")
@@ -965,8 +1032,39 @@ Item {
         function (v) {
             expect("speed up sheet", prop("speedUpSheet", "visible"), true)
             expect("speed up rate", prop("speedUpRateField", "text"), "12")
+            fake.sendRefusal = "FeeTooLow: the new rate must be above 11 sat/vB"
+            find(view.item, "confirmSpeedUpButton", 0).clicked()
+            expect("a refused speed-up stays in its sheet and says why", [shown("speedUpSheet"), prop("speedUpError", "text")],
+                   [true, "The new rate must be above 11 sat/vB"])
+            expect("...and only there: not on the Send tab", [prop("sendErrorNotice", "shown"), prop("sendErrorNotice", "message")], [false, ""])
+            expect("...nor in the page's notice", prop("errorNotice", "message"), "")
+            expect("...and it can be asked again", prop("confirmSpeedUpButton", "enabled"), true)
+            fake.sendRefusal = ""
+            find(view.item, "speedUpSheet", 0).close()
+        },
+        function (v) {
+            expect("closed, its refusal is gone", prop("speedUpError", "text"), "")
+            expect("...and the page never shows it", [prop("sendErrorNotice", "message"), prop("errorNotice", "message")], ["", ""])
+            find(view.item, "speedUp_" + "bb".repeat(32), 0).clicked()
+        },
+        function (v) {
+            expect("reopened, no stale refusal", [shown("speedUpSheet"), prop("speedUpError", "text")], [true, ""])
+            find(view.item, "speedUpRateField", 0).text = "0"
+            expect("a rate that is no rate: Approve off, and why", [prop("confirmSpeedUpButton", "enabled"), prop("speedUpHint", "text")],
+                   [false, "Give a fee rate above 0 sat/vB."])
+            find(view.item, "speedUpRateField", 0).text = "12"
             find(view.item, "confirmSpeedUpButton", 0).clicked()
             expect("bump asked", fake.last("requestFeeBump"), ["requestFeeBump", "bb".repeat(32), 12])
+            expect("...the sheet waits for its answer", [shown("speedUpSheet"), prop("confirmSpeedUpButton", "text"), prop("confirmSpeedUpButton", "enabled")],
+                   [true, "Asking…", false])
+            fake.sendError = ""
+            fake.sendRequestId = "s_bump"
+        },
+        function (v) {
+            expect("a speed-up that is a send now closes its sheet", shown("speedUpSheet"), false)
+            fake.sendRequestId = ""
+            fake.sendStatusJson = "{}"
+            v.closeSheets()
             v.selectTab(4)
         },
         function (v) {
@@ -977,10 +1075,11 @@ Item {
             fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
         },
         function (v) {
-            find(view.item, "networkSettingsButton", 0).clicked()
+            find(view.item, "networkChip", 0).clicked()
         },
         function (v) {
             expect("sheet", prop("networkSheet", "visible"), true)
+            expect("the network, picked in the Network sheet", prop("networkOption_regtest", "checked") + " " + prop("networkOption_regtest", "enabled"), "true true")
             // A network the backend has not set up yet is "setting up", never "nothing defines the chain".
             var keep = fake.sourcesJson
             fake.sourcesJson = JSON.stringify({ network: "regtest", configured: false, walletOpen: false, sources: [], exposes: [], withoutTor: [] })
@@ -1038,7 +1137,8 @@ Item {
             expect("...your own node's pane closed", shown("ownNodePane"), false)
             expect("...the network it applies to", prop("chainNetworkLine", "text"), "For regtest. Each network has its own setting.")
             expect("...and the rules that hold in every mode", prop("torUseEveryMode", "text"), v.torUseEveryMode)
-            expect("the sheet is Node", [prop("networkSheet", "title"), prop("networkSettingsButton", "text")], ["Node", "Node"])
+            // The sheet is "Network" now, opened from the header's network chip (the Node button is gone).
+            expect("the sheet is Network", [prop("networkSheet", "title"), prop("networkChip", "text")], ["Network", "regtest"])
             expect("with Electrum servers, Only what identifies you says it is Everything",
                    v.torUseCopyOf("identifying", "electrum").happens.indexOf("With Electrum servers this works like Everything"), 0)
             expect("...and the options read so", findAll(view.item, "torUse_identifying", 0, []).length > 0
@@ -1164,7 +1264,12 @@ Item {
         function (v) {
             expect("birthday sheet", prop("birthdaySheet", "visible"), true)
             expect("no day yet", prop("confirmBirthdayButton", "enabled"), false)
+            expect("...and nothing typed, no hint", prop("birthdayHint", "visible"), false)
+            find(view.item, "birthdayDateField", 0).text = "2026-1-2"
+            expect("not a day: Set off, and why", [prop("confirmBirthdayButton", "enabled"), prop("birthdayHint", "text")],
+                   [false, "Type the day as YYYY-MM-DD, such as 2024-04-20."])
             find(view.item, "birthdayDateField", 0).text = "2026-01-02"
+            expect("...gone once it is a day", prop("birthdayHint", "visible"), false)
             expect("a day", prop("confirmBirthdayButton", "enabled"), true)
             find(view.item, "confirmBirthdayButton", 0).clicked()
             expect("birthday asked", fake.last("setBirthday"), ["setBirthday", JSON.stringify({ date: "2026-01-02" })])
@@ -1173,6 +1278,15 @@ Item {
         function (v) {
             expect("refusal said", prop("birthdayError", "text"), "Not set: the day is after the wallet's first transaction")
             expect("sheet stays", prop("birthdaySheet", "visible"), true)
+            expect("...said there only", prop("errorNotice", "message"), "")
+            find(view.item, "birthdaySheet", 0).close()
+        },
+        function (v) {
+            expect("closed, its refusal is gone", prop("birthdayError", "text"), "")
+            find(view.item, "setBirthdayButton", 0).clicked()
+        },
+        function (v) {
+            expect("reopened, no stale refusal", [prop("birthdaySheet", "visible"), prop("birthdayError", "visible")], [true, false])
             find(view.item, "birthdayUnknown", 0).checked = true
             find(view.item, "confirmBirthdayButton", 0).clicked()
             expect("from the start", fake.last("setBirthday"), ["setBirthday", JSON.stringify({ height: 0 })])
@@ -1265,7 +1379,7 @@ Item {
                 { id: "mine", kind: "electrum", url: "ssl://electrs.lan:50002", operator: "electrs.lan", label: "My server", use: true, history: true, tor: false, lan: true, route: "direct", userAdded: true, certificate: cert },
                 { id: "plain", kind: "electrum", url: "tcp://192.168.1.20:50001", operator: "192.168.1.20", label: "Plain", use: true, history: false, tor: false, lan: true, route: "direct", userAdded: true, encrypted: false },
                 { id: "newsrv", kind: "electrum", url: "ssl://new.lan:50002", operator: "new.lan", label: "New", use: true, history: false, tor: false, lan: true, route: "direct", userAdded: true }] })
-            find(view.item, "networkSettingsButton", 0).clicked()
+            find(view.item, "networkChip", 0).clicked()
         },
         function (v) {
             expandSources(["mine", "plain", "newsrv"])
@@ -1346,7 +1460,7 @@ Item {
                 counts: { list: 11, learned: 3, seed: 8, usable: 14, okLast30d: 6 },
                 list: { format: 2, network: "regtest", version: "1", peers: peers,
                         note: "PROVISIONAL: from 1 run, not the plan's 6 of 7 days." } })
-            find(view.item, "networkSettingsButton", 0).clicked()
+            find(view.item, "networkChip", 0).clicked()
         },
         function (v) {
             expandAdvanced()
@@ -1393,12 +1507,52 @@ Item {
         },
         function (v) {
             v.selectTab(4)
+            find(view.item, "networkChip", 0).clicked()
+        },
+        function (v) {
+            // One error, one place: Close wallet refused in the Network sheet says so there, not on the page.
+            fake.closeRefusal = "close: already closing"
+            var inSheet = findAll(find(view.item, "networkSheet", 0).contentItem, "closeWalletButton", 0, [])
+            expect("the sheet has its own Close wallet", inSheet.length, 1)
+            inSheet[0].clicked()
+            expect("the backend refused it", [fake.count("closeWalletRefused"), fake.lastError], [1, "close: already closing"])
+            expect("the sheet says so, as a sentence", shownOne("networkSheetError") ? shownOne("networkSheetError").message : "<hidden>",
+                   "Close: already closing")
+            expect("...and only the sheet's copy of the pane", findAll(view.item, "networkSheetError", 0, []).filter(function (o) { return o.shown }).length, 1)
+            expect("...not the page's notice behind it", [prop("errorNotice", "shown"), prop("errorNotice", "message")], [false, ""])
+            fake.closeRefusal = ""
+            find(view.item, "networkSheet", 0).close()
+        },
+        function (v) {
+            expect("closed, the page never shows what the sheet said", [prop("errorNotice", "shown"), prop("errorNotice", "message")], [false, ""])
+            find(view.item, "networkChip", 0).clicked()
+        },
+        function (v) {
+            expect("reopened, no stale refusal", findAll(view.item, "networkSheetError", 0, []).filter(function (o) { return o.shown }).length, 0)
+            v.closeSheets()
+            fake.lastError = ""
+        },
+        function (v) {
+            // The page's own error shows on the page, as a sentence, and stays behind on another tab.
+            fake.lastError = "history: the server timed out"
+            expect("a page error shows on the page", [prop("errorNotice", "shown"), prop("errorNotice", "message")], [true, "History: the server timed out"])
+            v.selectTab(0)
+        },
+        function (v) {
+            expect("another tab: not carried over", [prop("errorNotice", "shown"), prop("errorNotice", "message")], [false, ""])
+            fake.lastError = ""
+            v.selectTab(4)
         },
         function (v) {
             expandAdvanced()
             expect("own peers locked while open", shownAny("ownPeersLocked"), true)
             expect("no adding while open", shownAny("addOwnPeerButton"), false)
-            expect("no picking a network while open", v.canPickNetwork, false)
+            // No direct switch while open, but by design the Network options stay live: picking one closes the
+            // wallet first (networkAfterClose), and Close wallet now sits in the locked notice.
+            expect("no direct network switch while open", v.canPickNetwork, false)
+            expect("...yet another network can be picked, closing first", findAll(view.item, "networkOption_mainnet", 0, []).some(function (o) {
+                return o.visible && o.enabled }), true)
+            expect("...and Close wallet sits in the locked notice", shownAny("closeWalletButton"), true)
             // Kyoto below its quorum, a conflict, a chain from block 150, and payments below it.
             var st = JSON.parse(scene.syncedMainnet)
             st.network = "regtest"
@@ -1501,8 +1655,8 @@ Item {
             expect("the balance leaves them out", prop("confirmedCard", "value"), v.btcOf("100250000") + " BTC")
             expect("...but what Send spends counts them", prop("confirmedCard", "caption"), "Confirmed on the wallet's own chain. Send "
                    + "spends this and the coins found beyond the gap limit: " + v.btcOf("100320000") + " BTC in all.")
-            expect("Send says so too", prop("sendAvailable", "text"), "Send spends confirmed coins, those found beyond the gap limit included: "
-                   + v.btcOf("100320000") + " BTC.")
+            // Send's Send max names the same total: the confirmed coins and those found beyond the gap limit.
+            expect("Send max says so too", prop("sendMaxSwitch", "text"), "Send max: " + v.btcOf("100320000") + " BTC")
             v.selectTab(3)
         },
         function (v) {
@@ -1522,8 +1676,7 @@ Item {
             expect("the confirmed part is spendable", prop("beyondGapRow", "note"), "2 coins, yours: " + v.btcOf("70000")
                    + " BTC of it is confirmed and spendable, and Send counts that.")
             expect("...the line shows them all", prop("beyondGapRowAmount", "text"), v.btcOf("90000") + " BTC")
-            expect("...and Send counts the confirmed part", prop("sendAvailable", "text"), "Send spends confirmed coins, those found beyond "
-                   + "the gap limit included: " + v.btcOf("100320000") + " BTC.")
+            expect("...and Send max counts the confirmed part", prop("sendMaxSwitch", "text"), "Send max: " + v.btcOf("100320000") + " BTC")
             v.selectTab(4)
         },
         function (v) {
@@ -1626,7 +1779,7 @@ Item {
             fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "mainnet" })
         },
         function (v) {
-            find(view.item, "networkSettingsButton", 0).clicked()
+            find(view.item, "networkChip", 0).clicked()
         },
         function (v) {
             var before = fake.count("setSource")
@@ -1769,13 +1922,36 @@ Item {
         function (v) {
             expect("open account identity", v.selectedAccount.id, "g_main")
             expect("picker follows current wallet", prop("accountPicker","currentIndex"), 0)
-            // One wallet at a time: the picker is locked on the open one until it closes.
-            expect("an open wallet locks the picker", prop("accountPicker","enabled"), false)
-            expect("...and Open", prop("openWalletButton","enabled"), false)
-            expect("...and says why", shown("accountLockedNote") && prop("accountLockedNote","text"), "Close this wallet to open another.")
+            // One wallet at a time, but the picker stays live: picking another closes the open one, then opens it.
+            expect("an open wallet keeps the picker live", prop("accountPicker","enabled"), true)
+            expect("...but the open one can't open again", v.canOpenSelectedAccount, false)
+            // The "Close this wallet to open another" note is gone by design; picking the open one is a no-op instead.
+            scene.opensBefore = fake.count("selectAccount")
+            v.pickAccount(v.accountsOnNetwork[0])
+            expect("picking the open one does nothing", [fake.count("selectAccount") - scene.opensBefore, fake.count("closeWallet")], [0, 1])
+            // g_other was opened on this network before, so once the open one closes it opens without asking.
+            fake.walletsJson = JSON.stringify([{ group: "g_main", family: "bitcoin", network: "mainnet" }, { group: "g_other", family: "bitcoin_taproot", network: "mainnet" }])
             find(view.item,"accountPicker",0).currentIndex = 1
             find(view.item,"accountPicker",0).activated(1)
-            expect("picking another changes nothing", v.selectedAccount.id, "g_main")
+            expect("picking another closes the open one first", [fake.count("closeWallet"), v.autoOpenId], [2, "g_other"])
+            // A close the backend refuses (a send going out) lets go of what waited on it, or the next
+            // close from anywhere would open g_other, or switch networks, unprompted.
+            v.networkAfterClose = "signet"
+            fake.lastJobJson = JSON.stringify({ jobId: "refused-1", kind: "close", state: "failed", error: "send_open", refused: true })
+            expect("a refused close drops the pending open and switch", [v.autoOpenId, v.networkAfterClose], ["", ""])
+            v.autoOpenId = "g_other"
+            // The node in Logos: a stop writing its cache is still stopping, and "another network" needs
+            // the node to name one that isn't this.
+            scene.keptHealth = fake.healthJson
+            fake.healthJson = JSON.stringify({ sources: [], localNode: { available: false, status: { state: "flushing", network: "mainnet" } } })
+            expect("flushing reads as stopped", v.localNodePhase, "stopped")
+            fake.healthJson = JSON.stringify({ sources: [], localNode: { available: false, status: { state: "running", network: "mainnet" } } })
+            expect("...the same network, not available yet, is on its way", v.localNodePhase, "starting")
+            fake.healthJson = JSON.stringify({ sources: [], localNode: { available: false, status: { state: "running", network: "signet" } } })
+            expect("...another named network is another network", v.localNodePhase, "wrong_network")
+            fake.healthJson = scene.keptHealth
+            expect("...without opening yet", fake.count("selectAccount") - scene.opensBefore, 0)
+            expect("...the open one stays selected", v.selectedAccount.id, "g_main")
             expect("...and the picker shows the open one", prop("accountPicker","currentIndex"), 0)
             v.selectAccount(v.accountsOnNetwork[1])
             expect("nor does a driver's pick", v.selectedAccount.id, "g_main")
@@ -1791,22 +1967,22 @@ Item {
         function (v) {
             expect("closing keeps the picker locked", prop("accountPicker","enabled"), false)
             expect("...on the closing account", v.selectedAccount.id, "g_main")
-            expect("...with Open off", prop("openWalletButton","enabled"), false)
+            expect("...with nothing to open yet", v.canOpenSelectedAccount, false)
             fake.pendingJobKind = ""
             fake.busy = false
             fake.statusJson = JSON.stringify({state:"no_wallet",activeNetwork:"mainnet"})
         },
         function (v) {
             expect("closed, the picker unlocks", prop("accountPicker","enabled"), true)
-            expect("...with the closed account still selected", v.selectedAccount.id, "g_main")
-            expect("...and Open on", prop("openWalletButton","enabled"), true)
-            expect("...and no hint", shown("accountLockedNote"), false)
+            expect("...with the account picked while open now selected", v.selectedAccount.id, "g_other")
+            expect("...and opened by itself, once", [fake.last("selectAccount"), fake.count("selectAccount") - scene.opensBefore],
+                   [["selectAccount","g_other",""], 1])
+            expect("...the pick consumed", v.autoOpenId, "")
             find(view.item,"accountPicker",0).currentIndex = 1
             find(view.item,"accountPicker",0).activated(1)
             expect("another can be picked now", v.selectedAccount.id, "g_other")
             fake.walletsJson = JSON.stringify([{ group: "g_other", family: "bitcoin_taproot", network: "mainnet" }])
-            find(view.item,"openWalletButton",0).clicked()
-            expect("...and opened", fake.last("selectAccount"), ["selectAccount","g_other",""])
+            expect("...and picking opens it", fake.last("selectAccount"), ["selectAccount","g_other",""])
             fake.pendingJobKind = "open"
             fake.busy = true
             fake.statusJson = JSON.stringify({state:"awaiting_open",network:"mainnet",openHandle:"sma_t2"})
@@ -1834,7 +2010,7 @@ Item {
             fake.statusJson = JSON.stringify({state:"no_wallet",activeNetwork:"mainnet"})
         },
         function (v) {
-            expect("empty roster disables Open",prop("openWalletButton","enabled"),false)
+            expect("empty roster: nothing to open",v.canOpenSelectedAccount,false)
             expect("management available with no accounts",shown("manageAccountsButton"),true)
             // An unplugged device's wallet is open: viewing works, sending says to connect it.
             fake.networksJson = JSON.stringify({networks:["mainnet","regtest"],active:"regtest"})
@@ -1876,7 +2052,7 @@ Item {
             expect("one row for an account two signers hold", v.accountEntries.length, 1)
             find(view.item, "accountPicker", 0).activated(0)
             expect("...naming both, the keystore first", prop("accountPickerSelectedChip_0", "text") + " / "
-                   + prop("accountPickerSelectedChip_1", "text"), "● This device (Keystore) / ● Keycard · reader")
+                   + prop("accountPickerSelectedChip_1", "text"), "Keystore / Keycard")
             expect("it opens where it already has a wallet", v.selectedAccount ? v.selectedAccount.id : null, "keycard-cdcdcdcd-84-1-0")
             expect("...and the picker shows it", prop("accountPicker", "currentIndex"), 0)
             expect("...by its name, type and number", prop("accountPickerSelectedName", "text") + " / " + prop("accountPickerSelectedType", "text")
@@ -1892,13 +2068,14 @@ Item {
                                               family:"bitcoin",label:"Card account",synced:true})
         },
         function (v) {
-            expect("the open wallet goes by the roster's name", prop("statusLine", "text"), "Open: Savings · regtest")
-            expect("...as the picker's placeholder", prop("accountPicker", "placeholder"), "Savings")
+            // The status line is gone and the compact picker shows the account itself, not a placeholder.
+            expect("the open wallet goes by the roster's name", v.openedName, "Savings")
+            expect("...in the picker's own row", prop("accountPickerSelectedName", "text"), "Savings")
             expect("...and in Settings", prop("walletName", "text"), "Savings")
             fake.accountRosterJson = "[]"
         },
         function (v) {
-            expect("with no roster, it goes by the wallet's own label", prop("statusLine", "text"), "Open: Card account · regtest")
+            expect("with no roster, it goes by the wallet's own label", v.openedName, "Card account")
             // Hand-test fix 7: the Keycard is out, but the keystore holds the same account and signs.
             fake.accountsJson = JSON.stringify([scene.cardRow(false)])
             fake.accountRosterJson = JSON.stringify([{key:"btc_00112233445566778899aabbccddeeff",family:"bitcoin",chain:"test",
@@ -1912,18 +2089,29 @@ Item {
             fake.accountRosterJson = "[]"
             fake.statusJson = JSON.stringify({state:"no_wallet",activeNetwork:"regtest"})
             // A wallet still locked in the Signer app: its accounts aren't offered, and the banner says why.
-            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:true},{seed:"s_2",name:"Card",locked:false}])
+            // The banner shows only when no account is offered (else the locked wallets sit in the picker's list).
+            scene.keptAccounts = fake.accountsJson
+            fake.accountsJson = "[]"
+            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:true},{seed:"s_2",name:"Card",locked:false},
+                                                     {seed:"s_3",name:"Black Card",locked:true,kinds:["keycard"]}])
         },
         function (v) {
-            expect("the locked banner", shown("accountsLockedBanner"), true)
-            expect("...names the wallet", prop("accountsLockedBanner", "title"), "Wallet “Main phrase” is locked")
-            find(view.item, "accountsUnlockButton", 0).clicked()
+            // One block per device app that unlocks them: a Keycard wallet is sent to the Keycard app.
+            expect("the Signer's locked block", shown("accountsLocked_Signer"), true)
+            expect("...counts its wallets", prop("accountsLocked_Signer", "title"), "1 Signer wallet is locked")
+            expect("the Keycard's locked block", shown("accountsLocked_Keycard"), true)
+            expect("...names the Keycard app", prop("accountsLocked_Keycard", "message"), "Unlock them in the Keycard app to use their accounts.")
+            find(view.item, "accountsUnlock_Keycard", 0).clicked()
             var asked = logos.requests[logos.requests.length - 1]
-            expect("Unlock asks the Signer app for it", asked.intent + " " + JSON.stringify(asked.params.seeds), "wallets.unlock [\"s_1\"]")
-            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:false}])
+            expect("Unlock asks for that device's wallets", asked.intent + " " + JSON.stringify(asked.params.seeds), "wallets.unlock [\"s_3\"]")
+            find(view.item, "accountsUnlock_Signer", 0).clicked()
+            asked = logos.requests[logos.requests.length - 1]
+            expect("...and the Signer's for its own", asked.intent + " " + JSON.stringify(asked.params.seeds), "wallets.unlock [\"s_1\"]")
+            fake.signerWalletsJson = JSON.stringify([{seed:"s_1",name:"Main phrase",locked:false},{seed:"s_3",name:"Black Card",locked:false,kinds:["keycard"]}])
         },
         function (v) {
-            expect("gone once it unlocks", shown("accountsLockedBanner"), false)
+            expect("gone once they unlock", shownAny("accountsLocked_Signer") || shownAny("accountsLocked_Keycard"), false)
+            fake.accountsJson = scene.keptAccounts
             // "Use Tor for", saved per network in Node. A fresh node store: identifying, not chosen yet.
             fake.signerWalletsJson = "[]"
             fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
@@ -1934,7 +2122,7 @@ Item {
         },
         function (v) {
             var modes = ["identifying", "all", "none"]
-            expect("not saved yet: the account start shows, with a notice", [shown("openPage"), shown("accountSelectorRow"), shown("nodeSetupNotice")],
+            expect("not saved yet: the account start shows, with a notice", [shown("openPage"), shown("accountPicker"), shown("nodeSetupNotice")],
                    [true, true, true])
             expect("...naming the network", prop("nodeSetupNotice", "title"), "Set up Node for regtest")
             expect("...no first-run screen", findAll(view.item, "torUsePage", 0, []).length, 0)
@@ -1945,6 +2133,10 @@ Item {
             var vis = function (n) { return findAll(view.item, n, 0, []).filter(function (o) { return o.visible })[0] || null }
             var modes = ["identifying", "all", "none"]
             expect("Open Node opens the sheet", prop("networkSheet", "visible"), true)
+            // First visit: the quick screen, one primary action, no footer; Customise opens the full settings.
+            expect("...on the quick screen", [prop("networkSheet", "quick"), vis("quickSetupRecommended") !== null,
+                   vis("quickSetupCustomise") !== null, shown("networkSheetDone")], [true, true, true, false])
+            vis("quickSetupCustomise").clicked()
             expect("...saying it isn't saved", vis("nodeSetupSheetNotice") ? vis("nodeSetupSheetNotice").title : "", "Not saved for regtest yet")
             expect("...for this network", vis("chainNetworkLine") ? vis("chainNetworkLine").text : "", "For regtest. Each network has its own setting.")
             expect("the intro", vis("torUseIntro") ? vis("torUseIntro").text : "", v.torUseIntro)
@@ -1980,10 +2172,12 @@ Item {
         },
         function (v) {
             expect("existing: the notice once more", shown("nodeSetupNotice"), true)
-            find(view.item, "networkSettingsButton", 0).clicked()
+            find(view.item, "networkChip", 0).clicked()
         },
         function (v) {
             var vis = function (n) { return findAll(view.item, n, 0, []).filter(function (o) { return o.visible })[0] || null }
+            expect("...on the quick screen again", [prop("networkSheet", "quick"), vis("quickSetupRecommended") !== null], [true, true])
+            vis("quickSetupCustomise").clicked()
             expect("...its routing checked", ["identifying", "all", "none"].map(function (m) { return vis("torUse_" + m).checked }),
                    [false, true, false])
             fake.torUseReply = "invalid parameters: torUse must be all, identifying or none"
@@ -2023,6 +2217,7 @@ Item {
         function (v) {
             var vis = function (n) { return findAll(view.item, n, 0, []).filter(function (o) { return o.visible })[0] || null }
             var before = fake.count("setSource")
+            vis("quickSetupCustomise").clicked()
             vis("chainChoice_node").clicked()
             expect("your own node turns the node in Logos on", fake.calls.filter(function (c) { return c[0] === "setSource" }).slice(before),
                    [["setSource", "local", JSON.stringify({ use: true })]])
@@ -2069,7 +2264,7 @@ Item {
             fake.statusJson = JSON.stringify({ state: "no_wallet", activeNetwork: "regtest" })
         },
         function (v) {
-            find(view.item, "networkSettingsButton", 0).clicked()
+            find(view.item, "networkChip", 0).clicked()
         },
         function (v) {
             expect("the sheet", prop("networkSheet", "visible"), true)
@@ -2133,6 +2328,8 @@ Item {
     ]
     property int step: 0
     property string keptAlerts: ""
+    property string keptAccounts: ""
+    property int opensBefore: 0
     property string keptBalances: ""
     Timer {
         id: driver

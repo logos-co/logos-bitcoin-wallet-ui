@@ -6,6 +6,7 @@ import Logos.Icons
 import Logos.Theme
 import "accountkit" as Accounts
 import "accountkit/roster.js" as Roster
+import "errors.js" as Errors
 
 // The Bitcoin wallet: "Open a wallet", allowed in the Signer app, then Home, Send, Receive, Activity
 // and Settings. No password field. Strings this view did not author render as PlainText.
@@ -29,6 +30,61 @@ Item {
 
     function j(t, fb) { try { return JSON.parse(t && t.length ? t : fb) } catch (e) { return JSON.parse(fb) } }
 
+    // ---- one error, one place ----
+    // sendError and lastError stay set until the next action or success, and switchJson keeps the
+    // last refusal. A sheet takes its own call's failure as that call answers and shows it itself;
+    // the page's lines show only what the page did: never while a sheet is up, never an error
+    // already on screen when a sheet opened or the tab changed, and never one a sheet showed.
+    readonly property bool sheetUp: reviewSheet.visible || speedUpSheet.visible || birthdaySheet.visible || networkSheet.visible
+                                    || forgetSheet.visible || gapLimitSheet.visible || descriptorsSheet.visible
+    property string sendErrorSeen: ""
+    property string lastErrorSeen: ""
+    property string switchSeen: ""
+    // The sheet whose call is in flight: "review", "speedUp" or "network"; "" for none.
+    property string sheetActing: ""
+    function errorsSeen() {
+        root.sendErrorSeen = root.ready ? backend.sendError : ""
+        root.lastErrorSeen = root.ready ? backend.lastError : ""
+        root.switchSeen = root.ready ? backend.switchJson : ""
+    }
+    onSheetUpChanged: if (root.sheetUp) root.errorsSeen()
+    // An action on the page itself: its answer shows on the page, even worded as the last one.
+    function pageAction() { root.sendErrorSeen = ""; root.lastErrorSeen = ""; root.switchSeen = "" }
+    readonly property string pageSendError: !ready || sheetUp || backend.sendError === sendErrorSeen ? "" : Errors.human(backend.sendError)
+    // lastError gathers one line per failure: the page shows the lines it has not shown or seen,
+    // and not the accounts error, which has its own line.
+    readonly property string pageLastError: !ready || sheetUp ? "" : root.newLines(backend.lastError, lastErrorSeen)
+    function newLines(now, seen) {
+        var old = String(seen || "").split("\n"), acc = root.ready ? backend.accountsError : ""
+        return String(now || "").split("\n").filter(function (l) { return l !== "" && old.indexOf(l) < 0 && l !== acc })
+                                  .map(function (l) { return Errors.human(l) }).join("\n")
+    }
+    Connections {
+        target: root.ready ? root.backend : null
+        ignoreUnknownSignals: true
+        function onSendErrorChanged() {
+            var e = root.backend.sendError
+            if (e === "") { root.sendErrorSeen = ""; return }
+            if (root.sheetActing === "speedUp" && speedUpSheet.visible) {
+                speedUpSheet.awaiting = false
+                speedUpSheet.error = Errors.human(e)
+            } else if (root.sheetActing === "review" && reviewSheet.visible) {
+                reviewSheet.error = Errors.human(e)
+            } else {
+                return
+            }
+            root.sheetActing = ""
+            root.sendErrorSeen = e
+        }
+        function onLastErrorChanged() {
+            var e = root.backend.lastError
+            if (e === "") { root.lastErrorSeen = ""; return }
+            if (root.sheetActing !== "network" || !networkSheet.visible) return
+            networkSheet.error = root.newLines(e, "")
+            root.lastErrorSeen = e
+        }
+    }
+
     // ---- the wallet ----
     readonly property bool statusRead: ready && backend.statusJson !== ""
     readonly property var status: statusRead ? j(backend.statusJson, "{}") : ({})
@@ -45,6 +101,13 @@ Item {
     // A switch queued behind a close, the last switch's outcome, and an open waiting for either.
     readonly property string pendingNetwork: networks.pending || ""
     readonly property var switchState: ready && backend.switchJson !== "" ? j(backend.switchJson, "{}") : ({})
+    onSwitchStateChanged: {
+        if (root.sheetActing !== "network" || !networkSheet.visible || root.switchState.state !== "refused") return
+        var why = root.switchNote()
+        if (why === "") return
+        networkSheet.error = why
+        root.switchSeen = backend.switchJson
+    }
     readonly property var openQueued: ready && backend.openQueuedJson !== "" ? j(backend.openQueuedJson, "{}") : ({})
     // The network can be picked again as soon as no wallet is open or opening; a closing one queues it.
     readonly property bool canPickNetwork: ready && !walletOpen && !opening
@@ -145,11 +208,39 @@ Item {
         && status.unavailable !== true && backend.accountsError === "" && canOpenAccount(selectedAccount)
     // The wallet keeps each account's birthday itself: an account's first open on a network asks for it.
     function openedBefore(id) { return root.walletsOnNetwork.some(function (w) { return w.group === id }) }
+    // An account opened before opens at once. A first open asks one thing, "Is this account new?":
+    // new starts from today (quick, and nothing to miss); one with payments already picks a day or
+    // "I don't know". Kept after a scan from the activation height missed payments through the node
+    // in Logos (logos-bitcoin-wallet-core-module#39).
     function openSelectedAccount() {
         if (!canOpenSelectedAccount) return
         if (root.openedBefore(selectedAccount.id)) backend.selectAccount(selectedAccount.id, "")
         else birthdaySheet.askFirst(selectedAccount.id)
     }
+    // The account picked to open next: it opens as soon as it can (after the open one has closed,
+    // or once the node setup is saved).
+    property string autoOpenId: ""
+    function pickAccount(a) {
+        if (!a || !root.canOpenAccount(a)) return
+        root.pageAction()
+        if (root.walletOpen && root.status.group === a.id) return
+        root.autoOpenId = a.id
+        if (root.walletOpen) { backend.closeWallet(); return }
+        root.selectAccount(a)
+        if (root.canOpenSelectedAccount) { root.autoOpenId = ""; root.openSelectedAccount() }
+    }
+    function tryAutoOpen() {
+        if (canOpenSelectedAccount && autoOpenId !== "" && autoOpenId === selectedAccountId) {
+            autoOpenId = ""
+            openSelectedAccount()
+        }
+    }
+    onAccountLockedChanged: {
+        if (accountLocked) return
+        if (networkAfterClose !== "") { var n = networkAfterClose; networkAfterClose = ""; Qt.callLater(function () { root.selectNetwork(n) }); return }
+        if (autoOpenId !== "") { selectedAccountId = autoOpenId; Qt.callLater(tryAutoOpen) }
+    }
+    onCanOpenSelectedAccountChanged: Qt.callLater(tryAutoOpen)
     function todayUtc() { return new Date().toISOString().slice(0, 10) }
     function manageAccounts() {
         logos.request("evm.accounts.manage", ({}), function (res) {
@@ -505,7 +596,14 @@ Item {
     }
     property bool birthdayAsked: false
     onBirthdayJobChanged: {
-        if (!root.birthdayAsked || root.birthdayJob.state !== "done") return
+        if (!root.birthdayAsked) return
+        // The sheet's own refusal, as it was given: gone on open, on Set and on close.
+        if (root.birthdayJob.state === "failed") {
+            root.birthdayAsked = false
+            birthdaySheet.error = "Not set: " + (Errors.bare(root.birthdayJob.error) || "the wallet refused it")
+            return
+        }
+        if (root.birthdayJob.state !== "done") return
         root.birthdayAsked = false
         birthdaySheet.close()
         root.notify("Birthday set", "It looks for payments again from block " + root.group(root.birthdayJob.rescanFrom) + ".")
@@ -576,6 +674,8 @@ Item {
         root.forgetNote = ""
         if (root.sendId !== "") {
             sendGoneTimer.stop()
+            // A speed-up the sheet asked for is a send now: the review takes over.
+            if (speedUpSheet.awaiting) speedUpSheet.close()
             root.reviewDraft = false
             if (root.walletOpen && !reviewSheet.visible) reviewSheet.open()
         } else if (!root.reviewDraft) {
@@ -664,12 +764,29 @@ Item {
         if (!lastJob.jobId || lastJob.jobId === root.handledJobId) return
         root.handledJobId = lastJob.jobId
         if (lastJob.kind === "open" && lastJob.state === "done") root.notify("Wallet open", "Its balance fills in as it syncs.")
-        if (lastJob.kind === "cancel") root.notify("Not opened", "The request to the Signer app was withdrawn.")
+        if (lastJob.kind === "cancel" && !lastJob.refused) root.notify("Not opened", "The request to the Signer app was withdrawn.")
+        // A close that didn't happen (refused while a send goes out, or failed): what was waiting on
+        // it lets go, or the next close from anywhere would open that account or switch networks.
+        if (lastJob.kind === "close" && lastJob.state !== "done") { root.autoOpenId = ""; root.networkAfterClose = "" }
     }
 
     // 0 Home, 1 Send, 2 Receive, 3 Activity, 4 Settings. selectTab is the driver entry point.
     property int page: 0
     function selectTab(i) { root.page = i; tabs.currentIndex = i }
+    // The picker's driver entry point: pick its i-th account as a click would, and only when a click
+    // could (the picker enabled, the account one it offers). A test can't send `activated(int)`.
+    function pickAccountAt(i) {
+        var e = root.accountEntries[i]
+        if (!e || !accountPicker.enabled || !accountPicker.canPick(e)) return
+        root.pickAccount(root.homeAccount(e))
+    }
+    // Another network while a wallet is open: close it, then switch.
+    property string networkAfterClose: ""
+    function switchNetwork(network) {
+        if (network === root.displayedNetwork) return
+        if (root.canPickNetwork) { root.selectNetwork(network); return }
+        if (root.walletOpen) { root.networkAfterClose = network; root.autoOpenId = ""; backend.closeWallet() }
+    }
     function selectNetwork(network) {
         if (root.canPickNetwork) backend.setActiveNetwork(network)
     }
@@ -706,7 +823,12 @@ Item {
         if (sendTo.text.trim() !== "") recipientCheckTimer.restart()
         if (root.walletOpen) root.selectTab(0)
     }
-    onPageChanged: if (root.page !== 4) root.shownDescriptors = null
+    // Another tab: an error already on screen is not carried to it. A refused switch stays: it holds on every tab.
+    onPageChanged: {
+        if (root.page !== 4) root.shownDescriptors = null
+        root.sendErrorSeen = root.ready ? backend.sendError : ""
+        root.lastErrorSeen = root.ready ? backend.lastError : ""
+    }
     function notify(title, message) { toast.show(title, message) }
 
     // ================= pure helpers: the state tests drive these =================
@@ -786,7 +908,11 @@ Item {
         // payments were checked, a block or two behind the tip being the newest block's catch-up.
         var scan = root.kyotoScan(st)
         var tip = st.walletTip
+        // Under a node, the wallet's chain follows the node's headers at once while its scan of the
+        // node's filters can still be far behind (a scan from the activation height takes a while):
+        // only the core's `synced` says the scan reached the tip (logos-bitcoin-wallet-core-module#39).
         var caughtUp = scan !== null ? scan.at !== null && scan.at + 2 >= scan.tip
+                     : root.isNodeKind(a.kind) && "synced" in st ? st.synced === true
                      : root.isNum(tip) ? Number(tip) >= Number(a.height) : st.synced === true
         // Regtest's blocks come when someone mines one: its tip age says nothing.
         if (st.network === "regtest") return caughtUp ? "local" : "syncing"
@@ -874,6 +1000,10 @@ Item {
         case "syncing": {
             var scan = root.kyotoScan(st)
             if (scan !== null) return root.scanLine(scan)
+            // A node's filter scan says no height of its own yet: say what it does and from where.
+            if (root.isNodeKind(a.kind) && !root.isNum(st.syncPercent))
+                return "Checking blocks for your payments, from block " + root.group(root.isNum(st.rescanFrom) ? st.rescanFrom : (st.birthday || 0))
+                       + " to " + h + ". Payments show once it reaches them."
             return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
                    + (root.isNum(st.walletTip) ? " · block " + root.group(st.walletTip) + " of " + h
                                                : " · the chain is at block " + h)
@@ -962,10 +1092,11 @@ Item {
         case "syncing": {
             var scan = root.kyotoScan(st)
             if (scan !== null) return scan.share !== null ? "Filters " + scan.share + "%" : "Checking filters…"
+            if (root.isNodeKind(a.kind) && !root.isNum(st.syncPercent)) return "Scanning…"
             return "Syncing" + (root.isNum(st.syncPercent) ? " " + st.syncPercent + "%" : "")
         }
-        case "local": return "Local · " + root.group(st.authority.height)
-        case "synced": return "Synced · " + root.group(st.authority.height)
+        case "local": return "Local chain"
+        case "synced": return "Synced"
         }
         return ""
     }
@@ -1337,12 +1468,98 @@ Item {
         if (root.chainChoice === "node") root.chooseChain("node")
     }
     // The node in Logos: missing on this network, its state from the open wallet, else from its health.
+    // "In Logos" is this network's chain source, but the chain isn't coming from it: the node is
+    // stopped or still syncing. The Bitcoin Node app owns starting it, so the wallet sends people there.
+    // The chain should come from the node in Logos and doesn't (yet).
+    readonly property bool localNodeExpected: walletOpen && chainMode === "node" && nodePlace === "local"
+                                              && !isNodeKind((status.authority || {}).kind)
+                                              && syncState(status) !== "synced" && syncState(status) !== "local"
+    // The node's state isn't known yet (the first health read after an open or a switch). A backend
+    // that never passes localNode on (before bitcoin_wallet_backend#15) says so with a health read
+    // that has none: then the generic warning stands, as before.
+    readonly property bool localNodeChecking: localNodeExpected && localNodePhase === ""
+                                              && !(health && health.sources && !("localNode" in health))
+    // Something the person must know or do: the node isn't running, failed, is on its way, or runs
+    // another network. A running node the wallet is still connecting to is the normal sync line.
+    readonly property bool localNodeIdle: localNodeExpected && !localNodeChecking && localNodePhase !== "running"
+    // The node runs and the core hasn't taken it as the chain yet (it asks it on a timer after an
+    // open): connecting, said calmly, not the core's "no server answered" from before.
+    readonly property bool localNodeConnecting: localNodeExpected && localNodePhase === "running"
+    // The node in Logos as the node module sees it (bitcoind_module's status), from a backend that
+    // passes it on; null from an older one, and the wallet then can't tell stopped from syncing.
+    readonly property var localNode: health && health.localNode && typeof health.localNode === "object" ? health.localNode : null
+    readonly property var localNodeStatus: localNode && localNode.status && typeof localNode.status === "object" ? localNode.status : null
+    // "failed", "stopped", "starting", "syncing", "wrong_network", "running" or "" (not known).
+    readonly property string localNodePhase: {
+        if (!localNode) return ""
+        var st = localNodeStatus
+        if (st && st.state === "failed") return "failed"
+        // "flushing": a stop writing its cache, which can take a while mid-sync. Still stopping.
+        if (!st || !st.state || st.state === "stopped" || st.state === "stopping" || st.state === "flushing") return "stopped"
+        if (st.state === "starting") return "starting"
+        if (localNode.available !== true) {
+            // Another network only when the node says which and it isn't this one; otherwise it
+            // is on its way.
+            var here = root.status.network || root.activeNetwork
+            return st.network && here && st.network !== here ? "wrong_network" : "starting"
+        }
+        return st.initialSync === true || (isNum(st.headers) && isNum(st.blocks) && Number(st.blocks) < Number(st.headers)) ? "syncing" : "running"
+    }
+    function localNodeTitle() {
+        switch (root.localNodePhase) {
+        case "failed": return "Your node failed to start"
+        case "stopped": return "Your node isn't running"
+        case "starting": return "Your node is starting"
+        case "syncing": return "Your node is syncing"
+        case "wrong_network": return "Your node runs another network"
+        }
+        return "Your node isn't serving the chain"
+    }
+    function localNodeMessage() {
+        var net = root.status.network || "this network", st = root.localNodeStatus || {}
+        switch (root.localNodePhase) {
+        case "failed": return (st.lastError ? st.lastError + "\n" : "")
+                              + "Starting it again won't help until the cause is fixed. The Bitcoin Node app shows its state and log."
+        case "stopped": return "This wallet reads " + net + " from the Bitcoin node in Logos. Start it in the Bitcoin Node app; the balance catches up once it is synced."
+                               + (st.lastError ? "\nLast error: " + st.lastError : "")
+        case "starting": return "It reads its blocks from disk first. The balance catches up once it is synced."
+        case "syncing": {
+            var share = root.isNum(st.verificationProgress) && Number(st.verificationProgress) >= 0 ? Math.floor(Number(st.verificationProgress) * 100) : null
+            return "Block " + root.group(st.blocks) + (root.isNum(st.headers) && Number(st.headers) > 0 ? " of " + root.group(st.headers) : "")
+                   + (share !== null ? " (" + share + "%)" : "") + ". The balance catches up once it is synced."
+        }
+        case "wrong_network": return "It runs " + (st.network || "another network") + "; this wallet is on " + net
+                                     + ". One node runs at a time: switch it in the Bitcoin Node app."
+        }
+        return "This wallet reads " + net + " from the Bitcoin node in Logos, and it isn't answering: it is stopped, or still syncing. "
+               + "Start it or watch its sync in the Bitcoin Node app; the balance catches up once it is synced."
+    }
+    function localNodeChip() {
+        switch (root.localNodePhase) {
+        case "failed": return "Node failed"
+        case "stopped": return "Node stopped"
+        // On its way, the network and a number say enough; the block below says it is the node.
+        case "starting": return "Starting"
+        case "syncing": {
+            var p = (root.localNodeStatus || {}).verificationProgress
+            return root.isNum(p) && Number(p) >= 0 ? Math.floor(Number(p) * 100) + "%" : "Syncing"
+        }
+        case "wrong_network": return "Node on " + ((root.localNodeStatus || {}).network || "another network")
+        }
+        return "Node not ready"
+    }
+    // The balance as of the last block the wallet checked, while its chain isn't current.
+    readonly property bool balanceStale: walletOpen && isNum((status.authority || {}).height)
+                                         && syncState(status) !== "synced" && syncState(status) !== "local"
     function localNodeLine() {
         var s = root.sourceList.filter(function (x) { return x.kind === "local" })[0]
         if (!s) return "The node in Logos is not available on this network."
         var n = root.walletOpen && root.status.node && root.isNodeKind((root.status.authority || {}).kind) ? root.status.node : null
         if (n && root.isNum(n.blocks)) return n.synced === true ? "Synced, at block " + root.group(n.blocks)
                                                                 : "Syncing: block " + root.group(n.blocks) + " of " + root.group(n.headers)
+        // The node module's own view of it, where the backend passes it on: no "not probed here".
+        if (root.localNodePhase === "running") return "Running" + (root.isNum((root.localNodeStatus || {}).blocks) ? ", at block " + root.group(root.localNodeStatus.blocks) : "")
+        if (root.localNodePhase !== "") return root.localNodeChip()
         return s.use === true ? root.healthLine(s) : "It must be running and synced whenever you use the wallet."
     }
     // A typed address's host, without scheme, login, port or path.
@@ -1437,11 +1654,38 @@ Item {
     readonly property bool recipientValid: recipientChecked && recipientCheck.valid === true
     property string amountUnit: "btc"
     property bool sendMax: false
+    // The amount typed before Send max went on, put back when it goes off.
+    property string amountBeforeMax: ""
+    function amountInUnit(sat) { return amountUnit === "sat" ? satsText(sat) : btcOf(sat) + " BTC" }
+    function maxInField() { return spendableSat === "" ? "" : amountUnit === "sat" ? spendableSat : btcOf(spendableSat) }
+    function setSendMax(on) {
+        if (on === sendMax) return
+        if (on) { amountBeforeMax = sendAmount.text; sendMax = true; sendAmount.text = maxInField() }
+        else { sendMax = false; sendAmount.text = amountBeforeMax; amountBeforeMax = "" }
+    }
+    onSpendableSatChanged: if (sendMax) sendAmount.text = maxInField()
+    // Another account open: Send starts afresh, so another account's amount or Send max never carries over.
+    readonly property string sendAccount: walletOpen ? (status.group || "") : ""
+    onSendAccountChanged: if (!sendLive) { sendMax = false; amountBeforeMax = ""; sendAmount.text = ""; sendTo.text = "" }
+    // More than the confirmed coins: said under the amount, and Review waits, rather than the
+    // build failing after Review. What is waiting for a block is named, since it will be spendable.
+    readonly property string incomingSat: balancesRead && isNum(balances.pending) ? String(balances.pending) : "0"
+    readonly property bool overSpendable: spendableSat !== ""
+        && (sendMax ? Number(spendableSat) <= 0 : amountSat !== "" && Number(amountSat) > Number(spendableSat))
+    function overSpendableLine() {
+        var waiting = Number(incomingSat) > 0 ? btcOf(incomingSat) + " BTC is waiting for a block and can be sent once it confirms." : ""
+        if (Number(spendableSat) <= 0) return "Nothing confirmed to send yet." + (waiting ? " " + waiting : "")
+        return "More than the " + btcOf(spendableSat) + " BTC confirmed." + (waiting ? " " + waiting : "")
+    }
     property string feeChoice: "normal"
     readonly property string amountSat: satFromInput(sendAmount.text, amountUnit)
     readonly property real chosenRate: feeChoice === "custom" ? Number(feeCustom.text) : Number(feeRates[feeChoice] || 0)
     readonly property bool rateOk: isFinite(chosenRate) && chosenRate > 0 && chosenRate <= 100000
-    readonly property bool canReview: ready && walletOpen && !sendLive && sendOutcome(send) !== "unknown"
+    // Payments go out through the node in Logos ("Through your node"): while it isn't serving the
+    // chain a send would be approved in the Signer and then fail to broadcast, so Send waits for it.
+    readonly property bool sendsThroughNode: (localSends || sendsRecommended) === "node"
+    readonly property bool sendWaitsForNode: localNodeIdle && sendsThroughNode
+    readonly property bool canReview: ready && walletOpen && !sendLive && sendOutcome(send) !== "unknown" && !sendWaitsForNode && !overSpendable
                                       && recipientValid && (sendMax || amountSat !== "") && rateOk && !belowDust
     // The least the recipient can receive, from its check; "" from a core that doesn't say.
     readonly property string dustSat: recipientValid && isNum(recipientCheck.dustSat) ? String(recipientCheck.dustSat) : ""
@@ -1514,8 +1758,11 @@ Item {
         root.reviewDraft = true
         reviewSheet.open()
     }
+    // A call the review makes: a refusal shows in the review, as it was given.
+    function reviewActs() { reviewSheet.error = ""; root.sheetActing = "review" }
     function approveInSigner() {
         if (!root.draft) return
+        root.reviewActs()
         root.lastRequest = { send: root.draft.request }
         backend.requestSend(JSON.stringify(root.draft.request))
     }
@@ -1523,6 +1770,7 @@ Item {
     function askAgain() {
         var r = root.lastRequest
         if (!r) return
+        root.reviewActs()
         if (r.bump) backend.requestFeeBump(r.bump.txid, r.bump.rate)
         else backend.requestSend(JSON.stringify(r.send))
     }
@@ -1569,6 +1817,7 @@ Item {
         var req = JSON.parse(JSON.stringify(r.send))
         req.smallChangeToFee = true
         root.lastRequest = { send: req }
+        root.reviewActs()
         if (root.sendLive) { root.rebuildAfterCancel = req; backend.cancelSend() }
         else backend.requestSend(JSON.stringify(req))
     }
@@ -1576,7 +1825,7 @@ Item {
         var s = root.sendState
         backend.dismissSend()
         reviewSheet.close()
-        if (s === "sent" && root.send.kind !== "fee_bump") { sendTo.text = ""; sendAmount.text = ""; root.sendMax = false }
+        if (s === "sent" && root.send.kind !== "fee_bump") { sendTo.text = ""; root.sendMax = false; root.amountBeforeMax = ""; sendAmount.text = "" }
     }
     property string forgetTxid: ""
     // The backend's note says what forgetting does; it shows in the sheet once it has.
@@ -1984,6 +2233,12 @@ Item {
         ColumnLayout {
             id: pane
             spacing: Theme.spacing.small
+            // In the Network sheet, or on Settings: an action's refusal shows where it was taken.
+            readonly property bool inSheet: parent === networkSheetLoader
+            function acting() {
+                if (pane.inSheet) { networkSheet.error = ""; root.sheetActing = "network" }
+                else root.pageAction()
+            }
 
             // The fields clear at once, so a reply arriving later never wipes the next server typed in.
             // An added server opens the Electrum list under Fees, where its row is.
@@ -1999,11 +2254,39 @@ Item {
                 }, function () { feeServersToggle.expanded = true })
             }
 
+            RowLayout {
+                objectName: "networkChoice"
+                Layout.fillWidth: true
+                spacing: Theme.spacing.medium
+                LogosText { text: "Network"; color: Theme.palette.textSecondary }
+                Repeater {
+                    model: root.networks.networks || []
+                    delegate: LogosRadioButton {
+                        required property string modelData
+                        objectName: "networkOption_" + modelData
+                        text: modelData
+                        checkable: false
+                        checked: root.displayedNetwork === modelData
+                        enabled: root.ready && !root.opening && !root.busy
+                        onClicked: { pane.acting(); root.switchNetwork(modelData) }
+                    }
+                }
+                Item { Layout.fillWidth: true }
+            }
             LogosNotice {
                 objectName: "networkLockedNotice"
                 Layout.fillWidth: true
                 shown: root.networkLocked
-                message: "These settings apply when a wallet opens. Close the wallet to change them."
+                message: "These settings apply when a wallet opens. Close the wallet to change them; picking it again opens it."
+                actions: [ LogosButton { objectName: "closeWalletButton"; visible: root.walletOpen; text: "Close wallet"
+                                         enabled: root.ready && !root.busy; onClicked: { pane.acting(); backend.closeWallet() } } ]
+            }
+            LogosNotice {
+                objectName: "networkSheetError"
+                Layout.fillWidth: true
+                severity: LogosNotice.Error
+                shown: pane.inSheet && message !== ""
+                message: pane.inSheet ? networkSheet.error : ""
             }
 
             // One decision, top to bottom: your own node, or public sources and everything under them.
@@ -2091,6 +2374,12 @@ Item {
                     visible: root.nodePlace === "local"
                     Layout.fillWidth: true
                     spacing: Theme.spacing.tiny
+                    // The Bitcoin Node app starts the node: say so here, and on mainnet what its first sync costs.
+                    LogosText { objectName: "localNodeCostNote"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                color: (root.sourcesNetwork || root.displayedNetwork) === "mainnet" ? Theme.palette.warning : Theme.palette.textSecondary
+                                text: (root.sourcesNetwork || root.displayedNetwork) === "mainnet"
+                                      ? "You start it in the Bitcoin Node app. On mainnet its first sync checks the whole chain: many hours, and about 2 GB of disk."
+                                      : "You start it in the Bitcoin Node app; the wallet reads the chain from it once it is synced." }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Theme.spacing.small
@@ -2146,6 +2435,11 @@ Item {
                                 LogosTextField { id: rpcUser; objectName: "rpcUser"; Layout.fillWidth: true; placeholderText: "RPC username (optional)" }
                         LogosTextField { id: rpcPass; objectName: "rpcPass"; Layout.fillWidth: true; placeholderText: "RPC password (optional)"; echoMode: TextInput.Password }
                             }
+                            // Why Add and use is off, once something else is typed: it needs the address.
+                            LogosText { objectName: "addRpcHint"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        font.pixelSize: 12; color: Theme.palette.textSecondary
+                                        text: rpcAddress.text.trim() === "" && (rpcName.text.trim() !== "" || rpcUser.text !== "" || rpcPass.text !== "")
+                                              ? "Type your node's address too." : "" }
                             LogosButton {
                                 objectName: "addRpcButton"
                                 text: "Add and use"
@@ -2406,6 +2700,10 @@ Item {
                             LogosButton { objectName: "addSourceButton"; text: "Add"
                                           enabled: root.ready && addSourceAddress.text.trim() !== ""; onClicked: pane.addSource() }
                         }
+                        // Why Add is off, once a name is typed: it needs the address.
+                        LogosText { objectName: "addSourceHint"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                    font.pixelSize: 12; color: Theme.palette.textSecondary
+                                    text: addSourceName.text.trim() !== "" && addSourceAddress.text.trim() === "" ? "Type the server's address too." : "" }
                     }
                     ColumnLayout {
                         objectName: "exposurePane"
@@ -2462,80 +2760,34 @@ Item {
     ColumnLayout {
         anchors.fill: parent; anchors.margins: 16; spacing: 10
 
+        // Top bar, as in the Ethereum wallet: title + description (help at the title) on the left;
+        // the accounts button, the account picker and the network chip on the right.
         RowLayout {
             Layout.fillWidth: true
-            LogosText { text: "Bitcoin"; font.pixelSize: 22 }
-            Item { Layout.fillWidth: true }
-            LogosText { objectName: "syncChip"; textFormat: Text.PlainText; font.pixelSize: 12
-                        color: root.syncColor(root.status); text: root.ready ? root.syncChip(root.status) : "Connecting…" }
-            // The network, picked while no account is open. Orange marks one whose coins are not real.
-            LogosComboBox {
-                id: networkPicker
-                objectName: "networkPicker"
-                readonly property int shownIndex: Math.max(0, (root.networks.networks || []).indexOf(root.displayedNetwork))
-                enabled: root.canPickNetwork
-                model: root.networks.networks || []
-                placeholderText: root.displayedNetwork || "—"
-                textColor: root.displayedNetwork === "mainnet" ? Theme.palette.success : Theme.palette.accentOrange
-                // Set, not bound: a new model and a pick both reset currentIndex. A refused switch shows the network in use.
-                function showNetwork() { currentIndex = shownIndex }
-                onModelChanged: Qt.callLater(showNetwork)
-                onShownIndexChanged: Qt.callLater(showNetwork)
-                Component.onCompleted: showNetwork()
-                onActivated: function (index) {
-                    root.selectNetwork(textAt(index))
-                    Qt.callLater(showNetwork)
+            spacing: Theme.spacing.medium
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.small
+                    LogosText { text: "Bitcoin Wallet"; color: Theme.palette.text; font.pixelSize: 28; font.weight: Theme.typography.weightBold }
+                    LogosInfoButton {
+                        objectName: "walletHelp"
+                        title: "Bitcoin Wallet"
+                        Accessible.name: "Help: Bitcoin Wallet"
+                        text: "Hold, send and receive Bitcoin. Accounts come from your signer apps (Keystore, Keycard or a Keycard Shell); this app never holds their keys. "
+                              + "It reads Bitcoin's chain from your own node or from public sources, set per network under the network chip."
+                    }
+                    Item { Layout.fillWidth: true }
                 }
+                LogosText { text: "Your Bitcoin accounts, payments and activity."; color: Theme.palette.textSecondary; font.pixelSize: Theme.typography.secondaryText }
             }
-            LogosButton {
-                objectName: "closeWalletButton"
-                visible: root.walletOpen
-                enabled: root.ready && !root.busy
-                text: "Close wallet"
-                onClicked: backend.closeWallet()
-            }
-        }
 
-        Accounts.LockedBanner {
-            namePrefix: "accounts"
-            Layout.fillWidth: true
-            visible: root.ready && shown
-            wallets: root.signerWallets
-            onUnlock: function (seeds) { root.unlockWallets(seeds) }
-        }
-
-        RowLayout {
-            objectName: "accountSelectorRow"
-            visible: root.ready
-            Layout.fillWidth: true
-            spacing: Theme.spacing.small
-            // The account kit's picker: one row per account, with the wallet it comes from and every
-            // signer holding it. A row opens under its home account; picking only selects.
-            Accounts.AccountPicker {
-                id: accountPicker
-                objectName: "accountPicker"
-                Layout.preferredWidth: 440
-                Layout.maximumWidth: Math.max(200, root.width - 230)
-                entries: root.accountEntries
-                currentKey: root.accountId
-                placeholder: root.walletOpen ? root.openedName
-                             : !root.accountsRead ? "Loading accounts…"
-                             : root.accountEntries.length ? "Select an account" : "No Bitcoin accounts on this network"
-                canPick: function (entry) { return root.canOpenAccount(root.homeAccount(entry)) }
-                enabled: root.accountsRead && backend.accountsError === "" && root.accountEntries.length > 0
-                         && !root.busy && !root.accountLocked
-                Accessible.name: "Bitcoin account: " + displayText
-                onPicked: function (entry) { root.selectAccount(root.homeAccount(entry)) }
-            }
-            LogosButton {
-                objectName: "openWalletButton"
-                text: root.opening ? "Opening…" : "Open"
-                enabled: root.canOpenSelectedAccount
-                onClicked: root.openSelectedAccount()
-            }
-            // The EVM wallet's accounts button: an icon, its name in the tooltip.
             LogosIconButton {
                 objectName: "manageAccountsButton"
+                Layout.alignment: Qt.AlignVCenter
                 flat: true
                 size: 32
                 iconSize: 16
@@ -2547,8 +2799,87 @@ Item {
                 ToolTip.delay: 400
                 onClicked: root.manageAccounts()
             }
-            Item { Layout.fillWidth: true }
+
+            // The compact picker shared with the Ethereum wallet. Picking an account opens it; picking
+            // another while one is open closes that one first.
+            Accounts.CompactAccountPicker {
+                id: accountPicker
+                objectName: "accountPicker"
+                visible: root.ready && root.accountEntries.length > 0
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: Math.min(320, root.width * 0.42)
+                entries: root.accountEntries
+                currentKey: root.accountId
+                placeholder: !root.accountsRead ? "Loading accounts…" : "Select an account"
+                canPick: function (entry) { return root.canOpenAccount(root.homeAccount(entry)) }
+                enabled: root.accountsRead && backend.accountsError === "" && root.accountEntries.length > 0
+                         && !root.busy && !root.opening && root.walletState !== "closing" && root.pendingKind !== "close"
+                lockedWallets: Roster.lockedWallets(root.signerWallets)
+                Accessible.name: "Bitcoin account: " + displayText
+                onPicked: function (entry) { root.pickAccount(root.homeAccount(entry)) }
+                onUnlock: function (seeds) { root.unlockWallets(seeds) }
+                Connections {
+                    target: accountPicker.popup
+                    function onOpened() { if (root.ready) backend.refresh() }
+                }
+            }
+
+            // The network and its sync state, as one chip: it opens Node (network, chain source, Tor).
+            // Green = real coins, orange = a test network. The sync detail is in the tooltip.
+            // The sync state as the chip says it, kept as its own item so it has a name to read.
+            LogosText { id: syncChipText; objectName: "syncChip"; visible: false; textFormat: Text.PlainText
+                        text: root.ready ? root.syncChip(root.status) : "Connecting…" }
+            LogosBadge {
+                id: networkChip
+                objectName: "networkChip"
+                Layout.alignment: Qt.AlignVCenter
+                visible: root.ready
+                signal clicked()
+                onClicked: networkSheet.open()
+                text: (root.displayedNetwork || "—") + (root.localNodeChecking ? " · Checking node…" : root.localNodeConnecting ? " · Connecting…" : root.localNodeIdle ? " · " + root.localNodeChip() : root.walletOpen ? " · " + syncChipText.text : "")
+                // While the node in Logos is what's missing, its own state sets the colour: red when
+                // something must be fixed (stopped, failed), yellow while it is on its way.
+                color: root.localNodeChecking || root.localNodeConnecting ? Theme.palette.textSecondary
+                       : root.localNodeIdle
+                       ? (root.localNodePhase === "starting" || root.localNodePhase === "syncing" || root.localNodePhase === "wrong_network"
+                          ? Theme.palette.warning : Theme.palette.error)
+                       : root.walletOpen && root.syncState(root.status) !== "synced" && root.syncState(root.status) !== "local"
+                       ? root.syncColor(root.status)
+                       : root.displayedNetwork === "mainnet" ? Theme.palette.success : Theme.palette.accentOrange
+                HoverHandler { id: networkChipHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: networkChip.clicked() }
+                ToolTip.visible: networkChipHover.hovered && root.walletOpen
+                ToolTip.text: root.syncLabel(root.status) + (root.status.historyServer ? "\n" + root.historyLine(root.status.historyServer) : "")
+                ToolTip.delay: 400
+            }
         }
+
+        // Fully locked only: one unlock block per device app, as in the Ethereum wallet, so a Keycard
+        // wallet sends the person to the Keycard app (the kit's LockedBanner names only "the Signer
+        // app"). Once an account is unlocked, the locked wallets live in the picker's dropdown.
+        Repeater {
+            objectName: "accountsLockedByDevice"
+            model: root.ready && root.accountEntries.length === 0
+                   ? Roster.lockedByDevice(Roster.lockedWallets(root.signerWallets)) : []
+            delegate: LogosNotice {
+                required property var modelData
+                readonly property string deviceKey: modelData.device.replace(/\s+/g, "")
+                objectName: "accountsLocked_" + deviceKey
+                Layout.fillWidth: true
+                title: modelData.count === 1 ? "1 " + modelData.device + " wallet is locked"
+                                             : modelData.count + " " + modelData.device + " wallets are locked"
+                message: modelData.hint
+                actions: [
+                    LogosButton {
+                        objectName: "accountsUnlock_" + deviceKey
+                        variant: LogosButton.Variant.Primary
+                        text: "Unlock"
+                        onClicked: root.unlockWallets(modelData.seeds)
+                    }
+                ]
+            }
+        }
+
         LogosText { objectName: "deviceAbsentNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.deviceAbsent(root.selectedAccount)
@@ -2556,27 +2887,17 @@ Item {
         LogosText { objectName: "deviceReasonLine"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.reasonLine(root.selectedAccount) }
-        LogosText { objectName: "accountLockedNote"; visible: root.walletOpen; Layout.fillWidth: true; wrapMode: Text.Wrap
-                    textFormat: Text.PlainText; color: Theme.palette.textSecondary
-                    text: "Close this wallet to open another." }
         LogosText { objectName: "accountsErrorLine"; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.warning
-                    visible: root.ready && backend.accountsError !== ""
-                    text: root.ready ? backend.accountsError : "" }
+                    visible: text !== ""
+                    text: root.ready ? Errors.human(backend.accountsError) : "" }
 
-        LogosText {
-            objectName: "statusLine"
-            textFormat: Text.PlainText
-            color: Theme.palette.textSecondary
-            text: !root.ready ? "" : root.walletOpen
-                  ? "Open: " + root.openedName + " · " + (root.status.network || "")
-                  : (root.opening ? "Opening a wallet on " + (root.displayedNetwork || "this network") : "No wallet open")
-        }
         // Under the status on every page: a refused switch can race a wallet another app opens.
         LogosText { objectName: "switchNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText
                     color: root.pendingNetwork !== "" ? Theme.palette.textSecondary : Theme.palette.warning
-                    text: root.switchNote() }
+                    text: !root.ready || root.sheetUp || (root.pendingNetwork === "" && backend.switchJson === root.switchSeen)
+                          ? "" : root.switchNote() }
         LogosText { objectName: "openQueuedNote"; visible: !!root.openQueued.error; Layout.fillWidth: true; wrapMode: Text.Wrap
                     textFormat: Text.PlainText; color: Theme.palette.textSecondary
                     text: root.openQueued.network ? "Opening on " + root.openQueued.network + " once the switch applies…"
@@ -2588,7 +2909,7 @@ Item {
             severity: LogosNotice.Error
             closable: true
             shown: false
-            message: root.ready ? backend.lastError : ""
+            message: root.pageLastError
             onMessageChanged: shown = message.length > 0
             Component.onCompleted: shown = message.length > 0
         }
@@ -2700,11 +3021,6 @@ Item {
             Layout.fillWidth: true; Layout.fillHeight: true
             spacing: Theme.spacing.small
 
-            RowLayout {
-                Layout.fillWidth: true
-                LogosText { text: "Choose an account"; font.pixelSize: 22 }
-                Item { Layout.fillWidth: true }
-            }
             // A network's first visit: Node is the one place this is set, and accounts wait for it.
             LogosNotice {
                 objectName: "nodeSetupNotice"
@@ -2750,13 +3066,29 @@ Item {
                 visible: !root.opening
                 Layout.fillWidth: true
                 spacing: Theme.spacing.small
-                LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                            text: "Select a Bitcoin account above, then press Open. Create, restore and manage accounts in Keystore." }
-                RowLayout {
+                LogosText {
+                    objectName: "pickAccountHint"
+                    visible: root.accountEntries.length > 0 && !root.nodeSetupNeeded
                     Layout.fillWidth: true
-                    LogosButton { objectName: "networkSettingsButton"; text: "Node"; enabled: root.ready; onClicked: networkSheet.open() }
-                    LogosButton { objectName: "refreshButton"; text: "Refresh"; enabled: root.ready; onClicked: backend.clearAndRefresh() }
-                    Item { Layout.fillWidth: true }
+                    Layout.topMargin: Theme.spacing.xxlarge
+                    horizontalAlignment: Text.AlignHCenter
+                    color: Theme.palette.textSecondary
+                    text: "Pick an account at the top to open it."
+                }
+                // No account on this network, and nothing locked to unlock: say where accounts come from.
+                ColumnLayout {
+                    objectName: "noWalletsState"
+                    visible: root.accountsRead && root.accountEntries.length === 0
+                             && Roster.lockedWallets(root.signerWallets).length === 0 && !root.nodeSetupNeeded
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing.xxlarge
+                    spacing: Theme.spacing.small
+                    LogosText { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter
+                                text: "No Bitcoin accounts on " + (root.displayedNetwork || "this network")
+                                font.pixelSize: Theme.typography.subtitleText; font.weight: Theme.typography.weightBold }
+                    LogosText { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                                color: Theme.palette.textSecondary
+                                text: "Add Bitcoin accounts in the Keystore or Keycard app, and they show up here." }
                 }
 
                 Item { Layout.fillHeight: true }
@@ -2773,7 +3105,7 @@ Item {
             Layout.fillWidth: true
             // Not bound to root.page: a click assigns currentIndex and would break the binding.
             onCurrentIndexChanged: root.selectTab(currentIndex)
-            LogosTabButton { text: "Home" }
+            LogosTabButton { text: "Balance" }
             LogosTabButton { text: "Send" }
             LogosTabButton { text: "Receive" }
             LogosTabButton { text: "Activity" }
@@ -2791,7 +3123,10 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: homeScroll.availableWidth - homeScroll.effectiveScrollBarWidth
+                    // The content column, capped and centred at 560 like the Ethereum, Keycard and Signer apps.
+                    readonly property real room: homeScroll.availableWidth - homeScroll.effectiveScrollBarWidth
+                    width: Math.min(560, room)
+                    x: (room - width) / 2
                     spacing: Theme.spacing.medium
 
                     LogosStatCard {
@@ -2800,6 +3135,9 @@ Item {
                         label: "Confirmed balance"
                         value: root.balancesRead ? root.btcOf(root.balances.confirmed) + " BTC" : "— BTC"
                         caption: !root.balancesRead ? "Read once the wallet has synced"
+                                 : root.balanceStale ? "As of block " + root.group(root.status.authority.height)
+                                                       + (root.ageText(root.status.authority.tipAgeSecs) ? ", " + root.ageText(root.status.authority.tipAgeSecs) + " ago" : "")
+                                                       + ". It catches up once the chain does."
                                  : root.hasBeyondGap ? "Confirmed on the wallet's own chain. Send spends this and the coins found beyond "
                                                        + "the gap limit: " + root.btcOf(root.spendableSat) + " BTC in all."
                                  : "Confirmed on the wallet's own chain. Send spends only this."
@@ -2852,30 +3190,30 @@ Item {
                         visible: root.balancesRead && Number(root.balances.pending || 0) > 0
                         title: "Pending"
                         amount: root.btcOf(root.balances.pending) + " BTC"
-                        note: "In a server's mempool, not in a block yet, and nothing here can check it."
+                        // Your node checks a payment before it takes it into its mempool; a server's report can't be checked.
+                        readonly property bool byNode: root.pendingRows.length > 0 && root.pendingRows.every(function (r) { return root.isNodeKind(r.reportedBy) })
+                        note: (byNode ? "Seen by your node, waiting for a block. It counts once a block confirms it."
+                                      : "Seen in a server's mempool, waiting for a block. Nothing here can check it until a block confirms it.")
                               + root.pendingRows.map(function (r) {
-                                    return "\n+" + root.btcOf(r.amountSat) + " BTC" + (r.reportedBy ? ", reported by " + r.reportedBy : "")
+                                    return "\n+" + root.btcOf(r.amountSat) + " BTC"
+                                           + (r.reportedBy && !root.isNodeKind(r.reportedBy) ? ", reported by " + root.sourceLabel(r.reportedBy) : "")
                                 }).join("")
                     }
+                    // What a send not confirmed yet means for the balance: the change it brings back. The
+                    // transaction itself, and Speed up, are in Activity.
                     BalanceRow {
                         objectName: "sentRow"
-                        visible: root.unconfirmedSends.length > 0 || (root.balancesRead && Number(root.balances.sent || 0) > 0)
-                        title: "Sent, not confirmed yet"
-                        amount: root.balancesRead && Number(root.balances.sent || 0) > 0 ? root.btcOf(root.balances.sent) + " BTC returning" : ""
-                        note: "Your own transactions, broadcast. Their coins stay reserved until they confirm; any change "
-                              + "comes back then. Speed up replaces one with a higher fee."
-                        extra: Repeater {
-                            model: root.unconfirmedSends
-                            RowLayout {
-                                spacing: Theme.spacing.small
-                                LogosText { objectName: "unconfirmedSend_" + modelData.txid; textFormat: Text.PlainText; font.pixelSize: 12
-                                            text: root.intentLine(modelData) }
-                                LogosText { textFormat: Text.PlainText; font.pixelSize: 11; color: Theme.palette.textTertiary
-                                            text: root.shortId(modelData.txid) }
-                                LogosButton { objectName: "homeSpeedUp_" + modelData.txid; text: "Speed up"
-                                              enabled: root.ready && !root.sendLive
-                                              onClicked: speedUpSheet.ask(modelData) }
-                            }
+                        // Only when change comes back: a send without change changes nothing still to come.
+                        visible: root.balancesRead && Number(root.balances.sent || 0) > 0
+                        title: "Change on its way back"
+                        amount: root.balancesRead && Number(root.balances.sent || 0) > 0 ? root.btcOf(root.balances.sent) + " BTC" : ""
+                        note: (root.unconfirmedSends.length > 1 ? "From " + root.unconfirmedSends.length + " sends" : "From a send")
+                              + " not confirmed yet. It counts once confirmed."
+                        extra: LogosButton {
+                            objectName: "sentRowActivity"
+                            compact: true
+                            text: "Show in Activity"
+                            onClicked: root.selectTab(3)
                         }
                     }
                     BalanceRow {
@@ -2896,11 +3234,32 @@ Item {
                               + ". They stay in your balance, and sends leave them out until fees come down."
                     }
 
-                    ColumnLayout {
+                    LogosNotice {
+                        objectName: "localNodeIdleNotice"
                         Layout.fillWidth: true
+                        severity: root.localNodePhase === "syncing" || root.localNodePhase === "starting" ? LogosNotice.Info : LogosNotice.Warning
+                        shown: root.localNodeIdle
+                        title: root.localNodeTitle()
+                        message: root.localNodeMessage()
+                                 + (root.nodeAppNote ? "\n" + root.nodeAppNote : "")
+                        actions: [ LogosButton { objectName: "openNodeFromBalance"; text: "Open Bitcoin Node"
+                                                 variant: LogosButton.Variant.Primary; enabled: root.ready
+                                                 onClicked: root.manageNode() } ]
+                    }
+                    LogosFrame {
+                      objectName: "syncCard"
+                      Layout.fillWidth: true
+                      // Synced needs no block here: the network chip says it, with the block in its tooltip.
+                      visible: !root.localNodeIdle && !root.localNodeChecking && (root.syncState(root.status) !== "synced" || root.rescanning || !!root.status.lastError
+                               || (!!root.prunedGap && !!root.prunedGap.via) || root.kyotoTorLine(root.status) !== ""
+                               || ((root.status.authority || {}).kind === "rpc_node" && Number(root.nodeStatus.pendingScanRemaining || 0) > 0))
+                      contentItem: ColumnLayout {
                         spacing: Theme.spacing.tiny
                         LogosText { objectName: "syncLine"; Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                                    color: root.syncColor(root.status); text: root.syncLabel(root.status) }
+                                    visible: root.syncState(root.status) !== "synced"
+                                    color: root.localNodeConnecting ? Theme.palette.textSecondary : root.syncColor(root.status)
+                                    text: root.localNodeConnecting ? "Connecting to your node…" + (root.isNum((root.localNodeStatus || {}).blocks) ? " It is at block " + root.group(root.localNodeStatus.blocks) + "." : "")
+                                                                   : root.syncLabel(root.status) }
                         LogosProgressBar {
                             objectName: "headersProgress"
                             Layout.fillWidth: true
@@ -2923,10 +3282,10 @@ Item {
                                     textFormat: Text.PlainText; font.pixelSize: 12
                                     color: root.kyotoStatus.tor && root.kyotoStatus.tor.waiting === true ? Theme.palette.warning : Theme.palette.textSecondary
                                     text: root.kyotoTorLine(root.status) }
-                        LogosText { objectName: "historyLine"; visible: !!root.status.historyServer; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        LogosText { objectName: "historyLine"; visible: !!root.status.historyServer && root.syncState(root.status) !== "synced"; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.textSecondary
                                     text: root.historyLine(root.status.historyServer) }
-                        LogosText { visible: !!root.status.lastError; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        LogosText { visible: !!root.status.lastError && !root.localNodeConnecting; Layout.fillWidth: true; wrapMode: Text.Wrap
                                     textFormat: Text.PlainText; font.pixelSize: 12; color: Theme.palette.warning
                                     text: "Last sync error: " + (root.status.lastError || "") }
                         LogosText { objectName: "rpcPendingScanLine"; visible: (root.status.authority || {}).kind === "rpc_node" && Number(root.nodeStatus.pendingScanRemaining || 0) > 0
@@ -2958,6 +3317,7 @@ Item {
                                                indeterminate: !root.isNum(root.status.syncPercent)
                                                value: root.isNum(root.status.syncPercent) ? Number(root.status.syncPercent) / 100 : 0 }
                         }
+                      }
                     }
                     LogosNotice {
                         objectName: "prunedGapNotice"
@@ -2987,16 +3347,24 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: sendScroll.availableWidth - sendScroll.effectiveScrollBarWidth
+                    // The content column, capped and centred at 560 like the Ethereum, Keycard and Signer apps.
+                    readonly property real room: sendScroll.availableWidth - sendScroll.effectiveScrollBarWidth
+                    width: Math.min(560, room)
+                    x: (room - width) / 2
                     spacing: Theme.spacing.small
 
-                    LogosText {
-                        objectName: "sendAvailable"
-                        Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
-                        color: Theme.palette.textSecondary
-                        text: root.hasBeyondGap ? "Send spends confirmed coins, those found beyond the gap limit included: "
-                                                  + root.btcOf(root.spendableSat) + " BTC."
-                              : "Send spends confirmed coins only" + (root.balancesRead ? ": " + root.btcOf(root.balances.confirmed) + " BTC." : ".")
+                    LogosNotice {
+                        objectName: "sendNodeNotice"
+                        Layout.fillWidth: true
+                        severity: root.sendWaitsForNode ? LogosNotice.Warning : LogosNotice.Info
+                        shown: root.localNodeIdle
+                        title: root.sendWaitsForNode ? "Sending waits for your node" : root.localNodeTitle()
+                        message: root.sendWaitsForNode
+                                 ? "Payments go out through your node, and it isn't serving the chain yet ("
+                                   + root.localNodeChip().toLowerCase() + "). Send once it is synced, or choose public servers over Tor in the Network sheet."
+                                 : "The chain isn't current, so the balance may be behind. Payments still go out through public servers over Tor."
+                        actions: [ LogosButton { objectName: "openNodeFromSend"; text: "Open Bitcoin Node"; enabled: root.ready
+                                                 onClicked: root.manageNode() } ]
                     }
                     LogosText {
                         objectName: "sendDeviceNote"
@@ -3006,7 +3374,12 @@ Item {
                         text: root.openedDeviceAbsent ? root.deviceName(root.openedAccount) + " not connected. "
                                         + root.reasonLine(root.openedAccount) + ". You can view this wallet; sending needs it." : ""
                     }
-                    LogosText { text: "Recipient"; color: Theme.palette.textSecondary }
+                    LogosFrame {
+                        objectName: "sendRecipientCard"
+                        Layout.fillWidth: true
+                        contentItem: ColumnLayout {
+                        spacing: Theme.spacing.small
+                        LogosText { text: "Recipient"; font.weight: Theme.typography.weightBold }
                     RowLayout {
                         Layout.fillWidth: true
                         LogosTextField {
@@ -3033,14 +3406,23 @@ Item {
                                 Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText; color: Theme.palette.textSecondary
                                 text: "The payment request asks for " + root.btcOf(root.recipientCheck.amountSat) + " BTC." }
 
-                    LogosText { text: "Amount"; color: Theme.palette.textSecondary }
+                        }
+                    }
+                    LogosFrame {
+                        objectName: "sendAmountCard"
+                        Layout.fillWidth: true
+                        contentItem: ColumnLayout {
+                        spacing: Theme.spacing.small
+                        LogosText { text: "Amount"; font.weight: Theme.typography.weightBold }
                     RowLayout {
                         Layout.fillWidth: true
                         LogosTextField {
                             id: sendAmount
                             objectName: "sendAmountField"
                             Layout.fillWidth: true
-                            enabled: !root.sendLive && !root.sendMax
+                            enabled: !root.sendLive
+                            // Editable under Send max too: an amount other than the max turns Send max off.
+                            onTextChanged: if (root.sendMax && text !== root.maxInField()) { root.sendMax = false; root.amountBeforeMax = "" }
                             placeholderText: root.amountUnit === "sat" ? "0" : "0.0"
                             validator: RegularExpressionValidator {
                                 regularExpression: root.amountUnit === "sat" ? /^[0-9]{0,16}$/ : /^[0-9]{0,8}\.?[0-9]{0,8}$/
@@ -3049,9 +3431,11 @@ Item {
                         LogosComboBox {
                             id: unitBox
                             objectName: "amountUnitBox"
+                            // As tall as the amount field beside it.
+                            Layout.preferredHeight: sendAmount.height
                             model: ["BTC", "sats"]
                             currentIndex: root.amountUnit === "sat" ? 1 : 0
-                            enabled: !root.sendLive && !root.sendMax
+                            enabled: !root.sendLive
                             onActivated: {
                                 var sat = root.amountSat
                                 root.amountUnit = currentIndex === 1 ? "sat" : "btc"
@@ -3059,17 +3443,27 @@ Item {
                                 sendAmount.text = sat === "" ? "" : (root.amountUnit === "sat" ? sat : root.btcOf(sat))
                             }
                         }
-                        LogosSwitch {
-                            objectName: "sendMaxSwitch"
-                            text: "Send max"
-                            checkable: false
-                            checked: root.sendMax
-                            enabled: !root.sendLive
-                            onClicked: root.sendMax = !root.sendMax
-                        }
+                    }
+                    // Everything spendable, what it comes to, on a line of its own. On, the amount goes into
+                    // the field (the fee still comes out of it); off, the amount typed before comes back.
+                    LogosSwitch {
+                        objectName: "sendMaxSwitch"
+                        text: "Send max" + (root.spendableSat !== "" ? ": " + root.amountInUnit(root.spendableSat) : "")
+                        checkable: false
+                        checked: root.sendMax
+                        enabled: !root.sendLive
+                        onClicked: root.setSendMax(!root.sendMax)
+                    }
+                    LogosText {
+                        objectName: "overSpendableNote"
+                        visible: root.overSpendable
+                        Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                        color: Theme.palette.error
+                        text: root.overSpendable ? root.overSpendableLine() : ""
                     }
                     LogosText {
                         objectName: "amountNote"
+                        visible: text !== ""
                         Layout.fillWidth: true; wrapMode: Text.Wrap; textFormat: Text.PlainText
                         color: Theme.palette.textTertiary
                         text: root.sendMax ? "Everything spendable goes, less the fee: coins too small to spend stay behind."
@@ -3079,15 +3473,22 @@ Item {
                     LogosText { objectName: "dustNote"; visible: root.belowDust; Layout.fillWidth: true; wrapMode: Text.Wrap
                                 textFormat: Text.PlainText; color: Theme.palette.error; text: root.dustLine() }
 
-                    LogosText { text: "Fee"; color: Theme.palette.textSecondary }
+                        }
+                    }
+                    LogosFrame {
+                        objectName: "sendFeeCard"
+                        Layout.fillWidth: true
+                        contentItem: ColumnLayout {
+                        spacing: Theme.spacing.small
+                        LogosText { text: "Fee"; font.weight: Theme.typography.weightBold }
                     LogosText { objectName: "feeUnknownNote"; visible: !root.feesKnown; Layout.fillWidth: true; wrapMode: Text.Wrap
                                 color: Theme.palette.textTertiary; text: "Fee estimate not available yet. Give a rate of your own, in sat/vB." }
                     LogosText { objectName: "feeQuietNote"; visible: root.feesQuiet && !root.feesFloor; Layout.fillWidth: true; wrapMode: Text.Wrap
                                 textFormat: Text.PlainText; color: Theme.palette.textTertiary; text: root.feesQuiet ? root.feeQuietLine() : "" }
                     LogosText { objectName: "feeFloorNote"; visible: root.feesFloor; Layout.fillWidth: true; wrapMode: Text.Wrap
                                 color: Theme.palette.textTertiary; text: "Fees: the lowest rate peers relay (signet has no useful fee estimates)." }
-                    RowLayout {
-                        spacing: Theme.spacing.medium
+                    ColumnLayout {
+                        spacing: Theme.spacing.tiny
                         LogosRadioButton { objectName: "feeFast"; visible: root.feesKnown; checkable: false; checked: root.feeChoice === "fast"
                                            text: "Fast · " + root.feeRates.fast + " sat/vB"; onClicked: root.feeChoice = "fast" }
                         LogosRadioButton { objectName: "feeNormal"; visible: root.feesKnown; checkable: false; checked: root.feeChoice === "normal"
@@ -3108,17 +3509,21 @@ Item {
                     // Without an estimate only a rate of one's own can go.
                     Binding { target: root; property: "feeChoice"; value: "custom"; when: root.walletOpen && !root.feesKnown }
 
+                        }
+                    }
                     LogosNotice {
                         objectName: "sendErrorNotice"
                         Layout.fillWidth: true
                         severity: LogosNotice.Error
-                        shown: message.length > 0 && !reviewSheet.visible
-                        message: root.ready ? backend.sendError : ""
+                        shown: message.length > 0
+                        message: root.pageSendError
                     }
                     LogosText { visible: root.sendOutcome(root.send) === "unknown"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.warning
                                 text: "A payment's outcome is unknown. Settle it first: rebroadcast it, speed it up, or forget it." }
                     LogosButton {
                         objectName: "reviewButton"
+                        Layout.fillWidth: true
+                        Layout.topMargin: Theme.spacing.small
                         text: "Review"
                         variant: LogosButton.Variant.Primary
                         enabled: root.canReview
@@ -3133,141 +3538,213 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: receiveScroll.availableWidth - receiveScroll.effectiveScrollBarWidth
+                    // The content column, capped and centred at 560 like the Ethereum, Keycard and Signer apps.
+                    readonly property real room: receiveScroll.availableWidth - receiveScroll.effectiveScrollBarWidth
+                    width: Math.min(560, room)
+                    x: (room - width) / 2
                     spacing: Theme.spacing.small
-                    LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                                text: "A new address for each payment you ask for: every one pays into this wallet, and using each "
-                                      + "once keeps your payments apart on-chain." }
-                    QrMatrix { objectName: "receiveQr"; qr: root.ready ? root.parseQr(backend.receiveQrJson) : null }
-                    LogosCopyableText {
-                        objectName: "receiveAddress"
+                    // The address to give: its QR, and the address with its copy button right beside it.
+                    LogosFrame {
+                        objectName: "receiveCard"
                         Layout.fillWidth: true
-                        text: root.receive.address || "—"
-                        copyText: root.receive.address || ""
-                        showCopyButton: !!root.receive.address
-                        onCopied: root.notify("Address copied", "")
-                    }
-                    LogosText { visible: root.isNum(root.receive.index); color: Theme.palette.textTertiary; font.pixelSize: 12
-                                textFormat: Text.PlainText; text: "Receive address #" + root.receive.index }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        LogosText { text: "Ask for an amount (BTC, optional)"; color: Theme.palette.textSecondary }
-                        LogosTextField {
-                            id: receiveAmount
-                            objectName: "receiveAmountField"
-                            Layout.preferredWidth: 160
-                            placeholderText: "0.0"
-                            validator: RegularExpressionValidator { regularExpression: /^[0-9]{0,8}\.?[0-9]{0,8}$/ }
-                            onTextChanged: receiveAmountTimer.restart()
+                        contentItem: ColumnLayout {
+                            id: receiveCardColumn
+                            spacing: Theme.spacing.small
+                            QrMatrix { objectName: "receiveQr"; Layout.alignment: Qt.AlignHCenter; qr: root.ready ? root.parseQr(backend.receiveQrJson) : null }
+                            RowLayout {
+                                Layout.alignment: Qt.AlignHCenter
+                                spacing: Theme.spacing.tiny
+                                // As wide as the address itself, the copy button right after it, the pair centred.
+                                // Elided in the middle only when the column is narrower than the address.
+                                LogosText {
+                                    objectName: "receiveAddress"
+                                    Layout.maximumWidth: receiveCardColumn.width - 48
+                                    textFormat: Text.PlainText
+                                    elide: Text.ElideMiddle
+                                    font.family: Theme.typography.mono
+                                    text: root.receive.address || "—"
+                                }
+                                LogosCopyButton {
+                                    objectName: "receiveAddressCopy"
+                                    visible: !!root.receive.address
+                                    value: root.receive.address || ""
+                                    ToolTip.text: "Copy address"; ToolTip.visible: hovered; ToolTip.delay: 400
+                                    onCopied: root.notify("Address copied", "")
+                                }
+                            }
+                            LogosText { visible: root.isNum(root.receive.index); Layout.alignment: Qt.AlignHCenter
+                                        color: Theme.palette.textTertiary; font.pixelSize: 12
+                                        textFormat: Text.PlainText; text: "Receive address #" + root.receive.index }
+                            LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
+                                        color: Theme.palette.textSecondary; font.pixelSize: Theme.typography.secondaryText
+                                        text: "Use a new address for each payment: every one pays into this wallet, and using each "
+                                              + "once keeps your payments apart on-chain." }
+                            RowLayout {
+                                Layout.alignment: Qt.AlignHCenter
+                                spacing: Theme.spacing.small
+                                LogosButton {
+                                    objectName: "newAddressButton"
+                                    visible: !root.atGap
+                                    text: "New address"
+                                    enabled: root.ready && root.walletOpen
+                                    onClicked: backend.newAddress()
+                                }
+                                LogosText { objectName: "receiveUnusedCount"; visible: root.unusedCount >= 0 && root.gapShown > 0
+                                            textFormat: Text.PlainText; color: Theme.palette.textSecondary
+                                            text: root.unusedCount + " of " + root.gapShown + " unused" }
+                            }
+                            LogosText { objectName: "receiveAtGapNote"; visible: root.atGap; Layout.fillWidth: true; wrapMode: Text.Wrap
+                                        horizontalAlignment: Text.AlignHCenter
+                                        textFormat: Text.PlainText; color: Theme.palette.warning
+                                        text: "Pay into one of these first, or raise the gap limit in Settings." }
                         }
-                        Timer { id: receiveAmountTimer; interval: 400; onTriggered: if (root.ready) backend.setReceiveAmount(receiveAmount.text.trim()) }
-                        Item { Layout.fillWidth: true }
                     }
-                    LogosCopyableText {
-                        objectName: "receiveUri"
+
+                    // A payment request: the address with an amount, as one bitcoin: link.
+                    LogosFrame {
+                        objectName: "receiveRequestCard"
                         Layout.fillWidth: true
-                        visible: !!root.receive.uri
-                        text: root.receive.uri || ""
-                        copyText: root.receive.uri || ""
-                        onCopied: root.notify("Payment request copied", "")
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Theme.spacing.small
-                        LogosButton {
-                            objectName: "newAddressButton"
-                            visible: !root.atGap
-                            text: "New address"
-                            enabled: root.ready && root.walletOpen
-                            onClicked: backend.newAddress()
+                        contentItem: ColumnLayout {
+                            spacing: Theme.spacing.small
+                            LogosText { text: "Ask for an amount"; font.weight: Theme.typography.weightBold }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                LogosTextField {
+                                    id: receiveAmount
+                                    objectName: "receiveAmountField"
+                                    Layout.fillWidth: true
+                                    placeholderText: "0.0 BTC (optional)"
+                                    validator: RegularExpressionValidator { regularExpression: /^[0-9]{0,8}\.?[0-9]{0,8}$/ }
+                                    onTextChanged: receiveAmountTimer.restart()
+                                }
+                                Timer { id: receiveAmountTimer; interval: 400; onTriggered: if (root.ready) backend.setReceiveAmount(receiveAmount.text.trim()) }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                visible: !!root.receive.uri
+                                spacing: Theme.spacing.tiny
+                                LogosSelectableText {
+                                    objectName: "receiveUri"
+                                    Layout.maximumWidth: parent.width - 40
+                                    wrapMode: TextEdit.WrapAnywhere
+                                    font.family: Theme.typography.mono
+                                    font.pixelSize: Theme.typography.secondaryText
+                                    text: root.receive.uri || ""
+                                }
+                                LogosCopyButton {
+                                    objectName: "receiveUriCopy"
+                                    value: root.receive.uri || ""
+                                    ToolTip.text: "Copy payment request"; ToolTip.visible: hovered; ToolTip.delay: 400
+                                    onCopied: root.notify("Payment request copied", "")
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
                         }
-                        LogosText { objectName: "receiveAtGapNote"; visible: root.atGap; Layout.fillWidth: true; Layout.maximumWidth: implicitWidth; wrapMode: Text.Wrap
-                                    textFormat: Text.PlainText; color: Theme.palette.warning
-                                    text: "Pay into one of these first, or raise the gap limit in Settings." }
-                        LogosText { objectName: "receiveUnusedCount"; visible: root.unusedCount >= 0 && root.gapShown > 0
-                                    textFormat: Text.PlainText; color: Theme.palette.textSecondary
-                                    text: root.unusedCount + " of " + root.gapShown + " unused" }
-                        Item { Layout.fillWidth: true }
                     }
-                    LogosText { objectName: "receiveListTitle"; visible: root.addressesRead; text: "Your receive addresses"; font.pixelSize: 15
-                                font.weight: Theme.typography.weightBold; Layout.topMargin: Theme.spacing.medium }
-                    Repeater { model: root.unusedRows; AddressRow {} }
-                    LogosButton {
-                        objectName: "showUsedButton"
-                        visible: root.usedRows.length > 0
-                        text: root.showUsed ? "Hide used" : "Show used (" + root.usedRows.length + ")"
-                        onClicked: root.showUsed = !root.showUsed
+
+                    // Every receive address, unused first; used ones behind a button.
+                    LogosFrame {
+                        objectName: "receiveListCard"
+                        visible: root.addressesRead
+                        Layout.fillWidth: true
+                        contentItem: ColumnLayout {
+                            spacing: Theme.spacing.small
+                            LogosText { objectName: "receiveListTitle"; text: "Your receive addresses"; font.weight: Theme.typography.weightBold }
+                            Repeater { model: root.unusedRows; AddressRow {} }
+                            LogosButton {
+                                objectName: "showUsedButton"
+                                visible: root.usedRows.length > 0
+                                text: root.showUsed ? "Hide used" : "Show used (" + root.usedRows.length + ")"
+                                onClicked: root.showUsed = !root.showUsed
+                            }
+                            LogosText { objectName: "usedNote"; visible: root.showUsed && root.usedRows.length > 0; Layout.fillWidth: true
+                                        wrapMode: Text.Wrap; textFormat: Text.PlainText; color: Theme.palette.textSecondary; font.pixelSize: 12
+                                        text: "Reusing an address that was paid links your payments to each other on-chain." }
+                            Repeater { model: root.showUsed ? root.usedRows : []; AddressRow {} }
+                        }
                     }
-                    LogosText { objectName: "usedNote"; visible: root.showUsed && root.usedRows.length > 0; Layout.fillWidth: true
-                                wrapMode: Text.Wrap; textFormat: Text.PlainText; color: Theme.palette.textSecondary; font.pixelSize: 12
-                                text: "Reusing an address that was paid links your payments to each other on-chain." }
-                    Repeater { model: root.showUsed ? root.usedRows : []; AddressRow {} }
                 }
             }
 
-            // Activity: one page of history, newest first; a row expands into its detail.
-            ColumnLayout {
-                spacing: Theme.spacing.small
-                RowLayout {
-                    Layout.fillWidth: true
-                    LogosText { textFormat: Text.PlainText; color: Theme.palette.textSecondary
-                                text: root.historyRead ? "Page " + (root.historyPage + 1) : "" }
-                    Item { Layout.fillWidth: true }
-                    LogosButton { objectName: "historyNewerButton"; text: "Newer"; enabled: root.historyPage > 0
-                                  onClicked: backend.showHistoryPage(root.historyPage - 1) }
-                    LogosButton { objectName: "historyOlderButton"; text: "Older"
-                                  enabled: root.historyRows.length > 0 && root.historyRows.length >= (root.historyData.pageSize || 50)
-                                  onClicked: backend.showHistoryPage(root.historyPage + 1) }
-                    LogosButton { text: "Refresh"; enabled: root.ready; onClicked: backend.refreshHistory() }
-                }
-                LogosText { objectName: "historyEmpty"; visible: root.historyRead && root.historyRows.length === 0
-                            color: Theme.palette.textSecondary
-                            text: root.historyPage === 0 ? "No transactions yet." : "No older transactions." }
-                LogosText { visible: !root.historyRead; text: "—" }
-                ListView {
-                    objectName: "historyList"
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    clip: true
-                    spacing: 2
-                    model: root.historyRows
-                    delegate: Rectangle {
-                        id: txRow
-                        width: ListView.view.width
-                        implicitHeight: txCol.implicitHeight + 12
-                        radius: 4
-                        readonly property bool open: root.openTx === modelData.txid
-                        color: open ? Theme.palette.surface : "transparent"
-                        ColumnLayout {
-                            id: txCol
-                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                            anchors.margins: 6
-                            spacing: 4
+            // Activity: one page of history, newest first, a card per transaction; a card opens into its detail.
+            Item {
+                ColumnLayout {
+                    anchors { top: parent.top; bottom: parent.bottom; horizontalCenter: parent.horizontalCenter }
+                    width: Math.min(560, parent.width)
+                    spacing: Theme.spacing.small
+                    RowLayout {
+                        Layout.fillWidth: true
+                        LogosText { textFormat: Text.PlainText; color: Theme.palette.textSecondary
+                                    text: root.historyRead && (root.historyPage > 0 || root.historyRows.length >= (root.historyData.pageSize || 50))
+                                          ? "Page " + (root.historyPage + 1) : "" }
+                        Item { Layout.fillWidth: true }
+                        LogosButton { objectName: "historyNewerButton"; text: "Newer"; visible: root.historyPage > 0
+                                      onClicked: backend.showHistoryPage(root.historyPage - 1) }
+                        LogosButton { objectName: "historyOlderButton"; text: "Older"
+                                      visible: root.historyRows.length > 0 && root.historyRows.length >= (root.historyData.pageSize || 50)
+                                      onClicked: backend.showHistoryPage(root.historyPage + 1) }
+                        LogosButton { objectName: "historyRefreshButton"; text: "Refresh"; compact: true
+                                      enabled: root.ready; onClicked: backend.refreshHistory() }
+                    }
+                    LogosText { objectName: "historyEmpty"; visible: root.historyRead && root.historyRows.length === 0
+                                Layout.alignment: Qt.AlignHCenter; Layout.topMargin: Theme.spacing.xxlarge
+                                color: Theme.palette.textSecondary
+                                text: root.historyPage === 0 ? "No transactions yet" : "No older transactions" }
+                    LogosText { visible: !root.historyRead; Layout.alignment: Qt.AlignHCenter; color: Theme.palette.textSecondary; text: "Loading…" }
+                    ListView {
+                        objectName: "historyList"
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        clip: true
+                        spacing: Theme.spacing.small
+                        model: root.historyRows
+                        delegate: LogosFrame {
+                            id: txRow
+                            objectName: "historyCard_" + modelData.txid
+                            width: ListView.view.width
+                            readonly property bool open: root.openTx === modelData.txid
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: root.openTx = (txRow.open ? "" : modelData.txid) }
+                            contentItem: ColumnLayout {
+                            spacing: Theme.spacing.tiny
+                            // Line 1: what it did (with its amount) and its state, as a tag.
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: Theme.spacing.small
                                 LogosText { objectName: "historyIntent_" + modelData.txid; textFormat: Text.PlainText
+                                            Layout.fillWidth: true; elide: Text.ElideRight
+                                            font.weight: Theme.typography.weightMedium
+                                            color: modelData.intent === "receive" ? Theme.palette.success : Theme.palette.text
                                             text: root.intentLine(modelData) }
                                 LogosText { objectName: "historyState_" + modelData.txid; textFormat: Text.PlainText
+                                            font.weight: Theme.typography.weightBold; font.pixelSize: Theme.typography.secondaryText
                                             color: root.rowStateColor(modelData); text: root.rowState(modelData) }
-                                // A reorg moved it: confirmed again, in another block at this height.
+                            }
+                            // Line 2: when, its id, what else to know; its actions at the right.
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacing.small
+                                LogosText { textFormat: Text.PlainText; color: Theme.palette.textSecondary; font.pixelSize: Theme.typography.secondaryText
+                                            text: root.whenOf(modelData.time) }
+                                LogosText { textFormat: Text.PlainText; color: Theme.palette.textTertiary; font.pixelSize: Theme.typography.secondaryText
+                                            font.family: Theme.typography.mono; text: root.shortId(modelData.txid) }
                                 LogosText { objectName: "historyBeyondGap_" + modelData.txid; visible: modelData.beyondGap === true
-                                            textFormat: Text.PlainText; font.pixelSize: 11; color: Theme.palette.textTertiary
-                                            text: "Beyond the gap limit" }
+                                            textFormat: Text.PlainText; font.pixelSize: 11; font.weight: Theme.typography.weightBold
+                                            color: Theme.palette.textTertiary; text: "Beyond the gap limit" }
+                                // A reorg moved it: confirmed again, in another block at this height.
                                 LogosText { objectName: "historyReanchored_" + modelData.txid; visible: root.reanchored(modelData.txid)
                                             textFormat: Text.PlainText; font.pixelSize: 11; color: Theme.palette.warning
                                             text: "re-anchored at height " + root.group(modelData.height) }
-                                LogosText { textFormat: Text.PlainText; color: Theme.palette.textTertiary; font.pixelSize: 11
-                                            text: root.whenOf(modelData.time) }
                                 Item { Layout.fillWidth: true }
-                                LogosText { textFormat: Text.PlainText; color: Theme.palette.textTertiary; font.pixelSize: 10
-                                            text: root.shortId(modelData.txid) }
-                                LogosButton { objectName: "speedUp_" + modelData.txid; visible: root.canSpeedUp(modelData)
+                                LogosButton { objectName: "speedUp_" + modelData.txid; visible: root.canSpeedUp(modelData); compact: true
                                               text: "Speed up"; enabled: root.ready && !root.sendLive
                                               onClicked: speedUpSheet.ask(modelData) }
-                                LogosButton { objectName: "details_" + modelData.txid; text: txRow.open ? "Hide" : "Details"
-                                              onClicked: root.openTx = (root.openTx === modelData.txid ? "" : modelData.txid) }
+                                LogosButton { objectName: "details_" + modelData.txid; compact: true; text: txRow.open ? "Hide" : "Details"
+                                              onClicked: root.openTx = (txRow.open ? "" : modelData.txid) }
                             }
+                            Rectangle { visible: txRow.open; Layout.fillWidth: true; Layout.topMargin: Theme.spacing.tiny
+                                        implicitHeight: 1; color: Theme.palette.borderTertiaryMuted }
                             GridLayout {
+                                objectName: "historyDetail_" + modelData.txid
                                 visible: txRow.open
                                 columns: 2; columnSpacing: 14; rowSpacing: 3
                                 Layout.fillWidth: true
@@ -3308,9 +3785,18 @@ Item {
                                 LogosText { visible: !!modelData.reportedBy; textFormat: Text.PlainText; font.pixelSize: 11
                                             text: modelData.reportedBy || "" }
                                 LogosText { text: "Transaction ID"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-                                LogosCopyableText { objectName: "historyTxid_" + modelData.txid; Layout.fillWidth: true
-                                                    text: modelData.txid; copyText: modelData.txid
-                                                    onCopied: root.notify("Transaction ID copied", "") }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacing.tiny
+                                    LogosText { objectName: "historyTxid_" + modelData.txid; textFormat: Text.PlainText; font.pixelSize: 11
+                                                font.family: Theme.typography.mono; Layout.fillWidth: true; Layout.maximumWidth: implicitWidth
+                                                elide: Text.ElideMiddle; text: modelData.txid }
+                                    LogosCopyButton { objectName: "historyTxidCopy_" + modelData.txid; value: modelData.txid
+                                                      ToolTip.text: "Copy transaction ID"; ToolTip.visible: hovered; ToolTip.delay: 400
+                                                      onCopied: root.notify("Transaction ID copied", "") }
+                                    Item { Layout.fillWidth: true }
+                                }
+                            }
                             }
                         }
                     }
@@ -3323,10 +3809,18 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: settingsScroll.availableWidth - settingsScroll.effectiveScrollBarWidth
+                    // The content column, capped and centred at 560 like the Ethereum, Keycard and Signer apps.
+                    readonly property real room: settingsScroll.availableWidth - settingsScroll.effectiveScrollBarWidth
+                    width: Math.min(560, room)
+                    x: (room - width) / 2
                     spacing: Theme.spacing.small
 
-                    LogosText { text: "Wallet"; font.pixelSize: 16 }
+                    LogosFrame {
+                      objectName: "settingsWalletCard"
+                      Layout.fillWidth: true
+                      contentItem: ColumnLayout {
+                      spacing: Theme.spacing.small
+                    LogosText { text: "Wallet"; font.weight: Theme.typography.weightBold }
                     GridLayout {
                         columns: 2; columnSpacing: 14; rowSpacing: 3
                         Layout.fillWidth: true
@@ -3335,7 +3829,7 @@ Item {
                         LogosText { text: "Addresses"; color: Theme.palette.textSecondary }
                         LogosText { objectName: "walletFamily"; textFormat: Text.PlainText; text: root.familyLabel(root.status.family) }
                         LogosText { text: "Network"; color: Theme.palette.textSecondary }
-                        LogosText { textFormat: Text.PlainText; text: (root.status.network || "—") + " · close the wallet to switch networks" }
+                        LogosText { textFormat: Text.PlainText; text: (root.status.network || "—") + " · switch it with the network chip" }
                         LogosText { text: "Wallet id"; color: Theme.palette.textSecondary }
                         LogosText { textFormat: Text.PlainText; text: root.shortId(root.status.group) || "—" }
                         LogosText { text: "Scans from"; color: Theme.palette.textSecondary }
@@ -3372,6 +3866,8 @@ Item {
                                     text: gapLimitField.text.trim() !== "" && !root.gapLimitOk(gapLimitField.text)
                                           ? "A whole number from 20 to 1,000." : root.gapLimitError(root.gapLimitJob) }
                     }
+                      }
+                    }
                     LogosNotice {
                         objectName: "needsBirthdayNotice"
                         Layout.fillWidth: true
@@ -3381,17 +3877,25 @@ Item {
                         actions: [ LogosButton { objectName: "setBirthdaySettingsButton"; text: "Set the account's birthday"
                                                  enabled: root.ready && !root.busy; onClicked: birthdaySheet.open() } ]
                     }
+                    LogosFrame {
+                      objectName: "settingsAccountCard"
+                      Layout.fillWidth: true
+                      contentItem: ColumnLayout {
+                      spacing: Theme.spacing.small
+                      LogosText { text: "Birthday and descriptors"; font.weight: Theme.typography.weightBold }
+                      LogosText { Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: Theme.palette.textSecondary
+                                  text: "The birthday is where its scan for payments starts. The descriptors let another wallet watch this one." }
                     RowLayout {
                         spacing: Theme.spacing.small
                         LogosButton { objectName: "changeBirthdayButton"; text: "Change the birthday…"; visible: !root.needsBirthday
                                       enabled: root.ready && !root.busy && !root.rescanning; onClicked: birthdaySheet.open() }
                         LogosButton { objectName: "showDescriptorsButton"; text: "Show descriptors…"; enabled: root.ready
                                       onClicked: descriptorsSheet.open() }
-                        LogosButton { objectName: "settingsCloseWalletButton"; text: "Close wallet"; enabled: root.ready && !root.busy
-                                      onClicked: backend.closeWallet() }
                     }
                     LogosText { objectName: "descriptorsNote"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
                                 textFormat: Text.PlainText; color: Theme.palette.error; text: root.descriptorsNote }
+                      }
+                    }
                     LogosFrame {
                         objectName: "descriptorPanel"
                         visible: root.shownDescriptors !== null
@@ -3412,11 +3916,18 @@ Item {
                         }
                     }
 
-                    LogosText { text: "Node"; font.pixelSize: 16; Layout.topMargin: Theme.spacing.medium }
-                    Loader {
+                    LogosFrame {
+                      objectName: "settingsNodeCard"
+                      Layout.fillWidth: true
+                      contentItem: ColumnLayout {
+                      spacing: Theme.spacing.small
+                      LogosText { text: "Network and node"; font.weight: Theme.typography.weightBold }
+                      Loader {
                         Layout.fillWidth: true
                         active: root.walletOpen
                         sourceComponent: networkPane
+                      }
+                      }
                     }
                     Item { Layout.fillHeight: true }
                 }
@@ -3451,6 +3962,7 @@ Item {
     // A receive address on Receive; used ones dimmed. The label editor opens in place.
     component AddressRow: ColumnLayout {
         id: addrRow
+        Layout.topMargin: Theme.spacing.tiny
         required property var modelData
         readonly property int idx: modelData.index
         readonly property bool shown: modelData.used !== true && idx === root.receive.index
@@ -3460,22 +3972,32 @@ Item {
         spacing: Theme.spacing.tiny
         opacity: modelData.used === true ? 0.6 : 1
         onEditingChanged: if (editing) { labelField.text = root.labelDraft; labelField.textInput.forceActiveFocus() }
+        // Line 1: its number and label, its state at the right. Line 2: the address, its copy button
+        // beside it, then the row's actions.
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.spacing.small
             LogosText { objectName: "receiveRowIndex_" + addrRow.idx; textFormat: Text.PlainText; font.pixelSize: 12
                         color: Theme.palette.textTertiary; text: "#" + addrRow.idx }
-            LogosText { objectName: "receiveRowLabel_" + addrRow.idx; textFormat: Text.PlainText; Layout.preferredWidth: 150
+            LogosText { objectName: "receiveRowLabel_" + addrRow.idx; textFormat: Text.PlainText; Layout.fillWidth: true
                         elide: Text.ElideRight; color: addrRow.modelData.label ? Theme.palette.text : Theme.palette.textTertiary
                         text: addrRow.modelData.label || "No label" }
-            LogosText { objectName: "receiveRowAddress_" + addrRow.idx; textFormat: Text.PlainText; font.pixelSize: 12
-                        Layout.fillWidth: true; Layout.preferredWidth: 1; elide: Text.ElideMiddle; text: addrRow.modelData.address || "" }
-            LogosText { objectName: "receiveRowState_" + addrRow.idx; textFormat: Text.PlainText; font.pixelSize: 12
+            LogosText { objectName: "receiveRowState_" + addrRow.idx; textFormat: Text.PlainText
+                        font.pixelSize: Theme.typography.secondaryText; font.weight: Theme.typography.weightBold
                         color: addrRow.shown ? Theme.palette.success : Theme.palette.textSecondary; text: root.addressState(addrRow.modelData) }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacing.tiny
+            LogosText { objectName: "receiveRowAddress_" + addrRow.idx; textFormat: Text.PlainText; font.pixelSize: 12
+                        font.family: Theme.typography.mono
+                        Layout.maximumWidth: 300; elide: Text.ElideMiddle; text: addrRow.modelData.address || "" }
+            LogosCopyButton { objectName: "receiveRowCopy_" + addrRow.idx; value: addrRow.modelData.address || ""
+                              ToolTip.text: "Copy address"; ToolTip.visible: hovered; ToolTip.delay: 400
+                              onCopied: root.notify("Address copied", "") }
+            Item { Layout.fillWidth: true }
             LogosButton { objectName: "receiveRowShow_" + addrRow.idx; visible: addrRow.modelData.used !== true && !addrRow.shown
                           compact: true; text: "Show"; enabled: root.ready && root.walletOpen; onClicked: backend.showAddress(addrRow.idx) }
-            LogosCopyButton { objectName: "receiveRowCopy_" + addrRow.idx; value: addrRow.modelData.address || ""
-                              onCopied: root.notify("Address copied", "") }
             LogosButton { objectName: "receiveRowLabelButton_" + addrRow.idx; visible: !addrRow.editing; compact: true; text: "Label"
                           enabled: root.ready && root.walletOpen; onClicked: root.editLabel(addrRow.modelData) }
         }
@@ -3544,6 +4066,7 @@ Item {
     // Bech32's human-readable part on the network shown.
     readonly property string hrp: displayedNetwork === "mainnet" ? "bc" : (displayedNetwork === "regtest" ? "bcrt" : "tb")
     function openWallet(params) {
+        root.pageAction()
         root.keysNote = ""
         backend.openWallet(JSON.stringify(params))
     }
@@ -3570,6 +4093,10 @@ Item {
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 680)
         closePolicy: Popup.NoAutoClose
+        // Its own refusal, taken as its call answered (onSendErrorChanged); never the live sendError.
+        property string error: ""
+        onOpened: { error = ""; root.sendNote = ""; if (root.sheetActing === "review") root.sheetActing = "" }
+        onClosed: { error = ""; root.sendNote = ""; if (root.sheetActing === "review") root.sheetActing = "" }
         contentItem: ScrollView {
             id: reviewScroll
             clip: true
@@ -3745,7 +4272,7 @@ Item {
                     Layout.fillWidth: true
                     severity: LogosNotice.Error
                     shown: message.length > 0
-                    message: root.ready ? backend.sendError : ""
+                    message: reviewSheet.error
                 }
             }
         }
@@ -3754,7 +4281,7 @@ Item {
                           onClicked: { root.reviewDraft = false; reviewSheet.close() } },
             LogosButton { objectName: "cancelSendButton"; text: "Cancel send"
                           visible: !root.reviewDraft && (root.sendState === "preparing" || root.sendState === "awaiting_approval") && !root.send.cancelling
-                          onClicked: backend.cancelSend() },
+                          onClicked: { root.reviewActs(); backend.cancelSend() } },
             LogosButton { objectName: "hideReviewButton"; text: "Hide"; visible: !root.reviewDraft && (root.sendLive || root.sendOutcome(root.send) === "unknown")
                           onClicked: reviewSheet.close() }
         ]
@@ -3777,7 +4304,7 @@ Item {
                           onClicked: speedUpSheet.ask({ txid: root.send.txid, feeSat: root.summary ? root.summary.feeSat : "" }) },
             LogosButton { objectName: "rebroadcastButton"; text: "Rebroadcast"; variant: LogosButton.Variant.Primary
                           visible: !root.reviewDraft && root.offers(root.send, "rebroadcast")
-                          onClicked: { backend.rebroadcast(); root.notify("Broadcast again", "It shows as sent once a source has seen it.") } },
+                          onClicked: { root.reviewActs(); backend.rebroadcast(); root.notify("Broadcast again", "It shows as sent once a source has seen it.") } },
             LogosButton { objectName: "doneSendButton"; text: "Done"; visible: !root.reviewDraft && root.sendSettled
                           onClicked: root.finishSend() }
         ]
@@ -3789,11 +4316,19 @@ Item {
         objectName: "speedUpSheet"
         title: "Speed up"
         property var row: null
+        // Waiting for the request's answer: a new send closes the sheet, a refusal shows here.
+        property bool awaiting: false
+        property string error: ""
+        // The rate it suggested: a hint only once the person has changed it.
+        property string suggested: ""
         function ask(r) {
             speedUpSheet.row = r
-            speedUpRate.text = String(root.speedUpRate(r))
+            speedUpSheet.suggested = String(root.speedUpRate(r))
+            speedUpRate.text = speedUpSheet.suggested
             speedUpSheet.open()
         }
+        onOpened: { awaiting = false; error = "" }
+        onClosed: { awaiting = false; error = ""; if (root.sheetActing === "speedUp") root.sheetActing = "" }
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 560)
         contentItem: ColumnLayout {
@@ -3809,12 +4344,25 @@ Item {
                 LogosText { visible: root.feesKnown; color: Theme.palette.textTertiary; textFormat: Text.PlainText
                             text: "fast is " + root.feeRates.fast + " sat/vB now" }
             }
+            // Why Approve is off: a rate typed that is no rate, or a send still open.
+            LogosText { objectName: "speedUpHint"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        color: Theme.palette.textSecondary
+                        text: speedUpRate.text !== speedUpSheet.suggested && !(Number(speedUpRate.text) > 0) ? "Give a fee rate above 0 sat/vB."
+                              : root.sendLive && !speedUpSheet.awaiting ? "Another send is still open: settle it first." : "" }
+            LogosText { objectName: "speedUpError"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        textFormat: Text.PlainText; color: Theme.palette.error; text: speedUpSheet.error }
         }
         leftActions: [ LogosButton { text: "Cancel"; onClicked: speedUpSheet.close() } ]
         rightActions: [
-            LogosButton { objectName: "confirmSpeedUpButton"; text: "Approve in Signer"; variant: LogosButton.Variant.Primary
-                          enabled: root.ready && !root.sendLive && !!speedUpSheet.row && Number(speedUpRate.text) > 0
-                          onClicked: { root.speedUp(speedUpSheet.row.txid, Number(speedUpRate.text)); speedUpSheet.close() } }
+            LogosButton { objectName: "confirmSpeedUpButton"; text: speedUpSheet.awaiting ? "Asking…" : "Approve in Signer"
+                          variant: LogosButton.Variant.Primary
+                          enabled: root.ready && !root.sendLive && !speedUpSheet.awaiting && !!speedUpSheet.row && Number(speedUpRate.text) > 0
+                          onClicked: {
+                              speedUpSheet.error = ""
+                              speedUpSheet.awaiting = true
+                              root.sheetActing = "speedUp"
+                              root.speedUp(speedUpSheet.row.txid, Number(speedUpRate.text))
+                          } }
         ]
     }
 
@@ -3824,43 +4372,67 @@ Item {
         // The account a first open asks about, or "" to set the open wallet's.
         property string opening: ""
         function askFirst(id) { birthdaySheet.opening = id; birthdaySheet.open() }
-        title: opening ? "When was this account first used?" : "The account's birthday"
+        // A first open starts with one question; "It has payments already…" opens the day choice.
+        property bool older: false
+        readonly property bool compact: opening !== "" && !older
+        title: compact ? "Is this account new?" : opening ? "When was this account first used?" : "The account's birthday"
         property bool unknown: false
         property bool isNew: false
         readonly property bool dateOk: /^\d{4}-\d{2}-\d{2}$/.test(birthdayDate.text.trim())
         readonly property bool pending: !opening && root.birthdayJob.state === "pending"
-        onOpened: { birthdaySheet.unknown = false; birthdaySheet.isNew = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false }
-        onClosed: birthdaySheet.opening = ""
+        // Its own refusal, taken as its job answered (onBirthdayJobChanged).
+        property string error: ""
+        onOpened: { birthdaySheet.older = false; birthdaySheet.unknown = false; birthdaySheet.isNew = false; birthdayDate.text = ""; birthdayOnDay.checked = true; root.birthdayAsked = false; birthdaySheet.error = "" }
+        onClosed: { birthdaySheet.opening = ""; birthdaySheet.error = "" }
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 560)
         contentItem: ColumnLayout {
             spacing: Theme.spacing.small
             LogosText { objectName: "birthdayIntro"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.palette.textSecondary
-                        text: birthdaySheet.opening
+                        text: birthdaySheet.compact
+                              ? "A new account only needs to look for payments from today, which is quick."
+                              : birthdaySheet.opening
                               ? "It looks for payments from about two days before that day, so its first sync skips the years "
                                 + "before. A day after its first payment would hide the ones before it."
                               : "The day this account was first used. It looks for payments from about two days before it. "
                                 + "A day after its first payment would hide the ones before, so the wallet refuses it." }
+            ColumnLayout {
+                objectName: "firstOpenChoice"
+                visible: birthdaySheet.compact
+                Layout.fillWidth: true
+                spacing: Theme.spacing.small
+                LogosButton { objectName: "firstOpenNew"; Layout.fillWidth: true; variant: LogosButton.Variant.Primary
+                              text: "It's new: start from today"; enabled: root.ready && root.canOpenSelectedAccount
+                              onClicked: { backend.selectAccount(birthdaySheet.opening, root.todayUtc()); birthdaySheet.close() } }
+                LogosButton { objectName: "firstOpenOlder"; Layout.fillWidth: true
+                              text: "It has payments already…"; onClicked: birthdaySheet.older = true }
+            }
             ButtonGroup { id: birthdayGroup }
             LogosRadioButton { id: birthdayOnDay; objectName: "birthdayOnDay"; ButtonGroup.group: birthdayGroup; checked: true
+                               visible: !birthdaySheet.compact
                                text: "It was first used on"
                                onCheckedChanged: if (checked) { birthdaySheet.unknown = false; birthdaySheet.isNew = false } }
-            LogosTextField { id: birthdayDate; objectName: "birthdayDateField"; Layout.preferredWidth: 200
+            LogosTextField { id: birthdayDate; objectName: "birthdayDateField"; Layout.preferredWidth: 200; visible: !birthdaySheet.compact
                              enabled: !birthdaySheet.unknown && !birthdaySheet.isNew; placeholderText: "YYYY-MM-DD" }
-            LogosRadioButton { objectName: "birthdayNew"; ButtonGroup.group: birthdayGroup; visible: birthdaySheet.opening !== ""
+            LogosRadioButton { objectName: "birthdayNew"; ButtonGroup.group: birthdayGroup; visible: birthdaySheet.opening !== "" && !birthdaySheet.compact
                                text: "It's new: nothing was sent to it before today"
                                onCheckedChanged: if (checked) { birthdaySheet.isNew = true; birthdaySheet.unknown = false } }
-            LogosRadioButton { objectName: "birthdayUnknown"; ButtonGroup.group: birthdayGroup
+            LogosRadioButton { objectName: "birthdayUnknown"; ButtonGroup.group: birthdayGroup; visible: !birthdaySheet.compact
                                text: "I don't know: look from where this kind of address began, which takes longer"
                                onCheckedChanged: if (checked) { birthdaySheet.unknown = true; birthdaySheet.isNew = false } }
+            // Why Open or Set is off, once a day is typed.
+            LogosText { objectName: "birthdayHint"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
+                        color: Theme.palette.textSecondary
+                        text: !birthdaySheet.compact && !birthdaySheet.unknown && !birthdaySheet.isNew && birthdayDate.text.trim() !== ""
+                              && !birthdaySheet.dateOk ? "Type the day as YYYY-MM-DD, such as 2024-04-20." : "" }
             LogosText { objectName: "birthdayError"; visible: text !== ""; Layout.fillWidth: true; wrapMode: Text.Wrap
-                        textFormat: Text.PlainText; color: Theme.palette.error
-                        text: root.birthdayAsked && root.birthdayJob.state === "failed" ? "Not set: " + (root.birthdayJob.error || "") : "" }
+                        textFormat: Text.PlainText; color: Theme.palette.error; text: birthdaySheet.error }
         }
         leftActions: [ LogosButton { text: "Cancel"; onClicked: birthdaySheet.close() } ]
         rightActions: [
             LogosButton {
                 objectName: "confirmBirthdayButton"
+                visible: !birthdaySheet.compact
                 text: birthdaySheet.opening ? "Open" : birthdaySheet.pending ? "Setting…" : "Set"
                 variant: LogosButton.Variant.Primary
                 enabled: root.ready && (birthdaySheet.opening ? root.canOpenSelectedAccount : root.walletOpen && !birthdaySheet.pending)
@@ -3874,6 +4446,7 @@ Item {
                         birthdaySheet.close()
                         return
                     }
+                    birthdaySheet.error = ""
                     root.birthdayAsked = true
                     backend.setBirthday(JSON.stringify(birthdaySheet.unknown ? { height: 0 } : { date: birthdayDate.text.trim() }))
                 }
@@ -3945,13 +4518,77 @@ Item {
         ]
     }
 
+    // The first-run screen: what the recommended setup is, in one line, and one primary action.
+    Component {
+        id: quickSetupPane
+        ColumnLayout {
+            spacing: Theme.spacing.small
+            Item { Layout.preferredHeight: Theme.spacing.large }
+            LogosText {
+                Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter
+                text: "Connect to " + (root.torUseNetwork || "this network")
+                font.pixelSize: Theme.typography.subtitleText; font.weight: Theme.typography.weightBold
+            }
+            LogosText {
+                Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                color: Theme.palette.textSecondary
+                text: "Recommended: public Bitcoin peers, with Tor for anything that identifies you. "
+                      + "No one learns your addresses, and there is nothing to set up."
+            }
+            LogosNotice {
+                objectName: "quickSetupNote"
+                Layout.fillWidth: true
+                severity: LogosNotice.Error
+                shown: root.nodeSetupNote !== ""
+                title: "Couldn't save"
+                message: root.nodeSetupNote
+            }
+            LogosButton {
+                objectName: "quickSetupRecommended"
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Theme.spacing.small
+                variant: LogosButton.Variant.Primary
+                text: root.torUseSending ? "Connecting…" : "Use recommended"
+                enabled: root.ready && !root.torUseSending
+                onClicked: root.saveNodeSetup()
+            }
+            LogosButton {
+                objectName: "quickSetupCustomise"
+                Layout.alignment: Qt.AlignHCenter
+                text: "Customise…"
+                enabled: !root.torUseSending
+                onClicked: networkSheet.customising = true
+            }
+            LogosText {
+                Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                color: Theme.palette.textTertiary; font.pixelSize: Theme.typography.secondaryText
+                text: "Your own node, Electrum servers, Tor and fees are under Customise. You can change them any time."
+            }
+            Item { Layout.preferredHeight: Theme.spacing.medium }
+        }
+    }
+
     LogosDialog {
         id: networkSheet
         objectName: "networkSheet"
-        title: "Node"
+        title: networkSheet.quick ? "" : "Network"
         anchors.centerIn: parent
-        width: Math.min(parent.width - 40, 760)
-        onOpened: if (root.ready) backend.refreshSources()
+        width: Math.min(parent.width - 40, networkSheet.quick ? 480 : 760)
+        // First visit to a network: one decision (the recommended setup) before the full settings,
+        // which Customise opens. Once saved, the sheet is the full settings, as before.
+        property bool customising: false
+        readonly property bool quick: root.nodeSetupNeeded && !customising
+        // A refusal of what was asked here (a network switch, Close wallet), taken as it answered.
+        property string error: ""
+        function clearNotes() {
+            networkSheet.error = ""
+            root.networkNote = ""
+            root.nodeSetupNote = ""
+            root.ownPeersNote = ""
+            if (root.sheetActing === "network") root.sheetActing = ""
+        }
+        onOpened: { customising = false; clearNotes(); if (root.ready) backend.refreshSources() }
+        onClosed: clearNotes()
         contentItem: ScrollView {
             id: networkSheetScroll
             clip: true
@@ -3962,12 +4599,13 @@ Item {
                 id: networkSheetLoader
                 width: networkSheetScroll.availableWidth - networkSheetScroll.effectiveScrollBarWidth
                 active: networkSheet.visible
-                sourceComponent: networkPane
+                sourceComponent: networkSheet.quick ? quickSetupPane : networkPane
             }
         }
         // On a network's first visit, Save stores the checked choice; accounts open after it.
         rightActions: [ LogosButton {
             objectName: "networkSheetDone"
+            visible: !networkSheet.quick
             text: !root.nodeSetupNeeded ? "Done" : root.torUseSending ? "Saving…" : "Save"
             variant: root.nodeSetupNeeded ? LogosButton.Variant.Primary : LogosButton.Variant.Secondary
             enabled: !root.nodeSetupNeeded || (root.ready && !root.torUseSending)

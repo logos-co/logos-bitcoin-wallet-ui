@@ -57,10 +57,16 @@ sections:
           tests:
             - name: "With nothing open the app offers to open a wallet"
               action: expect_property
-              find_value: "statusLine"
-              property: "text"
-              value: "No wallet open"
+              find_value: "bitcoinWalletRoot"
+              property: "walletState"
+              value: "no_wallet"
               timeout: 90000
+            - name: "...on the account start"
+              action: expect_property
+              find_value: "openForm"
+              property: "visible"
+              value: true
+              timeout: 10000
             - name: "Choose signet"
               action: call_method
               find_value: "bitcoinWalletRoot"
@@ -68,17 +74,42 @@ sections:
               args: ["signet"]
             - name: "The backend switched networks"
               action: expect_property
-              find_value: "networkPicker"
-              property: "displayText"
+              find_value: "bitcoinWalletRoot"
+              property: "displayedNetwork"
               value: "signet"
               timeout: 20000
-            - name: "Open Node"
-              action: click_object
-              find_value: "networkSettingsButton"
+            - name: "...and the header's network chip names it"
+              action: expect_property
+              find_value: "networkChip"
+              property: "text"
+              value: "signet"
+              timeout: 10000
+            - name: "Open the Network sheet from the chip"
+              action: call_method
+              find_value: "networkChip"
+              method: "clicked"
+              args: []
             - name: "The sheet opens"
               action: expect_property
               find_value: "networkSheet"
               property: "opened"
+              value: true
+              timeout: 10000
+            - name: "Signet's first visit: the one-decision screen first"
+              action: expect_property
+              find_value: "networkSheet"
+              property: "quick"
+              value: true
+              timeout: 10000
+            - name: "Customise, for the full settings"
+              action: call_method
+              find_value: "quickSetupCustomise"
+              method: "clicked"
+              args: []
+            - name: "The full settings, not saved yet"
+              action: expect_property
+              find_value: "networkSheetDone"
+              property: "visible"
               value: true
               timeout: 10000
             - name: "The backend has filled the node module's defaults for signet, and the app read them"
@@ -275,20 +306,31 @@ sections:
               property: "visible"
               value: false
               timeout: 10000
-            - name: "Open a wallet is enabled"
+            - name: "The signer manager's accounts on signet are listed"
               action: expect_property
-              find_value: "openWalletButton"
+              find_value: "accountPicker"
               property: "enabled"
               value: true
-              timeout: 10000
-            - name: "Open a wallet"
-              action: click_object
-              find_value: "openWalletButton"
-            - name: "The core keeps each account's birthday, so the account's first open asks for it"
+              timeout: 20000
+            - name: "Pick the first account"
+              action: call_method
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
+              args: [0]
+            - name: "The core keeps each account's birthday, so the account's first open asks if it is new"
               action: expect_property
               find_value: "birthdaySheet"
               property: "visible"
               value: true
+              timeout: 5000
+            - name: "It has payments already"
+              action: click_object
+              find_value: "firstOpenOlder"
+            - name: "...so the sheet asks when it was first used"
+              action: expect_property
+              find_value: "birthdaySheet"
+              property: "title"
+              value: "When was this account first used?"
               timeout: 5000
             - name: "Not known: it opens with none"
               action: click_object
