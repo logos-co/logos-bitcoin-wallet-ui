@@ -777,7 +777,7 @@ Item {
     // could (the picker enabled, the account one it offers). A test can't send `activated(int)`.
     function pickAccountAt(i) {
         var e = root.accountEntries[i]
-        if (!e || !accountPicker.enabled || !accountPicker.canPick(e)) return
+        if (!e || !accountPicker.enabled || !root.canOpenAccount(root.homeAccount(e))) return
         root.pickAccount(root.homeAccount(e))
     }
     // Another network while a wallet is open: close it, then switch.
