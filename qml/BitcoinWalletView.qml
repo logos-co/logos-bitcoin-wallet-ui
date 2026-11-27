@@ -773,6 +773,13 @@ Item {
     // 0 Home, 1 Send, 2 Receive, 3 Activity, 4 Settings. selectTab is the driver entry point.
     property int page: 0
     function selectTab(i) { root.page = i; tabs.currentIndex = i }
+    // The picker's driver entry point: pick its i-th account as a click would, and only when a click
+    // could (the picker enabled, the account one it offers). A test can't send `activated(int)`.
+    function pickAccountAt(i) {
+        var e = root.accountEntries[i]
+        if (!e || !accountPicker.enabled || !accountPicker.canPick(e)) return
+        root.pickAccount(root.homeAccount(e))
+    }
     // Another network while a wallet is open: close it, then switch.
     property string networkAfterClose: ""
     function switchNetwork(network) {

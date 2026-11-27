@@ -313,14 +313,9 @@ sections:
               value: true
               timeout: 20000
             - name: "Pick the first account"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 0
-            - name: "...as a person choosing it would: picking opens it"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [0]
             - name: "The core keeps each account's birthday, so the account's first open asks if it is new"
               action: expect_property

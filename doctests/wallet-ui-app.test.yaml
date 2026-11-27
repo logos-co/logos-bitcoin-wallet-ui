@@ -497,14 +497,9 @@ sections:
               value: true
               timeout: 20000
             - name: "Pick the keystore wallet"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 0
-            - name: "...as a person choosing it would"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [0]
             - name: "It is selected"
               action: expect_property
@@ -581,14 +576,9 @@ sections:
               value: true
               timeout: 10000
             - name: "Pick it again; this time the person approves in the keys app"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 0
-            - name: "...as a person choosing it would"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [0]
             - name: "The withdrawn open never reached the wallet, so it asks again"
               action: expect_property
@@ -1558,14 +1548,9 @@ sections:
               method: "closeSheets"
               args: []
             - name: "Open the wallet again: pick it"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 0
-            - name: "...opened before on signet, it opens at once"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [0]
             - name: "Kyoto starts from last session's tip, 18 hours old, and says it is catching up, not stalled"
               action: expect_property
@@ -1811,14 +1796,9 @@ sections:
               value: true
               timeout: 20000
             - name: "Open a wallet before the switch has applied: pick it"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 0
-            - name: "...opened before here, it asks to open at once"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [0]
             - name: "The app asks to wait for the switch"
               action: expect_property
@@ -1873,14 +1853,9 @@ sections:
               value: true
               timeout: 15000
             - name: "Open, on testnet4: pick the keystore wallet"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 0
-            - name: "...as a person choosing it would"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [0]
             - name: "Its first open on testnet4 asks too"
               action: expect_property
@@ -2034,14 +2009,9 @@ sections:
             # A Keycard account with no card inserted: the picker names its seed wallet, and it opens
             # to view, since only signing needs the card.
             - name: "Pick the Keycard account"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 1
-            - name: "...as a person choosing it would"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [1]
             - name: "It is selected"
               action: expect_property
@@ -2115,14 +2085,9 @@ sections:
               property: "canOpenSelectedAccount"
               value: false
             - name: "Pick the open account again"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 1
-            - name: "...as a person choosing it would"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [1]
             - name: "Nothing happens: it stays open"
               action: expect_property
@@ -2171,14 +2136,9 @@ sections:
               timeout: 5000
               screenshot: "wallet-keycard-send.png"
             - name: "Pick the keystore wallet while the Keycard account is open"
-              action: set_property
-              find_value: "accountPicker"
-              property: "currentIndex"
-              value: 0
-            - name: "...as a person choosing it would: the open one closes first"
               action: call_method
-              find_value: "accountPicker"
-              method: "activated"
+              find_value: "bitcoinWalletRoot"
+              method: "pickAccountAt"
               args: [0]
             - name: "...then the keystore wallet, opened on testnet4 before, opens by itself"
               action: expect_property
@@ -2203,9 +2163,17 @@ sections:
               find_value: "bitcoinWalletRoot"
               method: "selectTab"
               args: [4]
-            - name: "Close it"
-              action: click_object
+            - name: "Close wallet is offered once the open has settled"
+              action: expect_property
               find_value: "closeWalletButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+            - name: "Close it"
+              action: call_method
+              find_value: "closeWalletButton"
+              method: "clicked"
+              args: []
             - name: "No wallet is open"
               action: expect_property
               find_value: "bitcoinWalletRoot"
